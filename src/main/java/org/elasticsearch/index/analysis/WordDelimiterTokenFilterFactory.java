@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,9 +20,11 @@
 package org.elasticsearch.index.analysis;
 
 import org.apache.lucene.analysis.TokenStream;
+import org.apache.lucene.analysis.miscellaneous.Lucene47WordDelimiterFilter;
 import org.apache.lucene.analysis.miscellaneous.WordDelimiterFilter;
 import org.apache.lucene.analysis.miscellaneous.WordDelimiterIterator;
 import org.apache.lucene.analysis.util.CharArraySet;
+import org.apache.lucene.util.Version;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.assistedinject.Assisted;
 import org.elasticsearch.common.lucene.Lucene;
@@ -79,17 +81,24 @@ public class WordDelimiterTokenFilterFactory extends AbstractTokenFilterFactory 
         // If set, causes trailing "'s" to be removed for each subword: "O'Neil's" => "O", "Neil"
         flags |= getFlag(STEM_ENGLISH_POSSESSIVE, settings, "stem_english_possessive", true);
         // If not null is the set of tokens to protect from being delimited
-        Set<?> protectedWords = Analysis.getWordSet(env, settings, "protected_words", version);
-        this.protoWords = protectedWords == null ? null : CharArraySet.copy(Lucene.VERSION, protectedWords);
+        Set<?> protectedWords = Analysis.getWordSet(env, settings, "protected_words");
+        this.protoWords = protectedWords == null ? null : CharArraySet.copy(protectedWords);
         this.flags = flags;
     }
 
     @Override
     public TokenStream create(TokenStream tokenStream) {
-        return new WordDelimiterFilter(tokenStream,
-                charTypeTable,
-                flags,
-                protoWords);
+         if (version.onOrAfter(Version.LUCENE_4_8)) {
+             return new WordDelimiterFilter(tokenStream,
+                     charTypeTable,
+                     flags,
+                     protoWords);
+         } else {
+             return new Lucene47WordDelimiterFilter(tokenStream,
+                     charTypeTable,
+                     flags,
+                     protoWords);
+         }
     }
 
     public int getFlag(int flag, Settings settings, String key, boolean defaultValue) {
@@ -106,7 +115,7 @@ public class WordDelimiterTokenFilterFactory extends AbstractTokenFilterFactory 
      * parses a list of MappingCharFilter style rules into a custom byte[] type table
      */
     private byte[] parseTypes(Collection<String> rules) {
-        SortedMap<Character, Byte> typeMap = new TreeMap<Character, Byte>();
+        SortedMap<Character, Byte> typeMap = new TreeMap<>();
         for (String rule : rules) {
             Matcher m = typePattern.matcher(rule);
             if (!m.find())

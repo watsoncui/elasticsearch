@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -26,8 +26,6 @@ import java.util.Map;
 
 /**
  * An interface allowing to transfer an object to "XContent" using an {@link XContentBuilder}.
- *
- *
  */
 public interface ToXContent {
 
@@ -38,6 +36,13 @@ public interface ToXContent {
 
         boolean paramAsBoolean(String key, boolean defaultValue);
 
+        Boolean paramAsBoolean(String key, Boolean defaultValue);
+
+        /**
+         * @deprecated since 1.0.0
+         * use {@link ToXContent.Params#paramAsBoolean(String, Boolean)} instead
+         */
+        @Deprecated
         Boolean paramAsBooleanOptional(String key, Boolean defaultValue);
     }
 
@@ -58,8 +63,13 @@ public interface ToXContent {
         }
 
         @Override
-        public Boolean paramAsBooleanOptional(String key, Boolean defaultValue) {
+        public Boolean paramAsBoolean(String key, Boolean defaultValue) {
             return defaultValue;
+        }
+
+        @Override @Deprecated
+        public Boolean paramAsBooleanOptional(String key, Boolean defaultValue) {
+            return paramAsBoolean(key, defaultValue);
         }
     };
 
@@ -91,12 +101,48 @@ public interface ToXContent {
         }
 
         @Override
+        public Boolean paramAsBoolean(String key, Boolean defaultValue) {
+            return Booleans.parseBoolean(param(key), defaultValue);
+        }
+
+        @Override @Deprecated
         public Boolean paramAsBooleanOptional(String key, Boolean defaultValue) {
-            String sValue = param(key);
-            if (sValue == null) {
-                return defaultValue;
-            }
-            return !(sValue.equals("false") || sValue.equals("0") || sValue.equals("off"));
+            return paramAsBoolean(key, defaultValue);
+        }
+    }
+
+    public static class DelegatingMapParams extends MapParams {
+
+        private final Params delegate;
+
+        public DelegatingMapParams(Map<String, String> params, Params delegate) {
+            super(params);
+            this.delegate = delegate;
+        }
+
+        @Override
+        public String param(String key) {
+            return super.param(key, delegate.param(key));
+        }
+
+        @Override
+        public String param(String key, String defaultValue) {
+            return super.param(key, delegate.param(key, defaultValue));
+        }
+
+        @Override
+        public boolean paramAsBoolean(String key, boolean defaultValue) {
+            return super.paramAsBoolean(key, delegate.paramAsBoolean(key, defaultValue));
+        }
+
+        @Override
+        public Boolean paramAsBoolean(String key, Boolean defaultValue) {
+            return super.paramAsBoolean(key, delegate.paramAsBoolean(key, defaultValue));
+        }
+
+        @Override @Deprecated
+        public Boolean paramAsBooleanOptional(String key, Boolean defaultValue) {
+            return super.paramAsBooleanOptional(key, delegate.paramAsBooleanOptional(key, defaultValue));
         }
     }
 

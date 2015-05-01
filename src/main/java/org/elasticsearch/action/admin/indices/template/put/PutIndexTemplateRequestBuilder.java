@@ -1,13 +1,13 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,16 +16,14 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.action.admin.indices.template.put;
 
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.admin.indices.alias.Alias;
 import org.elasticsearch.action.support.master.MasterNodeOperationRequestBuilder;
 import org.elasticsearch.client.IndicesAdminClient;
-import org.elasticsearch.client.internal.InternalIndicesAdminClient;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.util.Map;
@@ -33,14 +31,14 @@ import java.util.Map;
 /**
  *
  */
-public class PutIndexTemplateRequestBuilder extends MasterNodeOperationRequestBuilder<PutIndexTemplateRequest, PutIndexTemplateResponse, PutIndexTemplateRequestBuilder> {
+public class PutIndexTemplateRequestBuilder extends MasterNodeOperationRequestBuilder<PutIndexTemplateRequest, PutIndexTemplateResponse, PutIndexTemplateRequestBuilder, IndicesAdminClient> {
 
     public PutIndexTemplateRequestBuilder(IndicesAdminClient indicesClient) {
-        super((InternalIndicesAdminClient) indicesClient, new PutIndexTemplateRequest());
+        super(indicesClient, new PutIndexTemplateRequest());
     }
 
     public PutIndexTemplateRequestBuilder(IndicesAdminClient indicesClient, String name) {
-        super((InternalIndicesAdminClient) indicesClient, new PutIndexTemplateRequest(name));
+        super(indicesClient, new PutIndexTemplateRequest(name));
     }
 
     /**
@@ -108,6 +106,58 @@ public class PutIndexTemplateRequestBuilder extends MasterNodeOperationRequestBu
      */
     public PutIndexTemplateRequestBuilder addMapping(String type, String source) {
         request.mapping(type, source);
+        return this;
+    }
+
+    /**
+     * A specialized simplified mapping source method, takes the form of simple properties definition:
+     * ("field1", "type=string,store=true").
+     */
+    public PutIndexTemplateRequestBuilder addMapping(String type, Object... source) {
+        request.mapping(type, source);
+        return this;
+    }
+
+    /**
+     * Sets the aliases that will be associated with the index when it gets created
+     */
+    public PutIndexTemplateRequestBuilder setAliases(Map source) {
+        request.aliases(source);
+        return this;
+    }
+
+    /**
+     * Sets the aliases that will be associated with the index when it gets created
+     */
+    public PutIndexTemplateRequestBuilder setAliases(String source) {
+        request.aliases(source);
+        return this;
+    }
+
+    /**
+     * Sets the aliases that will be associated with the index when it gets created
+     */
+    public PutIndexTemplateRequestBuilder setAliases(XContentBuilder source) {
+        request.aliases(source);
+        return this;
+    }
+
+    /**
+     * Sets the aliases that will be associated with the index when it gets created
+     */
+    public PutIndexTemplateRequestBuilder setAliases(BytesReference source) {
+        request.aliases(source);
+        return this;
+    }
+
+    /**
+     * Adds an alias that will be added when the index template gets created.
+     *
+     * @param alias  The alias
+     * @return the request builder
+     */
+    public PutIndexTemplateRequestBuilder addAlias(Alias alias) {
+        request.alias(alias);
         return this;
     }
 
@@ -189,26 +239,8 @@ public class PutIndexTemplateRequestBuilder extends MasterNodeOperationRequestBu
         return this;
     }
 
-    /**
-     * Timeout to wait for the index creation to be acknowledged by current cluster nodes. Defaults
-     * to <tt>10s</tt>.
-     */
-    public PutIndexTemplateRequestBuilder setTimeout(TimeValue timeout) {
-        request.timeout(timeout);
-        return this;
-    }
-
-    /**
-     * Timeout to wait for the index creation to be acknowledged by current cluster nodes. Defaults
-     * to <tt>10s</tt>.
-     */
-    public PutIndexTemplateRequestBuilder setTimeout(String timeout) {
-        request.timeout(timeout);
-        return this;
-    }
-
     @Override
     protected void doExecute(ActionListener<PutIndexTemplateResponse> listener) {
-        ((IndicesAdminClient) client).putTemplate(request, listener);
+        client.putTemplate(request, listener);
     }
 }

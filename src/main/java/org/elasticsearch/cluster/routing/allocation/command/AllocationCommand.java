@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,8 +19,10 @@
 
 package org.elasticsearch.cluster.routing.allocation.command;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.cluster.routing.allocation.RerouteExplanation;
 import org.elasticsearch.cluster.routing.allocation.RoutingAllocation;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.xcontent.ToXContent;
@@ -68,10 +70,11 @@ public interface AllocationCommand {
          * Writes an {@link AllocationCommand} using an {@link XContentBuilder}
          * @param command {@link AllocationCommand} to write
          * @param builder {@link XContentBuilder} to use
-         * @param params parameters to use when writing the command 
+         * @param params parameters to use when writing the command
+         * @param objectName object the encoding should be encased in, null means a plain object
          * @throws IOException if something happens during writing the command
          */
-        void toXContent(T command, XContentBuilder builder, ToXContent.Params params) throws IOException;
+        void toXContent(T command, XContentBuilder builder, ToXContent.Params params, @Nullable String objectName) throws IOException;
     }
 
     /**
@@ -83,7 +86,7 @@ public interface AllocationCommand {
     /**
      * Executes the command on a {@link RoutingAllocation} setup
      * @param allocation {@link RoutingAllocation} to modify
-     * @throws ElasticSearchException if something happens during reconfiguration
+     * @throws org.elasticsearch.ElasticsearchException if something happens during reconfiguration
      */
-    void execute(RoutingAllocation allocation) throws ElasticSearchException;
+    RerouteExplanation execute(RoutingAllocation allocation, boolean explain);
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,33 +19,29 @@
 
 package org.elasticsearch.rest.action.search;
 
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
-import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.search.SearchOperationThreading;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
-import org.elasticsearch.action.support.IgnoreIndices;
+import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.index.query.QueryStringQueryBuilder;
 import org.elasticsearch.rest.*;
+import org.elasticsearch.rest.action.exists.RestExistsAction;
 import org.elasticsearch.rest.action.support.RestActions;
+import org.elasticsearch.rest.action.support.RestStatusToXContentListener;
 import org.elasticsearch.search.Scroll;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
+import org.elasticsearch.search.fetch.source.FetchSourceContext;
+import org.elasticsearch.search.internal.SearchContext;
 import org.elasticsearch.search.sort.SortOrder;
-
-import java.io.IOException;
 
 import static org.elasticsearch.common.unit.TimeValue.parseTimeValue;
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
-import static org.elasticsearch.rest.RestStatus.BAD_REQUEST;
-import static org.elasticsearch.rest.action.support.RestXContentBuilder.restContentBuilder;
-import static org.elasticsearch.search.suggest.SuggestBuilder.termSuggestion;
+import static org.elasticsearch.search.suggest.SuggestBuilders.termSuggestion;
 
 /**
  *
@@ -53,112 +49,79 @@ import static org.elasticsearch.search.suggest.SuggestBuilder.termSuggestion;
 public class RestSearchAction extends BaseRestHandler {
 
     @Inject
-    public RestSearchAction(Settings settings, Client client, RestController controller) {
-        super(settings, client);
+    public RestSearchAction(Settings settings, RestController controller, Client client) {
+        super(settings, controller, client);
         controller.registerHandler(GET, "/_search", this);
         controller.registerHandler(POST, "/_search", this);
         controller.registerHandler(GET, "/{index}/_search", this);
         controller.registerHandler(POST, "/{index}/_search", this);
         controller.registerHandler(GET, "/{index}/{type}/_search", this);
         controller.registerHandler(POST, "/{index}/{type}/_search", this);
+        controller.registerHandler(GET, "/_search/template", this);
+        controller.registerHandler(POST, "/_search/template", this);
+        controller.registerHandler(GET, "/{index}/_search/template", this);
+        controller.registerHandler(POST, "/{index}/_search/template", this);
+        controller.registerHandler(GET, "/{index}/{type}/_search/template", this);
+        controller.registerHandler(POST, "/{index}/{type}/_search/template", this);
+
+        RestExistsAction restExistsAction = new RestExistsAction(settings, controller, client);
+        controller.registerHandler(GET, "/_search/exists", restExistsAction);
+        controller.registerHandler(POST, "/_search/exists", restExistsAction);
+        controller.registerHandler(GET, "/{index}/_search/exists", restExistsAction);
+        controller.registerHandler(POST, "/{index}/_search/exists", restExistsAction);
+        controller.registerHandler(GET, "/{index}/{type}/_search/exists", restExistsAction);
+        controller.registerHandler(POST, "/{index}/{type}/_search/exists", restExistsAction);
     }
 
     @Override
-    public void handleRequest(final RestRequest request, final RestChannel channel) {
+    public void handleRequest(final RestRequest request, final RestChannel channel, final Client client) {
         SearchRequest searchRequest;
-        try {
-            searchRequest = parseSearchRequest(request);
-            searchRequest.listenerThreaded(false);
-            SearchOperationThreading operationThreading = SearchOperationThreading.fromString(request.param("operation_threading"), null);
-            if (operationThreading != null) {
-                if (operationThreading == SearchOperationThreading.NO_THREADS) {
-                    // since we don't spawn, don't allow no_threads, but change it to a single thread
-                    operationThreading = SearchOperationThreading.SINGLE_THREAD;
-                }
-                searchRequest.operationThreading(operationThreading);
-            }
-        } catch (Exception e) {
-            if (logger.isDebugEnabled()) {
-                logger.debug("failed to parse search request parameters", e);
-            }
-            try {
-                XContentBuilder builder = restContentBuilder(request);
-                channel.sendResponse(new XContentRestResponse(request, BAD_REQUEST, builder.startObject().field("error", e.getMessage()).endObject()));
-            } catch (IOException e1) {
-                logger.error("Failed to send failure response", e1);
-            }
-            return;
-        }
-        client.search(searchRequest, new ActionListener<SearchResponse>() {
-            @Override
-            public void onResponse(SearchResponse response) {
-                try {
-                    XContentBuilder builder = restContentBuilder(request);
-                    builder.startObject();
-                    response.toXContent(builder, request);
-                    builder.endObject();
-                    channel.sendResponse(new XContentRestResponse(request, response.status(), builder));
-                } catch (Exception e) {
-                    if (logger.isDebugEnabled()) {
-                        logger.debug("failed to execute search (building response)", e);
-                    }
-                    onFailure(e);
-                }
-            }
-
-            @Override
-            public void onFailure(Throwable e) {
-                try {
-                    channel.sendResponse(new XContentThrowableRestResponse(request, e));
-                } catch (IOException e1) {
-                    logger.error("Failed to send failure response", e1);
-                }
-            }
-        });
+        searchRequest = RestSearchAction.parseSearchRequest(request);
+        searchRequest.listenerThreaded(false);
+        client.search(searchRequest, new RestStatusToXContentListener<SearchResponse>(channel));
     }
 
-    private SearchRequest parseSearchRequest(RestRequest request) {
-        String[] indices = RestActions.splitIndices(request.param("index"));
+    public static SearchRequest parseSearchRequest(RestRequest request) {
+        String[] indices = Strings.splitStringByCommaToArray(request.param("index"));
         SearchRequest searchRequest = new SearchRequest(indices);
         // get the content, and put it in the body
-        if (request.hasContent()) {
-            searchRequest.source(request.content(), request.contentUnsafe());
-        } else {
-            String source = request.param("source");
-            if (source != null) {
-                searchRequest.source(source);
+        // add content/source as template if template flag is set
+        boolean isTemplateRequest = request.path().endsWith("/template");
+        if (RestActions.hasBodyContent(request)) {
+            if (isTemplateRequest) {
+                searchRequest.templateSource(RestActions.getRestContent(request));
+            } else {
+                searchRequest.source(RestActions.getRestContent(request));
             }
         }
-        // add extra source based on the request parameters
-        searchRequest.extraSource(parseSearchSource(request));
 
+        searchRequest.extraSource(parseSearchSource(request));
         searchRequest.searchType(request.param("search_type"));
+        searchRequest.queryCache(request.paramAsBoolean("query_cache", null));
 
         String scroll = request.param("scroll");
         if (scroll != null) {
             searchRequest.scroll(new Scroll(parseTimeValue(scroll, null)));
         }
 
-        searchRequest.types(RestActions.splitTypes(request.param("type")));
+        searchRequest.types(Strings.splitStringByCommaToArray(request.param("type")));
         searchRequest.routing(request.param("routing"));
         searchRequest.preference(request.param("preference"));
-        if (request.hasParam("ignore_indices")) {
-            searchRequest.ignoreIndices(IgnoreIndices.fromString(request.param("ignore_indices")));
-        }
+        searchRequest.indicesOptions(IndicesOptions.fromRequest(request, searchRequest.indicesOptions()));
 
         return searchRequest;
     }
 
-    private SearchSourceBuilder parseSearchSource(RestRequest request) {
+    public static SearchSourceBuilder parseSearchSource(RestRequest request) {
         SearchSourceBuilder searchSourceBuilder = null;
         String queryString = request.param("q");
         if (queryString != null) {
-            QueryStringQueryBuilder queryBuilder = QueryBuilders.queryString(queryString);
+            QueryStringQueryBuilder queryBuilder = QueryBuilders.queryStringQuery(queryString);
             queryBuilder.defaultField(request.param("df"));
             queryBuilder.analyzer(request.param("analyzer"));
             queryBuilder.analyzeWildcard(request.paramAsBoolean("analyze_wildcard", false));
             queryBuilder.lowercaseExpandedTerms(request.paramAsBoolean("lowercase_expanded_terms", true));
-            queryBuilder.lenient(request.paramAsBooleanOptional("lenient", null));
+            queryBuilder.lenient(request.paramAsBoolean("lenient", null));
             String defaultOperator = request.param("default_operator");
             if (defaultOperator != null) {
                 if ("OR".equals(defaultOperator)) {
@@ -166,7 +129,7 @@ public class RestSearchAction extends BaseRestHandler {
                 } else if ("AND".equals(defaultOperator)) {
                     queryBuilder.defaultOperator(QueryStringQueryBuilder.Operator.AND);
                 } else {
-                    throw new ElasticSearchIllegalArgumentException("Unsupported defaultOperator [" + defaultOperator + "], can either be [OR] or [AND]");
+                    throw new IllegalArgumentException("Unsupported defaultOperator [" + defaultOperator + "], can either be [OR] or [AND]");
                 }
             }
             if (searchSourceBuilder == null) {
@@ -194,19 +157,31 @@ public class RestSearchAction extends BaseRestHandler {
             if (searchSourceBuilder == null) {
                 searchSourceBuilder = new SearchSourceBuilder();
             }
-            searchSourceBuilder.explain(request.paramAsBooleanOptional("explain", null));
+            searchSourceBuilder.explain(request.paramAsBoolean("explain", null));
         }
         if (request.hasParam("version")) {
             if (searchSourceBuilder == null) {
                 searchSourceBuilder = new SearchSourceBuilder();
             }
-            searchSourceBuilder.version(request.paramAsBooleanOptional("version", null));
+            searchSourceBuilder.version(request.paramAsBoolean("version", null));
         }
         if (request.hasParam("timeout")) {
             if (searchSourceBuilder == null) {
                 searchSourceBuilder = new SearchSourceBuilder();
             }
             searchSourceBuilder.timeout(request.paramAsTime("timeout", null));
+        }
+        if (request.hasParam("terminate_after")) {
+            if (searchSourceBuilder == null) {
+                searchSourceBuilder = new SearchSourceBuilder();
+            }
+            int terminateAfter = request.paramAsInt("terminate_after",
+                    SearchContext.DEFAULT_TERMINATE_AFTER);
+            if (terminateAfter < 0) {
+                throw new IllegalArgumentException("terminateAfter must be > 0");
+            } else if (terminateAfter > 0) {
+                searchSourceBuilder.terminateAfter(terminateAfter);
+            }
         }
 
         String sField = request.param("fields");
@@ -224,6 +199,20 @@ public class RestSearchAction extends BaseRestHandler {
                     }
                 }
             }
+        }
+        FetchSourceContext fetchSourceContext = FetchSourceContext.parseFromRestRequest(request);
+        if (fetchSourceContext != null) {
+            if (searchSourceBuilder == null) {
+                searchSourceBuilder = new SearchSourceBuilder();
+            }
+            searchSourceBuilder.fetchSource(fetchSourceContext);
+        }
+
+        if (request.hasParam("track_scores")) {
+            if (searchSourceBuilder == null) {
+                searchSourceBuilder = new SearchSourceBuilder();
+            }
+            searchSourceBuilder.trackScores(request.paramAsBoolean("track_scores", false));
         }
 
         String sSorts = request.param("sort");
@@ -244,27 +233,6 @@ public class RestSearchAction extends BaseRestHandler {
                     }
                 } else {
                     searchSourceBuilder.sort(sort);
-                }
-            }
-        }
-
-        String sIndicesBoost = request.param("indices_boost");
-        if (sIndicesBoost != null) {
-            if (searchSourceBuilder == null) {
-                searchSourceBuilder = new SearchSourceBuilder();
-            }
-            String[] indicesBoost = Strings.splitStringByCommaToArray(sIndicesBoost);
-            for (String indexBoost : indicesBoost) {
-                int divisor = indexBoost.indexOf(',');
-                if (divisor == -1) {
-                    throw new ElasticSearchIllegalArgumentException("Illegal index boost [" + indexBoost + "], no ','");
-                }
-                String indexName = indexBoost.substring(0, divisor);
-                String sBoost = indexBoost.substring(divisor + 1);
-                try {
-                    searchSourceBuilder.indexBoost(indexName, Float.parseFloat(sBoost));
-                } catch (NumberFormatException e) {
-                    throw new ElasticSearchIllegalArgumentException("Illegal index boost [" + indexBoost + "], boost not a float number");
                 }
             }
         }

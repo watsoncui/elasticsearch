@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,15 +21,15 @@ package org.elasticsearch.action.search;
 
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.search.type.*;
-import org.elasticsearch.action.support.TransportAction;
+import org.elasticsearch.action.support.ActionFilters;
+import org.elasticsearch.action.support.HandledTransportAction;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.indices.IndexClosedException;
 import org.elasticsearch.indices.IndexMissingException;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.elasticsearch.transport.BaseTransportRequestHandler;
-import org.elasticsearch.transport.TransportChannel;
 import org.elasticsearch.transport.TransportService;
 
 import java.util.Map;
@@ -40,22 +40,15 @@ import static org.elasticsearch.action.search.SearchType.*;
 /**
  *
  */
-public class TransportSearchAction extends TransportAction<SearchRequest, SearchResponse> {
+public class TransportSearchAction extends HandledTransportAction<SearchRequest, SearchResponse> {
 
     private final ClusterService clusterService;
-
     private final TransportSearchDfsQueryThenFetchAction dfsQueryThenFetchAction;
-
     private final TransportSearchQueryThenFetchAction queryThenFetchAction;
-
     private final TransportSearchDfsQueryAndFetchAction dfsQueryAndFetchAction;
-
     private final TransportSearchQueryAndFetchAction queryAndFetchAction;
-
     private final TransportSearchScanAction scanAction;
-
     private final TransportSearchCountAction countAction;
-
     private final boolean optimizeSingleShard;
 
     @Inject
@@ -66,8 +59,9 @@ public class TransportSearchAction extends TransportAction<SearchRequest, Search
                                  TransportSearchDfsQueryAndFetchAction dfsQueryAndFetchAction,
                                  TransportSearchQueryAndFetchAction queryAndFetchAction,
                                  TransportSearchScanAction scanAction,
-                                 TransportSearchCountAction countAction) {
-        super(settings, threadPool);
+                                 TransportSearchCountAction countAction,
+                                 ActionFilters actionFilters) {
+        super(settings, SearchAction.NAME, threadPool, transportService, actionFilters, SearchRequest.class);
         this.clusterService = clusterService;
         this.dfsQueryThenFetchAction = dfsQueryThenFetchAction;
         this.queryThenFetchAction = queryThenFetchAction;
@@ -75,10 +69,7 @@ public class TransportSearchAction extends TransportAction<SearchRequest, Search
         this.queryAndFetchAction = queryAndFetchAction;
         this.scanAction = scanAction;
         this.countAction = countAction;
-
-        this.optimizeSingleShard = componentSettings.getAsBoolean("optimize_single_shard", true);
-
-        transportService.registerHandler(SearchAction.NAME, new TransportHandler());
+        this.optimizeSingleShard = this.settings.getAsBoolean("action.search.optimize_single_shard", true);
     }
 
     @Override
@@ -87,16 +78,15 @@ public class TransportSearchAction extends TransportAction<SearchRequest, Search
         if (optimizeSingleShard && searchRequest.searchType() != SCAN && searchRequest.searchType() != COUNT) {
             try {
                 ClusterState clusterState = clusterService.state();
-                String[] concreteIndices = clusterState.metaData().concreteIndices(searchRequest.indices(), searchRequest.ignoreIndices(), true);
+                String[] concreteIndices = clusterState.metaData().concreteIndices(searchRequest.indicesOptions(), searchRequest.indices());
                 Map<String, Set<String>> routingMap = clusterState.metaData().resolveSearchRouting(searchRequest.routing(), searchRequest.indices());
                 int shardCount = clusterService.operationRouting().searchShardsCount(clusterState, searchRequest.indices(), concreteIndices, routingMap, searchRequest.preference());
                 if (shardCount == 1) {
                     // if we only have one group, then we always want Q_A_F, no need for DFS, and no need to do THEN since we hit one shard
                     searchRequest.searchType(QUERY_AND_FETCH);
                 }
-            } catch (IndexMissingException e) {
-                // ignore this, we will notify the search response if its really the case
-                // from the actual action
+            } catch (IndexMissingException|IndexClosedException e) {
+                // ignore these failures, we will notify the search response if its really the case from the actual action
             } catch (Exception e) {
                 logger.debug("failed to optimize search type, continue as normal", e);
             }
@@ -114,48 +104,8 @@ public class TransportSearchAction extends TransportAction<SearchRequest, Search
             scanAction.execute(searchRequest, listener);
         } else if (searchRequest.searchType() == SearchType.COUNT) {
             countAction.execute(searchRequest, listener);
-        }
-    }
-
-    private class TransportHandler extends BaseTransportRequestHandler<SearchRequest> {
-
-        @Override
-        public SearchRequest newInstance() {
-            return new SearchRequest();
-        }
-
-        @Override
-        public void messageReceived(SearchRequest request, final TransportChannel channel) throws Exception {
-            // no need for a threaded listener
-            request.listenerThreaded(false);
-            // we don't spawn, so if we get a request with no threading, change it to single threaded
-            if (request.operationThreading() == SearchOperationThreading.NO_THREADS) {
-                request.operationThreading(SearchOperationThreading.SINGLE_THREAD);
-            }
-            execute(request, new ActionListener<SearchResponse>() {
-                @Override
-                public void onResponse(SearchResponse result) {
-                    try {
-                        channel.sendResponse(result);
-                    } catch (Exception e) {
-                        onFailure(e);
-                    }
-                }
-
-                @Override
-                public void onFailure(Throwable e) {
-                    try {
-                        channel.sendResponse(e);
-                    } catch (Exception e1) {
-                        logger.warn("Failed to send response for search", e1);
-                    }
-                }
-            });
-        }
-
-        @Override
-        public String executor() {
-            return ThreadPool.Names.SAME;
+        } else {
+            throw new IllegalStateException("Unknown search type: [" + searchRequest.searchType() + "]");
         }
     }
 }

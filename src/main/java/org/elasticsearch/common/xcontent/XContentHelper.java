@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,19 +21,24 @@ package org.elasticsearch.common.xcontent;
 
 import com.google.common.base.Charsets;
 import com.google.common.collect.Maps;
-import org.elasticsearch.ElasticSearchParseException;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.compress.CompressedStreamInput;
 import org.elasticsearch.common.compress.Compressor;
 import org.elasticsearch.common.compress.CompressorFactory;
+import org.elasticsearch.common.io.Streams;
 import org.elasticsearch.common.io.stream.BytesStreamInput;
+import org.elasticsearch.common.xcontent.ToXContent.Params;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+
+import static org.elasticsearch.common.xcontent.ToXContent.EMPTY_PARAMS;
 
 /**
  *
@@ -60,7 +65,7 @@ public class XContentHelper {
     public static XContentParser createParser(byte[] data, int offset, int length) throws IOException {
         Compressor compressor = CompressorFactory.compressor(data, offset, length);
         if (compressor != null) {
-            CompressedStreamInput compressedInput = compressor.streamInput(new BytesStreamInput(data, offset, length, false));
+            CompressedStreamInput compressedInput = compressor.streamInput(new BytesStreamInput(data, offset, length));
             XContentType contentType = XContentFactory.xContentType(compressedInput);
             compressedInput.resetToBufferStart();
             return XContentFactory.xContent(contentType).createParser(compressedInput);
@@ -69,7 +74,7 @@ public class XContentHelper {
         }
     }
 
-    public static Tuple<XContentType, Map<String, Object>> convertToMap(BytesReference bytes, boolean ordered) throws ElasticSearchParseException {
+    public static Tuple<XContentType, Map<String, Object>> convertToMap(BytesReference bytes, boolean ordered) throws ElasticsearchParseException {
         if (bytes.hasArray()) {
             return convertToMap(bytes.array(), bytes.arrayOffset(), bytes.length(), ordered);
         }
@@ -92,21 +97,21 @@ public class XContentHelper {
                 return Tuple.tuple(contentType, parser.mapAndClose());
             }
         } catch (IOException e) {
-            throw new ElasticSearchParseException("Failed to parse content to map", e);
+            throw new ElasticsearchParseException("Failed to parse content to map", e);
         }
     }
 
-    public static Tuple<XContentType, Map<String, Object>> convertToMap(byte[] data, boolean ordered) throws ElasticSearchParseException {
+    public static Tuple<XContentType, Map<String, Object>> convertToMap(byte[] data, boolean ordered) throws ElasticsearchParseException {
         return convertToMap(data, 0, data.length, ordered);
     }
 
-    public static Tuple<XContentType, Map<String, Object>> convertToMap(byte[] data, int offset, int length, boolean ordered) throws ElasticSearchParseException {
+    public static Tuple<XContentType, Map<String, Object>> convertToMap(byte[] data, int offset, int length, boolean ordered) throws ElasticsearchParseException {
         try {
             XContentParser parser;
             XContentType contentType;
             Compressor compressor = CompressorFactory.compressor(data, offset, length);
             if (compressor != null) {
-                CompressedStreamInput compressedStreamInput = compressor.streamInput(new BytesStreamInput(data, offset, length, false));
+                CompressedStreamInput compressedStreamInput = compressor.streamInput(new BytesStreamInput(data, offset, length));
                 contentType = XContentFactory.xContentType(compressedStreamInput);
                 compressedStreamInput.resetToBufferStart();
                 parser = XContentFactory.xContent(contentType).createParser(compressedStreamInput);
@@ -120,7 +125,7 @@ public class XContentHelper {
                 return Tuple.tuple(contentType, parser.mapAndClose());
             }
         } catch (IOException e) {
-            throw new ElasticSearchParseException("Failed to parse content to map", e);
+            throw new ElasticsearchParseException("Failed to parse content to map", e);
         }
     }
 
@@ -181,24 +186,87 @@ public class XContentHelper {
     }
 
     /**
+     * Writes serialized toXContent to pretty-printed JSON string.
+     *
+     * @param toXContent object to be pretty printed
+     * @return pretty-printed JSON serialization
+     */
+    public static String toString(ToXContent toXContent) {
+        return toString(toXContent, EMPTY_PARAMS);
+    }
+
+    /**
+     * Writes serialized toXContent to pretty-printed JSON string.
+     *
+     * @param toXContent object to be pretty printed
+     * @param params     serialization parameters
+     * @return pretty-printed JSON serialization
+     */
+    public static String toString(ToXContent toXContent, Params params) {
+        try {
+            XContentBuilder builder = XContentFactory.jsonBuilder();
+            if (params.paramAsBoolean("pretty", true)) {
+                builder.prettyPrint();
+            }
+            if (params.paramAsBoolean("human", true)) {
+                builder.humanReadable(true);
+            }
+            builder.startObject();
+            toXContent.toXContent(builder, params);
+            builder.endObject();
+            return builder.string();
+        } catch (IOException e) {
+            try {
+                XContentBuilder builder = XContentFactory.jsonBuilder().prettyPrint();
+                builder.startObject();
+                builder.field("error", e.getMessage());
+                builder.endObject();
+                return builder.string();
+            } catch (IOException e2) {
+                throw new ElasticsearchException("cannot generate error message for deserialization", e);
+            }
+        }
+
+    }
+
+    /**
      * Updates the provided changes into the source. If the key exists in the changes, it overrides the one in source
      * unless both are Maps, in which case it recuersively updated it.
+     *
+     * @param source                 the original map to be updated
+     * @param changes                the changes to update into updated
+     * @param checkUpdatesAreUnequal should this method check if updates to the same key (that are not both maps) are
+     *                               unequal?  This is just a .equals check on the objects, but that can take some time on long strings.
+     * @return true if the source map was modified
      */
-    public static void update(Map<String, Object> source, Map<String, Object> changes) {
+    public static boolean update(Map<String, Object> source, Map<String, Object> changes, boolean checkUpdatesAreUnequal) {
+        boolean modified = false;
         for (Map.Entry<String, Object> changesEntry : changes.entrySet()) {
             if (!source.containsKey(changesEntry.getKey())) {
                 // safe to copy, change does not exist in source
                 source.put(changesEntry.getKey(), changesEntry.getValue());
-            } else {
-                if (source.get(changesEntry.getKey()) instanceof Map && changesEntry.getValue() instanceof Map) {
-                    // recursive merge maps
-                    update((Map<String, Object>) source.get(changesEntry.getKey()), (Map<String, Object>) changesEntry.getValue());
-                } else {
-                    // update the field
-                    source.put(changesEntry.getKey(), changesEntry.getValue());
-                }
+                modified = true;
+                continue;
             }
+            Object old = source.get(changesEntry.getKey());
+            if (old instanceof Map && changesEntry.getValue() instanceof Map) {
+                // recursive merge maps
+                modified |= update((Map<String, Object>) source.get(changesEntry.getKey()),
+                        (Map<String, Object>) changesEntry.getValue(), checkUpdatesAreUnequal && !modified);
+                continue;
+            }
+            // update the field
+            source.put(changesEntry.getKey(), changesEntry.getValue());
+            if (modified) {
+                continue;
+            }
+            if (!checkUpdatesAreUnequal || old == null) {
+                modified = true;
+                continue;
+            }
+            modified = !old.equals(changesEntry.getValue());
         }
+        return modified;
     }
 
     /**
@@ -233,6 +301,9 @@ public class XContentHelper {
                             Map.Entry<String, Object> entry = map.entrySet().iterator().next();
                             if (processed.containsKey(entry.getKey())) {
                                 mergeDefaults(processed.get(entry.getKey()), map);
+                            } else {
+                                // put the default entries after the content ones.
+                                processed.put(entry.getKey(), map);
                             }
                         }
                         for (Map<String, Object> map : processed.values()) {
@@ -267,16 +338,16 @@ public class XContentHelper {
     }
 
     public static void copyCurrentStructure(XContentGenerator generator, XContentParser parser) throws IOException {
-        XContentParser.Token t = parser.currentToken();
+        XContentParser.Token token = parser.currentToken();
 
         // Let's handle field-name separately first
-        if (t == XContentParser.Token.FIELD_NAME) {
+        if (token == XContentParser.Token.FIELD_NAME) {
             generator.writeFieldName(parser.currentName());
-            t = parser.nextToken();
+            token = parser.nextToken();
             // fall-through to copy the associated value
         }
 
-        switch (t) {
+        switch (token) {
             case START_ARRAY:
                 generator.writeStartArray();
                 while (parser.nextToken() != XContentParser.Token.END_ARRAY) {
@@ -347,4 +418,66 @@ public class XContentHelper {
         }
     }
 
+    /**
+     * Directly writes the source to the output builder
+     */
+    public static void writeDirect(BytesReference source, XContentBuilder rawBuilder, ToXContent.Params params) throws IOException {
+        Compressor compressor = CompressorFactory.compressor(source);
+        if (compressor != null) {
+            CompressedStreamInput compressedStreamInput = compressor.streamInput(source.streamInput());
+            XContentType contentType = XContentFactory.xContentType(compressedStreamInput);
+            compressedStreamInput.resetToBufferStart();
+            if (contentType == rawBuilder.contentType()) {
+                Streams.copy(compressedStreamInput, rawBuilder.stream());
+            } else {
+                try (XContentParser parser = XContentFactory.xContent(contentType).createParser(compressedStreamInput)) {
+                    parser.nextToken();
+                    rawBuilder.copyCurrentStructure(parser);
+                }
+            }
+        } else {
+            XContentType contentType = XContentFactory.xContentType(source);
+            if (contentType == rawBuilder.contentType()) {
+                source.writeTo(rawBuilder.stream());
+            } else {
+                try (XContentParser parser = XContentFactory.xContent(contentType).createParser(source)) {
+                    parser.nextToken();
+                    rawBuilder.copyCurrentStructure(parser);
+                }
+            }
+        }
+    }
+
+    /**
+     * Writes a "raw" (bytes) field, handling cases where the bytes are compressed, and tries to optimize writing using
+     * {@link XContentBuilder#rawField(String, org.elasticsearch.common.bytes.BytesReference)}.
+     */
+    public static void writeRawField(String field, BytesReference source, XContentBuilder builder, ToXContent.Params params) throws IOException {
+        Compressor compressor = CompressorFactory.compressor(source);
+        if (compressor != null) {
+            CompressedStreamInput compressedStreamInput = compressor.streamInput(source.streamInput());
+            XContentType contentType = XContentFactory.xContentType(compressedStreamInput);
+            compressedStreamInput.resetToBufferStart();
+            if (contentType == builder.contentType()) {
+                builder.rawField(field, compressedStreamInput);
+            } else {
+                try (XContentParser parser = XContentFactory.xContent(contentType).createParser(compressedStreamInput)) {
+                    parser.nextToken();
+                    builder.field(field);
+                    builder.copyCurrentStructure(parser);
+                }
+            }
+        } else {
+            XContentType contentType = XContentFactory.xContentType(source);
+            if (contentType == builder.contentType()) {
+                builder.rawField(field, source);
+            } else {
+                try (XContentParser parser = XContentFactory.xContent(contentType).createParser(source)) {
+                    parser.nextToken();
+                    builder.field(field);
+                    builder.copyCurrentStructure(parser);
+                }
+            }
+        }
+    }
 }

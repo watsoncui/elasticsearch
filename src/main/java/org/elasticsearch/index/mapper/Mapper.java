@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,14 +20,13 @@
 package org.elasticsearch.index.mapper;
 
 import com.google.common.collect.ImmutableMap;
+
 import org.elasticsearch.Version;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.index.analysis.AnalysisService;
-import org.elasticsearch.index.codec.postingsformat.PostingsFormatService;
 import org.elasticsearch.index.similarity.SimilarityLookupService;
 
 import java.io.IOException;
@@ -44,7 +43,7 @@ public interface Mapper extends ToXContent {
         private final Settings indexSettings;
         private final ContentPath contentPath;
 
-        public BuilderContext(@Nullable Settings indexSettings, ContentPath contentPath) {
+        public BuilderContext(Settings indexSettings, ContentPath contentPath) {
             this.contentPath = contentPath;
             this.indexSettings = indexSettings;
         }
@@ -63,7 +62,7 @@ public interface Mapper extends ToXContent {
             if (indexSettings == null) {
                 return null;
             }
-            return indexSettings.getAsVersion(IndexMetaData.SETTING_VERSION_CREATED, null);
+            return Version.indexCreated(indexSettings);
         }
     }
 
@@ -88,28 +87,24 @@ public interface Mapper extends ToXContent {
 
         public static class ParserContext {
 
-            private final PostingsFormatService postingsFormatService;
-
             private final AnalysisService analysisService;
 
             private final SimilarityLookupService similarityLookupService;
 
             private final ImmutableMap<String, TypeParser> typeParsers;
 
-            public ParserContext(PostingsFormatService postingsFormatService, AnalysisService analysisService,
-                                 SimilarityLookupService similarityLookupService, ImmutableMap<String, TypeParser> typeParsers) {
-                this.postingsFormatService = postingsFormatService;
+            private final Version indexVersionCreated;
+
+            public ParserContext(AnalysisService analysisService, SimilarityLookupService similarityLookupService,
+                                 ImmutableMap<String, TypeParser> typeParsers, Version indexVersionCreated) {
                 this.analysisService = analysisService;
                 this.similarityLookupService = similarityLookupService;
                 this.typeParsers = typeParsers;
+                this.indexVersionCreated = indexVersionCreated;
             }
 
             public AnalysisService analysisService() {
                 return analysisService;
-            }
-
-            public PostingsFormatService postingFormatService() {
-                return postingsFormatService;
             }
 
             public SimilarityLookupService similarityLookupService() {
@@ -119,16 +114,18 @@ public interface Mapper extends ToXContent {
             public TypeParser typeParser(String type) {
                 return typeParsers.get(Strings.toUnderscoreCase(type));
             }
+
+            public Version indexVersionCreated() {
+                return indexVersionCreated;
+            }
         }
 
-        Mapper.Builder parse(String name, Map<String, Object> node, ParserContext parserContext) throws MapperParsingException;
+        Mapper.Builder<?,?> parse(String name, Map<String, Object> node, ParserContext parserContext) throws MapperParsingException;
     }
 
     String name();
 
-    void parse(ParseContext context) throws IOException;
-
-    void merge(Mapper mergeWith, MergeContext mergeContext) throws MergeMappingException;
+    void merge(Mapper mergeWith, MergeResult mergeResult) throws MergeMappingException;
 
     void traverse(FieldMapperListener fieldMapperListener);
 

@@ -20,6 +20,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import org.elasticsearch.common.Classes;
 import org.elasticsearch.common.inject.internal.*;
 import org.elasticsearch.common.inject.spi.*;
 import org.elasticsearch.common.inject.util.Providers;
@@ -42,7 +43,8 @@ import static org.elasticsearch.common.inject.internal.Annotations.findScopeAnno
 class InjectorImpl implements Injector, Lookups {
     final State state;
     final InjectorImpl parent;
-    final BindingsMultimap bindingsMultimap = new BindingsMultimap();
+    boolean readOnly;
+    BindingsMultimap bindingsMultimap = new BindingsMultimap();
     final Initializer initializer;
 
     /**
@@ -61,6 +63,7 @@ class InjectorImpl implements Injector, Lookups {
             localContext = parent.localContext;
         } else {
             localContext = new ThreadLocal<Object[]>() {
+                @Override
                 protected Object[] initialValue() {
                     return new Object[1];
                 }
@@ -81,6 +84,7 @@ class InjectorImpl implements Injector, Lookups {
         bindingsMultimap.put(binding.getKey().getTypeLiteral(), binding);
     }
 
+    @Override
     public <T> List<Binding<T>> findBindingsByType(TypeLiteral<T> type) {
         return bindingsMultimap.getAll(type);
     }
@@ -88,6 +92,7 @@ class InjectorImpl implements Injector, Lookups {
     /**
      * Returns the binding for {@code key}
      */
+    @Override
     public <T> BindingImpl<T> getBinding(Key<T> key) {
         Errors errors = new Errors(key);
         try {
@@ -117,14 +122,17 @@ class InjectorImpl implements Injector, Lookups {
         return getJustInTimeBinding(key, errors);
     }
 
+    @Override
     public <T> Binding<T> getBinding(Class<T> type) {
         return getBinding(Key.get(type));
     }
 
+    @Override
     public Injector getParent() {
         return parent;
     }
 
+    @Override
     public Injector createChildInjector(Iterable<? extends Module> modules) {
         return new InjectorBuilder()
                 .parentInjector(this)
@@ -132,6 +140,7 @@ class InjectorImpl implements Injector, Lookups {
                 .build();
     }
 
+    @Override
     public Injector createChildInjector(Module... modules) {
         return createChildInjector(ImmutableList.copyOf(modules));
     }
@@ -185,11 +194,11 @@ class InjectorImpl implements Injector, Lookups {
                 ((ParameterizedType) membersInjectorType).getActualTypeArguments()[0]);
         MembersInjector<T> membersInjector = membersInjectorStore.get(instanceType, errors);
 
-        InternalFactory<MembersInjector<T>> factory = new ConstantFactory<MembersInjector<T>>(
+        InternalFactory<MembersInjector<T>> factory = new ConstantFactory<>(
                 Initializables.of(membersInjector));
 
 
-        return new InstanceBindingImpl<MembersInjector<T>>(this, key, SourceProvider.UNKNOWN_SOURCE,
+        return new InstanceBindingImpl<>(this, key, SourceProvider.UNKNOWN_SOURCE,
                 factory, ImmutableSet.<InjectionPoint>of(), membersInjector);
     }
 
@@ -212,7 +221,7 @@ class InjectorImpl implements Injector, Lookups {
                 Key<T> providedKey = (Key<T>) key.ofType(entryType);
 
         BindingImpl<T> delegate = getBindingOrThrow(providedKey, errors);
-        return new ProviderBindingImpl<T>(this, key, delegate);
+        return new ProviderBindingImpl<>(this, key, delegate);
     }
 
     static class ProviderBindingImpl<T> extends BindingImpl<Provider<T>>
@@ -228,20 +237,24 @@ class InjectorImpl implements Injector, Lookups {
         static <T> InternalFactory<Provider<T>> createInternalFactory(Binding<T> providedBinding) {
             final Provider<T> provider = providedBinding.getProvider();
             return new InternalFactory<Provider<T>>() {
+                @Override
                 public Provider<T> get(Errors errors, InternalContext context, Dependency dependency) {
                     return provider;
                 }
             };
         }
 
+        @Override
         public Key<? extends T> getProvidedKey() {
             return providedBinding.getKey();
         }
 
+        @Override
         public <V> V acceptTargetVisitor(BindingTargetVisitor<? super Provider<T>, V> visitor) {
             return visitor.visit(this);
         }
 
+        @Override
         public void applyTo(Binder binder) {
             throw new UnsupportedOperationException("This element represents a synthetic binding.");
         }
@@ -298,7 +311,7 @@ class InjectorImpl implements Injector, Lookups {
                         .toException();
             }
 
-            return new ConvertedConstantBindingImpl<T>(this, key, converted, stringBinding);
+            return new ConvertedConstantBindingImpl<>(this, key, converted, stringBinding);
         } catch (ErrorsException e) {
             throw e;
         } catch (RuntimeException e) {
@@ -316,7 +329,7 @@ class InjectorImpl implements Injector, Lookups {
         ConvertedConstantBindingImpl(
                 Injector injector, Key<T> key, T value, Binding<String> originalBinding) {
             super(injector, key, originalBinding.getSource(),
-                    new ConstantFactory<T>(Initializables.of(value)), Scoping.UNSCOPED);
+                    new ConstantFactory<>(Initializables.of(value)), Scoping.UNSCOPED);
             this.value = value;
             provider = Providers.of(value);
             this.originalBinding = originalBinding;
@@ -327,22 +340,27 @@ class InjectorImpl implements Injector, Lookups {
             return provider;
         }
 
+        @Override
         public <V> V acceptTargetVisitor(BindingTargetVisitor<? super T, V> visitor) {
             return visitor.visit(this);
         }
 
+        @Override
         public T getValue() {
             return value;
         }
 
+        @Override
         public Key<String> getSourceKey() {
             return originalBinding.getKey();
         }
 
+        @Override
         public Set<Dependency<?>> getDependencies() {
             return ImmutableSet.<Dependency<?>>of(Dependency.get(getSourceKey()));
         }
 
+        @Override
         public void applyTo(Binder binder) {
             throw new UnsupportedOperationException("This element represents a synthetic binding.");
         }
@@ -459,9 +477,9 @@ class InjectorImpl implements Injector, Lookups {
 
         @SuppressWarnings("unchecked") // by definition, innerType == T, so this is safe
                 TypeLiteral<T> value = (TypeLiteral<T>) TypeLiteral.get(innerType);
-        InternalFactory<TypeLiteral<T>> factory = new ConstantFactory<TypeLiteral<T>>(
+        InternalFactory<TypeLiteral<T>> factory = new ConstantFactory<>(
                 Initializables.of(value));
-        return new InstanceBindingImpl<TypeLiteral<T>>(this, key, SourceProvider.UNKNOWN_SOURCE,
+        return new InstanceBindingImpl<>(this, key, SourceProvider.UNKNOWN_SOURCE,
                 factory, ImmutableSet.<InjectionPoint>of(), value);
     }
 
@@ -486,6 +504,7 @@ class InjectorImpl implements Injector, Lookups {
                 = getBindingOrThrow(providerKey, errors);
 
         InternalFactory<T> internalFactory = new InternalFactory<T>() {
+            @Override
             public T get(Errors errors, InternalContext context, Dependency dependency)
                     throws ErrorsException {
                 errors = errors.withSource(providerKey);
@@ -505,7 +524,7 @@ class InjectorImpl implements Injector, Lookups {
             }
         };
 
-        return new LinkedProviderBindingImpl<T>(
+        return new LinkedProviderBindingImpl<>(
                 this,
                 key,
                 rawType /* source */,
@@ -541,6 +560,7 @@ class InjectorImpl implements Injector, Lookups {
         final BindingImpl<? extends T> targetBinding = getBindingOrThrow(targetKey, errors);
 
         InternalFactory<T> internalFactory = new InternalFactory<T>() {
+            @Override
             public T get(Errors errors, InternalContext context, Dependency<?> dependency)
                     throws ErrorsException {
                 return targetBinding.getInternalFactory().get(
@@ -548,7 +568,7 @@ class InjectorImpl implements Injector, Lookups {
             }
         };
 
-        return new LinkedBindingImpl<T>(
+        return new LinkedBindingImpl<>(
                 this,
                 key,
                 rawType /* source */,
@@ -564,7 +584,7 @@ class InjectorImpl implements Injector, Lookups {
     private <T> BindingImpl<T> createJustInTimeBindingRecursive(Key<T> key, Errors errors)
             throws ErrorsException {
         // ask the parent to create the JIT binding
-        if (parent != null) {
+        if (parent != null && !parent.readOnly /* ES: don't check on parent if its read only, its already created all the bindings it can*/) {
             try {
                 return parent.createJustInTimeBindingRecursive(key, new Errors());
             } catch (ErrorsException ignored) {
@@ -650,6 +670,7 @@ class InjectorImpl implements Injector, Lookups {
     }
 
     // not test-covered
+    @Override
     public Map<Key<?>, Binding<?>> getBindings() {
         return state.getExplicitBindingsThisLevel();
     }
@@ -704,7 +725,7 @@ class InjectorImpl implements Injector, Lookups {
     <T> SingleParameterInjector<T> createParameterInjector(final Dependency<T> dependency,
                                                            final Errors errors) throws ErrorsException {
         InternalFactory<? extends T> factory = getInternalFactory(dependency.getKey(), errors);
-        return new SingleParameterInjector<T>(dependency, factory);
+        return new SingleParameterInjector<>(dependency, factory);
     }
 
     /**
@@ -725,12 +746,14 @@ class InjectorImpl implements Injector, Lookups {
      */
     MembersInjectorStore membersInjectorStore;
 
+    @Override
     @SuppressWarnings("unchecked") // the members injector type is consistent with instance's type
     public void injectMembers(Object instance) {
         MembersInjector membersInjector = getMembersInjector(instance.getClass());
         membersInjector.injectMembers(instance);
     }
 
+    @Override
     public <T> MembersInjector<T> getMembersInjector(TypeLiteral<T> typeLiteral) {
         Errors errors = new Errors(typeLiteral);
         try {
@@ -740,23 +763,43 @@ class InjectorImpl implements Injector, Lookups {
         }
     }
 
+    @Override
     public <T> MembersInjector<T> getMembersInjector(Class<T> type) {
         return getMembersInjector(TypeLiteral.get(type));
     }
 
+    @Override
     public <T> Provider<T> getProvider(Class<T> type) {
         return getProvider(Key.get(type));
     }
 
     <T> Provider<T> getProviderOrThrow(final Key<T> key, Errors errors) throws ErrorsException {
         final InternalFactory<? extends T> factory = getInternalFactory(key, errors);
-        final Dependency<T> dependency = Dependency.get(key);
+        // ES: optimize for a common case of read only instance getting from the parent...
+        if (factory instanceof InternalFactory.Instance) {
+            return new Provider<T>() {
+                @Override
+                public T get() {
+                    try {
+                        return (T) ((InternalFactory.Instance) factory).get(null, null, null);
+                    } catch (ErrorsException e) {
+                        // ignore
+                    }
+                    // should never happen...
+                    assert false;
+                    return null;
+                }
+            };
+        }
 
+        final Dependency<T> dependency = Dependency.get(key);
         return new Provider<T>() {
+            @Override
             public T get() {
                 final Errors errors = new Errors(dependency);
                 try {
                     T t = callInContext(new ContextualCallable<T>() {
+                        @Override
                         public T call(InternalContext context) throws ErrorsException {
                             context.setDependency(dependency);
                             try {
@@ -780,6 +823,7 @@ class InjectorImpl implements Injector, Lookups {
         };
     }
 
+    @Override
     public <T> Provider<T> getProvider(final Key<T> key) {
         Errors errors = new Errors(key);
         try {
@@ -791,10 +835,12 @@ class InjectorImpl implements Injector, Lookups {
         }
     }
 
+    @Override
     public <T> T getInstance(Key<T> key) {
         return getProvider(key).get();
     }
 
+    @Override
     public <T> T getInstance(Class<T> type) {
         return getProvider(type).get();
     }
@@ -820,6 +866,7 @@ class InjectorImpl implements Injector, Lookups {
         }
     }
 
+    @Override
     public String toString() {
         return new ToStringBuilder(Injector.class)
                 .add("bindings", state.getExplicitBindingsThisLevel().values())
@@ -832,5 +879,14 @@ class InjectorImpl implements Injector, Lookups {
         constructors = new ConstructorInjectorStore(this);
         membersInjectorStore = new MembersInjectorStore(this, state.getTypeListenerBindings());
         jitBindings = Maps.newHashMap();
+    }
+
+    // ES_GUICE: make all registered bindings act as eager singletons
+    public void readOnlyAllSingletons() {
+        readOnly = true;
+        state.makeAllBindingsToEagerSingletons(this);
+        bindingsMultimap = new BindingsMultimap();
+        // reindex the bindings
+        index();
     }
 }

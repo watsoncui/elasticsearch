@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,9 +23,10 @@ import com.google.common.base.Objects;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.StoredField;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.ElasticSearchParseException;
+import org.elasticsearch.ElasticsearchParseException;
+import org.elasticsearch.Version;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
@@ -33,9 +34,10 @@ import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.compress.CompressedStreamInput;
 import org.elasticsearch.common.compress.Compressor;
 import org.elasticsearch.common.compress.CompressorFactory;
-import org.elasticsearch.common.io.stream.CachedStreamOutput;
+import org.elasticsearch.common.io.stream.BytesStreamOutput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.lucene.Lucene;
+import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
@@ -47,6 +49,7 @@ import org.elasticsearch.index.mapper.*;
 import org.elasticsearch.index.mapper.core.AbstractFieldMapper;
 
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -72,15 +75,12 @@ public class SourceFieldMapper extends AbstractFieldMapper<byte[]> implements In
         public static final FieldType FIELD_TYPE = new FieldType(AbstractFieldMapper.Defaults.FIELD_TYPE);
 
         static {
-            FIELD_TYPE.setIndexed(false);
+            FIELD_TYPE.setIndexOptions(IndexOptions.NONE); // not indexed
             FIELD_TYPE.setStored(true);
             FIELD_TYPE.setOmitNorms(true);
-            FIELD_TYPE.setIndexOptions(IndexOptions.DOCS_ONLY);
             FIELD_TYPE.freeze();
         }
 
-        public static final String[] INCLUDES = Strings.EMPTY_ARRAY;
-        public static final String[] EXCLUDES = Strings.EMPTY_ARRAY;
     }
 
     public static class Builder extends Mapper.Builder<Builder, SourceFieldMapper> {
@@ -93,8 +93,8 @@ public class SourceFieldMapper extends AbstractFieldMapper<byte[]> implements In
 
         private String format = Defaults.FORMAT;
 
-        private String[] includes = Defaults.INCLUDES;
-        private String[] excludes = Defaults.EXCLUDES;
+        private String[] includes = null;
+        private String[] excludes = null;
 
         public Builder() {
             super(Defaults.NAME);
@@ -132,7 +132,7 @@ public class SourceFieldMapper extends AbstractFieldMapper<byte[]> implements In
 
         @Override
         public SourceFieldMapper build(BuilderContext context) {
-            return new SourceFieldMapper(name, enabled, format, compress, compressThreshold, includes, excludes);
+            return new SourceFieldMapper(name, enabled, format, compress, compressThreshold, includes, excludes, context.indexSettings());
         }
     }
 
@@ -141,37 +141,48 @@ public class SourceFieldMapper extends AbstractFieldMapper<byte[]> implements In
         public Mapper.Builder parse(String name, Map<String, Object> node, ParserContext parserContext) throws MapperParsingException {
             SourceFieldMapper.Builder builder = source();
 
-            for (Map.Entry<String, Object> entry : node.entrySet()) {
+            for (Iterator<Map.Entry<String, Object>> iterator = node.entrySet().iterator(); iterator.hasNext();) {
+                Map.Entry<String, Object> entry = iterator.next();
                 String fieldName = Strings.toUnderscoreCase(entry.getKey());
                 Object fieldNode = entry.getValue();
                 if (fieldName.equals("enabled")) {
                     builder.enabled(nodeBooleanValue(fieldNode));
-                } else if (fieldName.equals("compress") && fieldNode != null) {
-                    builder.compress(nodeBooleanValue(fieldNode));
-                } else if (fieldName.equals("compress_threshold") && fieldNode != null) {
-                    if (fieldNode instanceof Number) {
-                        builder.compressThreshold(((Number) fieldNode).longValue());
-                        builder.compress(true);
-                    } else {
-                        builder.compressThreshold(ByteSizeValue.parseBytesSizeValue(fieldNode.toString()).bytes());
-                        builder.compress(true);
+                    iterator.remove();
+                } else if (fieldName.equals("compress")) {
+                    if (fieldNode != null) {
+                        builder.compress(nodeBooleanValue(fieldNode));
                     }
+                    iterator.remove();
+                } else if (fieldName.equals("compress_threshold")) {
+                    if (fieldNode != null) {
+                        if (fieldNode instanceof Number) {
+                            builder.compressThreshold(((Number) fieldNode).longValue());
+                            builder.compress(true);
+                        } else {
+                            builder.compressThreshold(ByteSizeValue.parseBytesSizeValue(fieldNode.toString()).bytes());
+                            builder.compress(true);
+                        }
+                    }
+                    iterator.remove();
                 } else if ("format".equals(fieldName)) {
                     builder.format(nodeStringValue(fieldNode, null));
-                } else if (fieldName.equals("includes")) {
+                    iterator.remove();
+                } else if (fieldName.equals("includes") && parserContext.indexVersionCreated().before(Version.V_2_0_0)) {
                     List<Object> values = (List<Object>) fieldNode;
                     String[] includes = new String[values.size()];
                     for (int i = 0; i < includes.length; i++) {
                         includes[i] = values.get(i).toString();
                     }
                     builder.includes(includes);
-                } else if (fieldName.equals("excludes")) {
+                    iterator.remove();
+                } else if (fieldName.equals("excludes") && parserContext.indexVersionCreated().before(Version.V_2_0_0)) {
                     List<Object> values = (List<Object>) fieldNode;
                     String[] excludes = new String[values.size()];
                     for (int i = 0; i < excludes.length; i++) {
                         excludes[i] = values.get(i).toString();
                     }
                     builder.excludes(excludes);
+                    iterator.remove();
                 }
             }
             return builder;
@@ -182,25 +193,23 @@ public class SourceFieldMapper extends AbstractFieldMapper<byte[]> implements In
     private final boolean enabled;
 
     private Boolean compress;
-
     private long compressThreshold;
 
     private String[] includes;
-
     private String[] excludes;
 
     private String format;
 
     private XContentType formatContentType;
 
-    public SourceFieldMapper() {
-        this(Defaults.NAME, Defaults.ENABLED, Defaults.FORMAT, null, -1, Defaults.INCLUDES, Defaults.EXCLUDES);
+    public SourceFieldMapper(Settings indexSettings) {
+        this(Defaults.NAME, Defaults.ENABLED, Defaults.FORMAT, null, -1, null, null, indexSettings);
     }
 
     protected SourceFieldMapper(String name, boolean enabled, String format, Boolean compress, long compressThreshold,
-                                String[] includes, String[] excludes) {
-        super(new Names(name, name, name, name), Defaults.BOOST, new FieldType(Defaults.FIELD_TYPE),
-                Lucene.KEYWORD_ANALYZER, Lucene.KEYWORD_ANALYZER, null, null, null); // Only stored.
+                                String[] includes, String[] excludes, Settings indexSettings) {
+        super(new Names(name, name, name, name), Defaults.BOOST, new FieldType(Defaults.FIELD_TYPE), false,
+                Lucene.KEYWORD_ANALYZER, Lucene.KEYWORD_ANALYZER, null, null, null, indexSettings); // Only stored.
         this.enabled = enabled;
         this.compress = compress;
         this.compressThreshold = compressThreshold;
@@ -212,6 +221,15 @@ public class SourceFieldMapper extends AbstractFieldMapper<byte[]> implements In
 
     public boolean enabled() {
         return this.enabled;
+    }
+
+    public String[] excludes() {
+        return this.excludes != null ? this.excludes : Strings.EMPTY_ARRAY;
+
+    }
+
+    public String[] includes() {
+        return this.includes != null ? this.includes : Strings.EMPTY_ARRAY;
     }
 
     @Override
@@ -234,12 +252,9 @@ public class SourceFieldMapper extends AbstractFieldMapper<byte[]> implements In
     }
 
     @Override
-    public void parse(ParseContext context) throws IOException {
+    public Mapper parse(ParseContext context) throws IOException {
         // nothing to do here, we will call it in pre parse
-    }
-
-    @Override
-    public void validate(ParseContext context) throws MapperParsingException {
+        return null;
     }
 
     @Override
@@ -248,30 +263,28 @@ public class SourceFieldMapper extends AbstractFieldMapper<byte[]> implements In
     }
 
     @Override
-    protected Field parseCreateField(ParseContext context) throws IOException {
+    protected void parseCreateField(ParseContext context, List<Field> fields) throws IOException {
         if (!enabled) {
-            return null;
+            return;
         }
         if (!fieldType.stored()) {
-            return null;
+            return;
         }
         if (context.flyweight()) {
-            return null;
+            return;
         }
         BytesReference source = context.source();
 
-        boolean filtered = includes.length > 0 || excludes.length > 0;
+        boolean filtered = (includes != null && includes.length > 0) || (excludes != null && excludes.length > 0);
         if (filtered) {
             // we don't update the context source if we filter, we want to keep it as is...
 
             Tuple<XContentType, Map<String, Object>> mapTuple = XContentHelper.convertToMap(source, true);
             Map<String, Object> filteredSource = XContentMapValues.filter(mapTuple.v2(), includes, excludes);
-            CachedStreamOutput.Entry cachedEntry = CachedStreamOutput.popEntry();
-            StreamOutput streamOutput;
+            BytesStreamOutput bStream = new BytesStreamOutput();
+            StreamOutput streamOutput = bStream;
             if (compress != null && compress && (compressThreshold == -1 || source.length() > compressThreshold)) {
-                streamOutput = cachedEntry.bytes(CompressorFactory.defaultCompressor());
-            } else {
-                streamOutput = cachedEntry.bytes();
+                streamOutput = CompressorFactory.defaultCompressor().streamOutput(bStream);
             }
             XContentType contentType = formatContentType;
             if (contentType == null) {
@@ -280,31 +293,23 @@ public class SourceFieldMapper extends AbstractFieldMapper<byte[]> implements In
             XContentBuilder builder = XContentFactory.contentBuilder(contentType, streamOutput).map(filteredSource);
             builder.close();
 
-            source = cachedEntry.bytes().bytes().copyBytesArray();
-
-            CachedStreamOutput.pushEntry(cachedEntry);
+            source = bStream.bytes();
         } else if (compress != null && compress && !CompressorFactory.isCompressed(source)) {
             if (compressThreshold == -1 || source.length() > compressThreshold) {
-                CachedStreamOutput.Entry cachedEntry = CachedStreamOutput.popEntry();
-                try {
-                    XContentType contentType = XContentFactory.xContentType(source);
-                    if (formatContentType != null && formatContentType != contentType) {
-                        XContentBuilder builder = XContentFactory.contentBuilder(formatContentType, cachedEntry.bytes(CompressorFactory.defaultCompressor()));
-                        builder.copyCurrentStructure(XContentFactory.xContent(contentType).createParser(source));
-                        builder.close();
-                    } else {
-                        StreamOutput streamOutput = cachedEntry.bytes(CompressorFactory.defaultCompressor());
-                        source.writeTo(streamOutput);
-                        streamOutput.close();
-                    }
-                    // we copy over the byte array, since we need to push back the cached entry
-                    // TODO, we we had a handle into when we are done with parsing, then we push back then and not copy over bytes
-                    source = cachedEntry.bytes().bytes().copyBytesArray();
-                    // update the data in the context, so it can be compressed and stored compressed outside...
-                    context.source(source);
-                } finally {
-                    CachedStreamOutput.pushEntry(cachedEntry);
+                BytesStreamOutput bStream = new BytesStreamOutput();
+                XContentType contentType = XContentFactory.xContentType(source);
+                if (formatContentType != null && formatContentType != contentType) {
+                    XContentBuilder builder = XContentFactory.contentBuilder(formatContentType, CompressorFactory.defaultCompressor().streamOutput(bStream));
+                    builder.copyCurrentStructure(XContentFactory.xContent(contentType).createParser(source));
+                    builder.close();
+                } else {
+                    StreamOutput streamOutput = CompressorFactory.defaultCompressor().streamOutput(bStream);
+                    source.writeTo(streamOutput);
+                    streamOutput.close();
                 }
+                source = bStream.bytes();
+                // update the data in the context, so it can be compressed and stored compressed outside...
+                context.source(source);
             }
         } else if (formatContentType != null) {
             // see if we need to convert the content type
@@ -315,18 +320,14 @@ public class SourceFieldMapper extends AbstractFieldMapper<byte[]> implements In
                 compressedStreamInput.resetToBufferStart();
                 if (contentType != formatContentType) {
                     // we need to reread and store back, compressed....
-                    CachedStreamOutput.Entry cachedEntry = CachedStreamOutput.popEntry();
-                    try {
-                        StreamOutput streamOutput = cachedEntry.bytes(CompressorFactory.defaultCompressor());
-                        XContentBuilder builder = XContentFactory.contentBuilder(formatContentType, streamOutput);
-                        builder.copyCurrentStructure(XContentFactory.xContent(contentType).createParser(compressedStreamInput));
-                        builder.close();
-                        source = cachedEntry.bytes().bytes().copyBytesArray();
-                        // update the data in the context, so we store it in the translog in this format
-                        context.source(source);
-                    } finally {
-                        CachedStreamOutput.pushEntry(cachedEntry);
-                    }
+                    BytesStreamOutput bStream = new BytesStreamOutput();
+                    StreamOutput streamOutput = CompressorFactory.defaultCompressor().streamOutput(bStream);
+                    XContentBuilder builder = XContentFactory.contentBuilder(formatContentType, streamOutput);
+                    builder.copyCurrentStructure(XContentFactory.xContent(contentType).createParser(compressedStreamInput));
+                    builder.close();
+                    source = bStream.bytes();
+                    // update the data in the context, so we store it in the translog in this format
+                    context.source(source);
                 } else {
                     compressedStreamInput.close();
                 }
@@ -335,22 +336,20 @@ public class SourceFieldMapper extends AbstractFieldMapper<byte[]> implements In
                 if (contentType != formatContentType) {
                     // we need to reread and store back
                     // we need to reread and store back, compressed....
-                    CachedStreamOutput.Entry cachedEntry = CachedStreamOutput.popEntry();
-                    try {
-                        XContentBuilder builder = XContentFactory.contentBuilder(formatContentType, cachedEntry.bytes());
-                        builder.copyCurrentStructure(XContentFactory.xContent(contentType).createParser(source));
-                        builder.close();
-                        source = cachedEntry.bytes().bytes().copyBytesArray();
-                        // update the data in the context, so we store it in the translog in this format
-                        context.source(source);
-                    } finally {
-                        CachedStreamOutput.pushEntry(cachedEntry);
-                    }
+                    BytesStreamOutput bStream = new BytesStreamOutput();
+                    XContentBuilder builder = XContentFactory.contentBuilder(formatContentType, bStream);
+                    builder.copyCurrentStructure(XContentFactory.xContent(contentType).createParser(source));
+                    builder.close();
+                    source = bStream.bytes();
+                    // update the data in the context, so we store it in the translog in this format
+                    context.source(source);
                 }
             }
         }
-        assert source.hasArray();
-        return new StoredField(names().indexName(), source.array(), source.arrayOffset(), source.length());
+        if (!source.hasArray()) {
+            source = source.toBytesArray();
+        }
+        fields.add(new StoredField(names().indexName(), source.array(), source.arrayOffset(), source.length()));
     }
 
     @Override
@@ -367,7 +366,7 @@ public class SourceFieldMapper extends AbstractFieldMapper<byte[]> implements In
         try {
             return CompressorFactory.uncompressIfNeeded(bValue).toBytes();
         } catch (IOException e) {
-            throw new ElasticSearchParseException("failed to decompress source", e);
+            throw new ElasticsearchParseException("failed to decompress source", e);
         }
     }
 
@@ -378,42 +377,61 @@ public class SourceFieldMapper extends AbstractFieldMapper<byte[]> implements In
 
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
+        boolean includeDefaults = params.paramAsBoolean("include_defaults", false);
+
         // all are defaults, no need to write it at all
-        if (enabled == Defaults.ENABLED && compress == null && compressThreshold == -1 && includes.length == 0 && excludes.length == 0) {
+        if (!includeDefaults && enabled == Defaults.ENABLED && compress == null && compressThreshold == -1 && includes == null && excludes == null) {
             return builder;
         }
         builder.startObject(contentType());
-        if (enabled != Defaults.ENABLED) {
+        if (includeDefaults || enabled != Defaults.ENABLED) {
             builder.field("enabled", enabled);
         }
-        if (!Objects.equal(format, Defaults.FORMAT)) {
+        if (includeDefaults || !Objects.equal(format, Defaults.FORMAT)) {
             builder.field("format", format);
         }
         if (compress != null) {
             builder.field("compress", compress);
+        } else if (includeDefaults) {
+            builder.field("compress", false);
         }
         if (compressThreshold != -1) {
             builder.field("compress_threshold", new ByteSizeValue(compressThreshold).toString());
+        } else if (includeDefaults) {
+            builder.field("compress_threshold", -1);
         }
-        if (includes.length > 0) {
+
+        if (includes != null) {
             builder.field("includes", includes);
+        } else if (includeDefaults) {
+            builder.field("includes", Strings.EMPTY_ARRAY);
         }
-        if (excludes.length > 0) {
+
+        if (excludes != null) {
             builder.field("excludes", excludes);
+        } else if (includeDefaults) {
+            builder.field("excludes", Strings.EMPTY_ARRAY);
         }
+
         builder.endObject();
         return builder;
     }
 
     @Override
-    public void merge(Mapper mergeWith, MergeContext mergeContext) throws MergeMappingException {
+    public void merge(Mapper mergeWith, MergeResult mergeResult) throws MergeMappingException {
         SourceFieldMapper sourceMergeWith = (SourceFieldMapper) mergeWith;
-        if (!mergeContext.mergeFlags().simulate()) {
+        if (!mergeResult.simulate()) {
             if (sourceMergeWith.compress != null) {
                 this.compress = sourceMergeWith.compress;
             }
             if (sourceMergeWith.compressThreshold != -1) {
                 this.compressThreshold = sourceMergeWith.compressThreshold;
+            }
+            if (sourceMergeWith.includes != null) {
+                this.includes = sourceMergeWith.includes;
+            }
+            if (sourceMergeWith.excludes != null) {
+                this.excludes = sourceMergeWith.excludes;
             }
         }
     }

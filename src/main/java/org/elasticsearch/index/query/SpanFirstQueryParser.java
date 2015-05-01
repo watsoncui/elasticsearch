@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -52,6 +52,7 @@ public class SpanFirstQueryParser implements QueryParser {
 
         SpanQuery match = null;
         int end = -1;
+        String queryName = null;
 
         String currentFieldName = null;
         XContentParser.Token token;
@@ -62,31 +63,36 @@ public class SpanFirstQueryParser implements QueryParser {
                 if ("match".equals(currentFieldName)) {
                     Query query = parseContext.parseInnerQuery();
                     if (!(query instanceof SpanQuery)) {
-                        throw new QueryParsingException(parseContext.index(), "spanFirst [match] must be of type span query");
+                        throw new QueryParsingException(parseContext, "spanFirst [match] must be of type span query");
                     }
                     match = (SpanQuery) query;
                 } else {
-                    throw new QueryParsingException(parseContext.index(), "[span_first] query does not support [" + currentFieldName + "]");
+                    throw new QueryParsingException(parseContext, "[span_first] query does not support [" + currentFieldName + "]");
                 }
             } else {
                 if ("boost".equals(currentFieldName)) {
                     boost = parser.floatValue();
                 } else if ("end".equals(currentFieldName)) {
                     end = parser.intValue();
+                } else if ("_name".equals(currentFieldName)) {
+                    queryName = parser.text();
                 } else {
-                    throw new QueryParsingException(parseContext.index(), "[span_first] query does not support [" + currentFieldName + "]");
+                    throw new QueryParsingException(parseContext, "[span_first] query does not support [" + currentFieldName + "]");
                 }
             }
         }
         if (match == null) {
-            throw new QueryParsingException(parseContext.index(), "spanFirst must have [match] span query clause");
+            throw new QueryParsingException(parseContext, "spanFirst must have [match] span query clause");
         }
         if (end == -1) {
-            throw new QueryParsingException(parseContext.index(), "spanFirst must have [end] set for it");
+            throw new QueryParsingException(parseContext, "spanFirst must have [end] set for it");
         }
 
         SpanFirstQuery query = new SpanFirstQuery(match, end);
         query.setBoost(boost);
+        if (queryName != null) {
+            parseContext.addNamedQuery(queryName, query);
+        }
         return query;
     }
 }

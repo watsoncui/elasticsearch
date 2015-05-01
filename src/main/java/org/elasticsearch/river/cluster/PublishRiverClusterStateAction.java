@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -36,7 +36,9 @@ import java.io.IOException;
  */
 public class PublishRiverClusterStateAction extends AbstractComponent {
 
-    public static interface NewClusterStateListener {
+    public static final String ACTION_NAME = "internal:river/state/publish";
+
+    public interface NewClusterStateListener {
         void onNewClusterState(RiverClusterState clusterState);
     }
 
@@ -52,17 +54,18 @@ public class PublishRiverClusterStateAction extends AbstractComponent {
         this.transportService = transportService;
         this.clusterService = clusterService;
         this.listener = listener;
-        transportService.registerHandler(PublishClusterStateRequestHandler.ACTION, new PublishClusterStateRequestHandler());
+        transportService.registerRequestHandler(ACTION_NAME, PublishClusterStateRequest.class, ThreadPool.Names.SAME, new PublishClusterStateRequestHandler());
     }
 
     public void close() {
-        transportService.removeHandler(PublishClusterStateRequestHandler.ACTION);
+        transportService.removeHandler(ACTION_NAME);
     }
 
     public void publish(RiverClusterState clusterState) {
         final DiscoveryNodes discoNodes = clusterService.state().nodes();
+        final DiscoveryNode localNode = discoNodes.localNode();
         for (final DiscoveryNode node : discoNodes) {
-            if (node.equals(discoNodes.localNode())) {
+            if (node.equals(localNode)) {
                 // no need to send to our self
                 continue;
             }
@@ -75,7 +78,7 @@ public class PublishRiverClusterStateAction extends AbstractComponent {
                 continue;
             }
 
-            transportService.sendRequest(node, PublishClusterStateRequestHandler.ACTION, new PublishClusterStateRequest(clusterState), new EmptyTransportResponseHandler(ThreadPool.Names.SAME) {
+            transportService.sendRequest(node, ACTION_NAME, new PublishClusterStateRequest(clusterState), new EmptyTransportResponseHandler(ThreadPool.Names.SAME) {
                 @Override
                 public void handleException(TransportException exp) {
                     logger.debug("failed to send cluster state to [{}], should be detected as failed soon...", exp, node);
@@ -84,11 +87,11 @@ public class PublishRiverClusterStateAction extends AbstractComponent {
         }
     }
 
-    private class PublishClusterStateRequest extends TransportRequest {
+    static class PublishClusterStateRequest extends TransportRequest {
 
         private RiverClusterState clusterState;
 
-        private PublishClusterStateRequest() {
+        PublishClusterStateRequest() {
         }
 
         private PublishClusterStateRequest(RiverClusterState clusterState) {
@@ -108,20 +111,7 @@ public class PublishRiverClusterStateAction extends AbstractComponent {
         }
     }
 
-    private class PublishClusterStateRequestHandler extends BaseTransportRequestHandler<PublishClusterStateRequest> {
-
-        static final String ACTION = "river/state/publish";
-
-        @Override
-        public PublishClusterStateRequest newInstance() {
-            return new PublishClusterStateRequest();
-        }
-
-        @Override
-        public String executor() {
-            return ThreadPool.Names.SAME;
-        }
-
+    private class PublishClusterStateRequestHandler implements TransportRequestHandler<PublishClusterStateRequest> {
         @Override
         public void messageReceived(PublishClusterStateRequest request, TransportChannel channel) throws Exception {
             listener.onNewClusterState(request.clusterState);

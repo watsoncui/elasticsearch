@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -36,16 +36,16 @@ public class IdentityHashSet<E>
     private static final Object PRESENT = new Object();
 
     public IdentityHashSet() {
-        map = new IdentityHashMap<E, Object>();
+        map = new IdentityHashMap<>();
     }
 
     public IdentityHashSet(Collection<? extends E> c) {
-        map = new IdentityHashMap<E, Object>(Math.max((int) (c.size() / .75f) + 1, 16));
+        map = new IdentityHashMap<>(Math.max((int) (c.size() / .75f) + 1, 16));
         addAll(c);
     }
 
     public IdentityHashSet(int expectedSize) {
-        map = new IdentityHashMap<E, Object>(expectedSize);
+        map = new IdentityHashMap<>(expectedSize);
     }
 
     /**
@@ -55,6 +55,7 @@ public class IdentityHashSet<E>
      * @return an Iterator over the elements in this set
      * @see ConcurrentModificationException
      */
+    @Override
     public Iterator<E> iterator() {
         return map.keySet().iterator();
     }
@@ -64,6 +65,7 @@ public class IdentityHashSet<E>
      *
      * @return the number of elements in this set (its cardinality)
      */
+    @Override
     public int size() {
         return map.size();
     }
@@ -73,6 +75,7 @@ public class IdentityHashSet<E>
      *
      * @return <tt>true</tt> if this set contains no elements
      */
+    @Override
     public boolean isEmpty() {
         return map.isEmpty();
     }
@@ -81,11 +84,12 @@ public class IdentityHashSet<E>
      * Returns <tt>true</tt> if this set contains the specified element.
      * More formally, returns <tt>true</tt> if and only if this set
      * contains an element <tt>e</tt> such that
-     * <tt>(o==null&nbsp;?&nbsp;e==null&nbsp;:&nbsp;o.equals(e))</tt>.
+     * <tt>(o==e)</tt>.
      *
      * @param o element whose presence in this set is to be tested
      * @return <tt>true</tt> if this set contains the specified element
      */
+    @Override
     public boolean contains(Object o) {
         return map.containsKey(o);
     }
@@ -94,7 +98,7 @@ public class IdentityHashSet<E>
      * Adds the specified element to this set if it is not already present.
      * More formally, adds the specified element <tt>e</tt> to this set if
      * this set contains no element <tt>e2</tt> such that
-     * <tt>(e==null&nbsp;?&nbsp;e2==null&nbsp;:&nbsp;e.equals(e2))</tt>.
+     * <tt>(e==e2)</tt>.
      * If this set already contains the element, the call leaves the set
      * unchanged and returns <tt>false</tt>.
      *
@@ -102,6 +106,7 @@ public class IdentityHashSet<E>
      * @return <tt>true</tt> if this set did not already contain the specified
      *         element
      */
+    @Override
     public boolean add(E e) {
         return map.put(e, PRESENT) == null;
     }
@@ -109,7 +114,7 @@ public class IdentityHashSet<E>
     /**
      * Removes the specified element from this set if it is present.
      * More formally, removes an element <tt>e</tt> such that
-     * <tt>(o==null&nbsp;?&nbsp;e==null&nbsp;:&nbsp;o.equals(e))</tt>,
+     * <tt>(o==e)</tt>,
      * if this set contains such an element.  Returns <tt>true</tt> if
      * this set contained the element (or equivalently, if this set
      * changed as a result of the call).  (This set will not contain the
@@ -118,6 +123,7 @@ public class IdentityHashSet<E>
      * @param o object to be removed from this set, if present
      * @return <tt>true</tt> if the set contained the specified element
      */
+    @Override
     public boolean remove(Object o) {
         return map.remove(o) == PRESENT;
     }
@@ -126,6 +132,7 @@ public class IdentityHashSet<E>
      * Removes all of the elements from this set.
      * The set will be empty after this call returns.
      */
+    @Override
     public void clear() {
         map.clear();
     }
@@ -136,6 +143,7 @@ public class IdentityHashSet<E>
      *
      * @return a shallow copy of this set
      */
+    @Override
     public Object clone() {
         try {
             IdentityHashSet<E> newSet = (IdentityHashSet<E>) super.clone();
@@ -181,7 +189,7 @@ public class IdentityHashSet<E>
         // Read in size
         int size = s.readInt();
 
-        map = new IdentityHashMap<E, Object>(size);
+        map = new IdentityHashMap<>(size);
 
         // Read in all elements in the proper order.
         for (int i = 0; i < size; i++) {

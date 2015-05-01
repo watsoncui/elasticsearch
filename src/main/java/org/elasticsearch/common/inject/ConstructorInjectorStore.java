@@ -31,6 +31,7 @@ class ConstructorInjectorStore {
 
     private final FailableCache<TypeLiteral<?>, ConstructorInjector<?>> cache
             = new FailableCache<TypeLiteral<?>, ConstructorInjector<?>>() {
+        @Override
         @SuppressWarnings("unchecked")
         protected ConstructorInjector<?> create(TypeLiteral<?> type, Errors errors)
                 throws ErrorsException {
@@ -66,11 +67,11 @@ class ConstructorInjectorStore {
                 = injector.getParametersInjectors(injectionPoint.getDependencies(), errors);
         MembersInjectorImpl<T> membersInjector = injector.membersInjectorStore.get(type, errors);
 
-        ConstructionProxyFactory<T> factory = new DefaultConstructionProxyFactory<T>(injectionPoint);
+        ConstructionProxyFactory<T> factory = new DefaultConstructionProxyFactory<>(injectionPoint);
 
         errors.throwIfNewErrors(numErrorsBefore);
 
-        return new ConstructorInjector<T>(membersInjector.getInjectionPoints(), factory.create(),
+        return new ConstructorInjector<>(membersInjector.getInjectionPoints(), factory.create(),
                 constructorParameterInjectors, membersInjector);
     }
 }

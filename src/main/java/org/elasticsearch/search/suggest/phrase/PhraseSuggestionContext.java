@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,11 +19,14 @@
 package org.elasticsearch.search.suggest.phrase;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.cluster.routing.Preference;
+import org.elasticsearch.script.CompiledScript;
 import org.elasticsearch.search.suggest.DirectSpellcheckerSettings;
 import org.elasticsearch.search.suggest.Suggester;
 import org.elasticsearch.search.suggest.SuggestionSearchContext.SuggestionContext;
@@ -34,13 +37,21 @@ class PhraseSuggestionContext extends SuggestionContext {
     private float maxErrors = 0.5f;
     private BytesRef separator = SEPARATOR;
     private float realworldErrorLikelihood = 0.95f;
-    private List<DirectCandidateGenerator> generators = new ArrayList<PhraseSuggestionContext.DirectCandidateGenerator>();
+    private List<DirectCandidateGenerator> generators = new ArrayList<>();
     private int gramSize = 1;
     private float confidence = 1.0f;
+    private int tokenLimit = NoisyChannelSpellChecker.DEFAULT_TOKEN_LIMIT;
+    private BytesRef preTag;
+    private BytesRef postTag;
+    private CompiledScript collateQueryScript;
+    private CompiledScript collateFilterScript;
+    private String preference = Preference.ONLY_LOCAL.type();
+    private Map<String, Object> collateScriptParams = new HashMap<>(1);
 
     private WordScorer.WordScorerFactory scorer;
 
     private boolean requireUnigram = true;
+    private boolean prune = false;
 
     public PhraseSuggestionContext(Suggester<? extends PhraseSuggestionContext> suggester) {
         super(suggester);
@@ -122,7 +133,7 @@ class PhraseSuggestionContext extends SuggestionContext {
 
         public void size(int size) {
             if (size <= 0) {
-                throw new ElasticSearchIllegalArgumentException("Size must be positive");
+                throw new IllegalArgumentException("Size must be positive");
             }
             this.size = size;
         }
@@ -153,5 +164,69 @@ class PhraseSuggestionContext extends SuggestionContext {
     public boolean getRequireUnigram() {
         return requireUnigram;
     }
+    
+    public void setTokenLimit(int tokenLimit) {
+        this.tokenLimit = tokenLimit;
+    }
    
+    public int getTokenLimit() {
+        return tokenLimit;
+    }
+
+    public void setPreTag(BytesRef preTag) {
+        this.preTag = preTag;
+    }
+
+    public BytesRef getPreTag() {
+        return preTag;
+    }
+
+    public void setPostTag(BytesRef postTag) {
+        this.postTag = postTag;
+    }
+
+    public BytesRef getPostTag() {
+        return postTag;
+    }
+
+    CompiledScript getCollateQueryScript() {
+        return collateQueryScript;
+    }
+
+    void setCollateQueryScript(CompiledScript collateQueryScript) {
+        this.collateQueryScript = collateQueryScript;
+    }
+
+    CompiledScript getCollateFilterScript() {
+        return collateFilterScript;
+    }
+
+    void setCollateFilterScript(CompiledScript collateFilterScript) {
+        this.collateFilterScript = collateFilterScript;
+    }
+
+    String getPreference() {
+        return preference;
+    }
+
+    void setPreference(String preference) {
+        this.preference = preference;
+    }
+
+    Map<String, Object> getCollateScriptParams() {
+        return collateScriptParams;
+    }
+
+    void setCollateScriptParams(Map<String, Object> collateScriptParams) {
+        this.collateScriptParams = collateScriptParams;
+    }
+
+    void setCollatePrune(boolean prune) {
+        this.prune = prune;
+    }
+
+    boolean collatePrune() {
+        return prune;
+    }
+
 }

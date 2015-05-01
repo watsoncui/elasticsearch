@@ -1,13 +1,13 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,30 +16,25 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.rest.action.admin.indices.template.get;
 
-import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.admin.cluster.state.ClusterStateRequest;
-import org.elasticsearch.action.admin.cluster.state.ClusterStateResponse;
+import com.google.common.collect.Maps;
+import org.elasticsearch.action.admin.indices.template.get.GetIndexTemplatesRequest;
+import org.elasticsearch.action.admin.indices.template.get.GetIndexTemplatesResponse;
 import org.elasticsearch.client.Client;
-import org.elasticsearch.client.Requests;
 import org.elasticsearch.cluster.metadata.IndexTemplateMetaData;
-import org.elasticsearch.cluster.metadata.MetaData;
-import org.elasticsearch.common.compress.CompressedString;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.settings.SettingsFilter;
+import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.rest.*;
-import org.elasticsearch.rest.action.support.RestXContentBuilder;
+import org.elasticsearch.rest.action.support.RestBuilderListener;
 
-import java.io.IOException;
 import java.util.Map;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
+import static org.elasticsearch.rest.RestStatus.NOT_FOUND;
 import static org.elasticsearch.rest.RestStatus.OK;
 
 /**
@@ -47,80 +42,44 @@ import static org.elasticsearch.rest.RestStatus.OK;
  */
 public class RestGetIndexTemplateAction extends BaseRestHandler {
 
-    private final SettingsFilter settingsFilter;
-
     @Inject
-    public RestGetIndexTemplateAction(Settings settings, Client client, RestController controller,
-                                      SettingsFilter settingsFilter) {
-        super(settings, client);
-        this.settingsFilter = settingsFilter;
+    public RestGetIndexTemplateAction(Settings settings, RestController controller, Client client) {
+        super(settings, controller, client);
 
+        controller.registerHandler(GET, "/_template", this);
         controller.registerHandler(GET, "/_template/{name}", this);
     }
 
     @Override
-    public void handleRequest(final RestRequest request, final RestChannel channel) {
-        ClusterStateRequest clusterStateRequest = Requests.clusterStateRequest()
-                .filterRoutingTable(true)
-                .filterNodes(true)
-                .filteredIndexTemplates(request.param("name"))
-                .filteredIndices("_na");
+    public void handleRequest(final RestRequest request, final RestChannel channel, final Client client) {
+        final String[] names = Strings.splitStringByCommaToArray(request.param("name"));
 
-        clusterStateRequest.listenerThreaded(false);
+        GetIndexTemplatesRequest getIndexTemplatesRequest = new GetIndexTemplatesRequest(names);
+        getIndexTemplatesRequest.local(request.paramAsBoolean("local", getIndexTemplatesRequest.local()));
+        getIndexTemplatesRequest.masterNodeTimeout(request.paramAsTime("master_timeout", getIndexTemplatesRequest.masterNodeTimeout()));
 
-        client.admin().cluster().state(clusterStateRequest, new ActionListener<ClusterStateResponse>() {
+        getIndexTemplatesRequest.listenerThreaded(false);
+
+        final boolean implicitAll = getIndexTemplatesRequest.names().length == 0;
+
+        client.admin().indices().getTemplates(getIndexTemplatesRequest, new RestBuilderListener<GetIndexTemplatesResponse>(channel) {
             @Override
-            public void onResponse(ClusterStateResponse response) {
-                try {
-                    MetaData metaData = response.getState().metaData();
-                    XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
-                    builder.startObject();
+            public RestResponse buildResponse(GetIndexTemplatesResponse getIndexTemplatesResponse, XContentBuilder builder) throws Exception {
+                boolean templateExists = getIndexTemplatesResponse.getIndexTemplates().size() > 0;
 
-                    for (IndexTemplateMetaData indexMetaData : metaData.templates().values()) {
-                        builder.startObject(indexMetaData.name(), XContentBuilder.FieldCaseConversion.NONE);
+                Map<String, String> paramsMap = Maps.newHashMap();
+                paramsMap.put("reduce_mappings", "true");
+                ToXContent.Params params = new ToXContent.DelegatingMapParams(paramsMap, request);
 
-                        builder.field("template", indexMetaData.template());
-                        builder.field("order", indexMetaData.order());
-
-                        builder.startObject("settings");
-                        Settings settings = settingsFilter.filterSettings(indexMetaData.settings());
-                        for (Map.Entry<String, String> entry : settings.getAsMap().entrySet()) {
-                            builder.field(entry.getKey(), entry.getValue());
-                        }
-                        builder.endObject();
-
-                        builder.startObject("mappings");
-                        for (Map.Entry<String, CompressedString> entry : indexMetaData.mappings().entrySet()) {
-                            byte[] mappingSource = entry.getValue().uncompressed();
-                            XContentParser parser = XContentFactory.xContent(mappingSource).createParser(mappingSource);
-                            Map<String, Object> mapping = parser.map();
-                            if (mapping.size() == 1 && mapping.containsKey(entry.getKey())) {
-                                // the type name is the root value, reduce it
-                                mapping = (Map<String, Object>) mapping.get(entry.getKey());
-                            }
-                            builder.field(entry.getKey());
-                            builder.map(mapping);
-                        }
-                        builder.endObject();
-
-                        builder.endObject();
-                    }
-
-                    builder.endObject();
-
-                    channel.sendResponse(new XContentRestResponse(request, OK, builder));
-                } catch (Exception e) {
-                    onFailure(e);
+                builder.startObject();
+                for (IndexTemplateMetaData indexTemplateMetaData : getIndexTemplatesResponse.getIndexTemplates()) {
+                    IndexTemplateMetaData.Builder.toXContent(indexTemplateMetaData, builder, params);
                 }
-            }
+                builder.endObject();
 
-            @Override
-            public void onFailure(Throwable e) {
-                try {
-                    channel.sendResponse(new XContentThrowableRestResponse(request, e));
-                } catch (IOException e1) {
-                    logger.error("Failed to send failure response", e1);
-                }
+                RestStatus restStatus = (templateExists || implicitAll) ? OK : NOT_FOUND;
+
+                return new BytesRestResponse(restStatus, builder);
             }
         });
     }

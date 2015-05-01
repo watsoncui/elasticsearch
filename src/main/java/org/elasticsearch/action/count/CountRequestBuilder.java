@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,20 +19,25 @@
 
 package org.elasticsearch.action.count;
 
+import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.support.QuerySourceBuilder;
 import org.elasticsearch.action.support.broadcast.BroadcastOperationRequestBuilder;
 import org.elasticsearch.client.Client;
-import org.elasticsearch.client.internal.InternalClient;
 import org.elasticsearch.common.bytes.BytesReference;
+import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.common.xcontent.XContentHelper;
 import org.elasticsearch.index.query.QueryBuilder;
 
 /**
  * A count action request builder.
  */
-public class CountRequestBuilder extends BroadcastOperationRequestBuilder<CountRequest, CountResponse, CountRequestBuilder> {
+public class CountRequestBuilder extends BroadcastOperationRequestBuilder<CountRequest, CountResponse, CountRequestBuilder, Client> {
+
+    private QuerySourceBuilder sourceBuilder;
 
     public CountRequestBuilder(Client client) {
-        super((InternalClient) client, new CountRequest());
+        super(client, new CountRequest());
     }
 
     /**
@@ -85,42 +90,75 @@ public class CountRequestBuilder extends BroadcastOperationRequestBuilder<CountR
      * @see org.elasticsearch.index.query.QueryBuilders
      */
     public CountRequestBuilder setQuery(QueryBuilder queryBuilder) {
-        request.query(queryBuilder);
+        sourceBuilder().setQuery(queryBuilder);
+        return this;
+    }
+
+    /**
+     * The query binary to execute
+     */
+    public CountRequestBuilder setQuery(BytesReference queryBinary) {
+        sourceBuilder().setQuery(queryBinary);
+        return this;
+    }
+    
+    /**
+     * Constructs a new builder with a raw search query.
+     */
+    public CountRequestBuilder setQuery(XContentBuilder query) {
+        return setQuery(query.bytes());
+    }
+
+
+    /**
+     * The source to execute.
+     */
+    public CountRequestBuilder setSource(BytesReference source) {
+        request().source(source);
         return this;
     }
 
     /**
      * The query source to execute.
-     *
-     * @see org.elasticsearch.index.query.QueryBuilders
      */
-    public CountRequestBuilder setQuery(BytesReference querySource) {
-        request.query(querySource, false);
+    public CountRequestBuilder setSource(byte[] querySource) {
+        request.source(querySource);
         return this;
     }
 
-    /**
-     * The query source to execute.
-     *
-     * @see org.elasticsearch.index.query.QueryBuilders
-     */
-    public CountRequestBuilder setQuery(BytesReference querySource, boolean unsafe) {
-        request.query(querySource, unsafe);
-        return this;
-    }
-
-    /**
-     * The query source to execute.
-     *
-     * @see org.elasticsearch.index.query.QueryBuilders
-     */
-    public CountRequestBuilder setQuery(byte[] querySource) {
-        request.query(querySource);
+    public CountRequestBuilder setTerminateAfter(int terminateAfter) {
+        request().terminateAfter(terminateAfter);
         return this;
     }
 
     @Override
     protected void doExecute(ActionListener<CountResponse> listener) {
-        ((InternalClient) client).count(request, listener);
+        if (sourceBuilder != null) {
+            request.source(sourceBuilder);
+        }
+
+        client.count(request, listener);
+    }
+
+    private QuerySourceBuilder sourceBuilder() {
+        if (sourceBuilder == null) {
+            sourceBuilder = new QuerySourceBuilder();
+        }
+        return sourceBuilder;
+    }
+
+    @Override
+    public String toString() {
+        if (sourceBuilder != null) {
+            return sourceBuilder.toString();
+        }
+        if (request.source() != null) {
+            try {
+                return XContentHelper.convertToJson(request.source().toBytesArray(), false, true);
+            } catch(Exception e) {
+                return "{ \"error\" : \"" + ExceptionsHelper.detailedMessage(e) + "\"}";
+            }
+        }
+        return new QuerySourceBuilder().toString();
     }
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,21 +19,24 @@
 
 package org.elasticsearch.common.lucene.search.function;
 
-import org.apache.lucene.index.AtomicReaderContext;
-import org.apache.lucene.search.Explanation;
+import org.apache.lucene.index.LeafReaderContext;
+
+import java.io.IOException;
 
 /**
  *
  */
-public interface ScoreFunction {
+public abstract class ScoreFunction {
 
-    void setNextReader(AtomicReaderContext context);
+    private final CombineFunction scoreCombiner;
 
-    float score(int docId, float subQueryScore);
+    protected ScoreFunction(CombineFunction scoreCombiner) {
+        this.scoreCombiner = scoreCombiner;
+    }
 
-    float factor(int docId);
+    public CombineFunction getDefaultScoreCombiner() {
+        return scoreCombiner;
+    }
 
-    Explanation explainScore(int docId, Explanation subQueryExpl);
-
-    Explanation explainFactor(int docId);
+    public abstract LeafScoreFunction getLeafScoreFunction(LeafReaderContext ctx) throws IOException;
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -26,19 +26,20 @@ import org.elasticsearch.action.delete.DeleteRequest;
 import org.elasticsearch.action.delete.DeleteRequestBuilder;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexRequestBuilder;
-import org.elasticsearch.action.support.replication.ReplicationType;
+import org.elasticsearch.action.update.UpdateRequest;
+import org.elasticsearch.action.update.UpdateRequestBuilder;
 import org.elasticsearch.client.Client;
-import org.elasticsearch.client.internal.InternalClient;
 import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.unit.TimeValue;
 
 /**
  * A bulk request holds an ordered {@link IndexRequest}s and {@link DeleteRequest}s and allows to executes
  * it in a single batch.
  */
-public class BulkRequestBuilder extends ActionRequestBuilder<BulkRequest, BulkResponse, BulkRequestBuilder> {
+public class BulkRequestBuilder extends ActionRequestBuilder<BulkRequest, BulkResponse, BulkRequestBuilder, Client> {
 
     public BulkRequestBuilder(Client client) {
-        super((InternalClient) client, new BulkRequest());
+        super(client, new BulkRequest());
     }
 
     /**
@@ -75,27 +76,36 @@ public class BulkRequestBuilder extends ActionRequestBuilder<BulkRequest, BulkRe
         return this;
     }
 
+
     /**
-     * Adds a framed data in binary format
+     * Adds an {@link DeleteRequest} to the list of actions to execute.
      */
-    public BulkRequestBuilder add(byte[] data, int from, int length, boolean contentUnsafe) throws Exception {
-        request.add(data, from, length, contentUnsafe, null, null);
+    public BulkRequestBuilder add(UpdateRequest request) {
+        super.request.add(request);
+        return this;
+    }
+
+    /**
+     * Adds an {@link DeleteRequest} to the list of actions to execute.
+     */
+    public BulkRequestBuilder add(UpdateRequestBuilder request) {
+        super.request.add(request.request());
         return this;
     }
 
     /**
      * Adds a framed data in binary format
      */
-    public BulkRequestBuilder add(byte[] data, int from, int length, boolean contentUnsafe, @Nullable String defaultIndex, @Nullable String defaultType) throws Exception {
-        request.add(data, from, length, contentUnsafe, defaultIndex, defaultType);
+    public BulkRequestBuilder add(byte[] data, int from, int length) throws Exception {
+        request.add(data, from, length, null, null);
         return this;
     }
 
     /**
-     * Set the replication type for this operation.
+     * Adds a framed data in binary format
      */
-    public BulkRequestBuilder setReplicationType(ReplicationType replicationType) {
-        request.replicationType(replicationType);
+    public BulkRequestBuilder add(byte[] data, int from, int length, @Nullable String defaultIndex, @Nullable String defaultType) throws Exception {
+        request.add(data, from, length, defaultIndex, defaultType);
         return this;
     }
 
@@ -118,6 +128,22 @@ public class BulkRequestBuilder extends ActionRequestBuilder<BulkRequest, BulkRe
     }
 
     /**
+     * A timeout to wait if the index operation can't be performed immediately. Defaults to <tt>1m</tt>.
+     */
+    public final BulkRequestBuilder setTimeout(TimeValue timeout) {
+        request.timeout(timeout);
+        return this;
+    }
+
+    /**
+     * A timeout to wait if the index operation can't be performed immediately. Defaults to <tt>1m</tt>.
+     */
+    public final BulkRequestBuilder setTimeout(String timeout) {
+        request.timeout(timeout);
+        return this;
+    }
+
+    /**
      * The number of actions currently in the bulk.
      */
     public int numberOfActions() {
@@ -126,6 +152,6 @@ public class BulkRequestBuilder extends ActionRequestBuilder<BulkRequest, BulkRe
 
     @Override
     protected void doExecute(ActionListener<BulkResponse> listener) {
-        ((Client) client).bulk(request, listener);
+        client.bulk(request, listener);
     }
 }

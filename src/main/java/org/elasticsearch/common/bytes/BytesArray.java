@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,19 +19,18 @@
 
 package org.elasticsearch.common.bytes;
 
-import java.io.IOException;
-import java.io.OutputStream;
-import java.util.Arrays;
-
+import com.google.common.base.Charsets;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.UnicodeUtil;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.common.io.Channels;
 import org.elasticsearch.common.io.stream.BytesStreamInput;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.jboss.netty.buffer.ChannelBuffer;
 import org.jboss.netty.buffer.ChannelBuffers;
 
-import com.google.common.base.Charsets;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.channels.GatheringByteChannel;
+import java.util.Arrays;
 
 public class BytesArray implements BytesReference {
 
@@ -42,8 +41,7 @@ public class BytesArray implements BytesReference {
     private int length;
 
     public BytesArray(String bytes) {
-        BytesRef bytesRef = new BytesRef();
-        UnicodeUtil.UTF16toUTF8(bytes, 0, bytes.length(), bytesRef);
+        BytesRef bytesRef = new BytesRef(bytes);
         this.bytes = bytesRef.bytes;
         this.offset = bytesRef.offset;
         this.length = bytesRef.length;
@@ -91,19 +89,24 @@ public class BytesArray implements BytesReference {
     @Override
     public BytesReference slice(int from, int length) {
         if (from < 0 || (from + length) > this.length) {
-            throw new ElasticSearchIllegalArgumentException("can't slice a buffer with length [" + this.length + "], with slice parameters from [" + from + "], length [" + length + "]");
+            throw new IllegalArgumentException("can't slice a buffer with length [" + this.length + "], with slice parameters from [" + from + "], length [" + length + "]");
         }
         return new BytesArray(bytes, offset + from, length);
     }
 
     @Override
     public StreamInput streamInput() {
-        return new BytesStreamInput(bytes, offset, length, false);
+        return new BytesStreamInput(bytes, offset, length);
     }
 
     @Override
     public void writeTo(OutputStream os) throws IOException {
         os.write(bytes, offset, length);
+    }
+
+    @Override
+    public void writeTo(GatheringByteChannel channel) throws IOException {
+        Channels.writeToChannel(bytes, offset, length(), channel);
     }
 
     @Override

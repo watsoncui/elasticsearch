@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,9 +21,9 @@ package org.elasticsearch.index.query;
 
 import org.apache.lucene.search.Filter;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.lucene.search.NotFilter;
+import org.elasticsearch.common.lucene.HashedBytesRef;
+import org.elasticsearch.common.lucene.search.Queries;
 import org.elasticsearch.common.xcontent.XContentParser;
-import org.elasticsearch.index.cache.filter.support.CacheKeyFilter;
 
 import java.io.IOException;
 
@@ -50,7 +50,7 @@ public class NotFilterParser implements FilterParser {
         Filter filter = null;
         boolean filterFound = false;
         boolean cache = false;
-        CacheKeyFilter.Key cacheKey = null;
+        HashedBytesRef cacheKey = null;
 
         String filterName = null;
         String currentFieldName = null;
@@ -77,24 +77,24 @@ public class NotFilterParser implements FilterParser {
                 } else if ("_name".equals(currentFieldName)) {
                     filterName = parser.text();
                 } else if ("_cache_key".equals(currentFieldName) || "_cacheKey".equals(currentFieldName)) {
-                    cacheKey = new CacheKeyFilter.Key(parser.text());
+                    cacheKey = new HashedBytesRef(parser.text());
                 } else {
-                    throw new QueryParsingException(parseContext.index(), "[not] filter does not support [" + currentFieldName + "]");
+                    throw new QueryParsingException(parseContext, "[not] filter does not support [" + currentFieldName + "]");
                 }
             }
         }
 
         if (!filterFound) {
-            throw new QueryParsingException(parseContext.index(), "filter is required when using `not` filter");
+            throw new QueryParsingException(parseContext, "filter is required when using `not` filter");
         }
 
         if (filter == null) {
             return null;
         }
 
-        Filter notFilter = new NotFilter(filter);
+        Filter notFilter = Queries.wrap(Queries.not(filter));
         if (cache) {
-            notFilter = parseContext.cacheFilter(notFilter, cacheKey);
+            notFilter = parseContext.cacheFilter(notFilter, cacheKey, parseContext.autoFilterCachePolicy());
         }
         if (filterName != null) {
             parseContext.addNamedFilter(filterName, notFilter);

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -38,14 +38,16 @@ class RecoveryTranslogOperationsRequest extends TransportRequest {
     private long recoveryId;
     private ShardId shardId;
     private List<Translog.Operation> operations;
+    private int totalTranslogOps = RecoveryState.Translog.UNKNOWN;
 
     RecoveryTranslogOperationsRequest() {
     }
 
-    RecoveryTranslogOperationsRequest(long recoveryId, ShardId shardId, List<Translog.Operation> operations) {
+    RecoveryTranslogOperationsRequest(long recoveryId, ShardId shardId, List<Translog.Operation> operations, int totalTranslogOps) {
         this.recoveryId = recoveryId;
         this.shardId = shardId;
         this.operations = operations;
+        this.totalTranslogOps = totalTranslogOps;
     }
 
     public long recoveryId() {
@@ -60,6 +62,10 @@ class RecoveryTranslogOperationsRequest extends TransportRequest {
         return operations;
     }
 
+    public int totalTranslogOps() {
+        return totalTranslogOps;
+    }
+
     @Override
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
@@ -68,8 +74,9 @@ class RecoveryTranslogOperationsRequest extends TransportRequest {
         int size = in.readVInt();
         operations = Lists.newArrayListWithExpectedSize(size);
         for (int i = 0; i < size; i++) {
-            operations.add(TranslogStreams.readTranslogOperation(in));
+            operations.add(TranslogStreams.CHECKSUMMED_TRANSLOG_STREAM.read(in));
         }
+        totalTranslogOps = in.readVInt();
     }
 
     @Override
@@ -79,7 +86,8 @@ class RecoveryTranslogOperationsRequest extends TransportRequest {
         shardId.writeTo(out);
         out.writeVInt(operations.size());
         for (Translog.Operation operation : operations) {
-            TranslogStreams.writeTranslogOperation(out, operation);
+            TranslogStreams.CHECKSUMMED_TRANSLOG_STREAM.write(out, operation);
         }
+        out.writeVInt(totalTranslogOps);
     }
 }

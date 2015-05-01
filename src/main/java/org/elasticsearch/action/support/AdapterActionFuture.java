@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,9 +19,8 @@
 
 package org.elasticsearch.action.support;
 
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.ElasticSearchInterruptedException;
-import org.elasticsearch.ElasticSearchTimeoutException;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.ElasticsearchTimeoutException;
 import org.elasticsearch.action.ActionFuture;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.common.unit.TimeValue;
@@ -40,52 +39,56 @@ public abstract class AdapterActionFuture<T, L> extends BaseFuture<T> implements
     private Throwable rootFailure;
 
     @Override
-    public T actionGet() throws ElasticSearchException {
+    public T actionGet() {
         try {
             return get();
         } catch (InterruptedException e) {
-            throw new ElasticSearchInterruptedException(e.getMessage());
+            throw new IllegalStateException("Future got interrupted", e);
         } catch (ExecutionException e) {
             throw rethrowExecutionException(e);
         }
     }
 
     @Override
-    public T actionGet(String timeout) throws ElasticSearchException {
+    public T actionGet(String timeout) {
         return actionGet(TimeValue.parseTimeValue(timeout, null));
     }
 
     @Override
-    public T actionGet(long timeoutMillis) throws ElasticSearchException {
+    public T actionGet(long timeoutMillis) {
         return actionGet(timeoutMillis, TimeUnit.MILLISECONDS);
     }
 
     @Override
-    public T actionGet(TimeValue timeout) throws ElasticSearchException {
+    public T actionGet(TimeValue timeout) {
         return actionGet(timeout.millis(), TimeUnit.MILLISECONDS);
     }
 
     @Override
-    public T actionGet(long timeout, TimeUnit unit) throws ElasticSearchException {
+    public T actionGet(long timeout, TimeUnit unit) {
         try {
             return get(timeout, unit);
         } catch (TimeoutException e) {
-            throw new ElasticSearchTimeoutException(e.getMessage());
+            throw new ElasticsearchTimeoutException(e.getMessage());
         } catch (InterruptedException e) {
-            throw new ElasticSearchInterruptedException(e.getMessage());
+            throw new IllegalStateException("Future got interrupted", e);
         } catch (ExecutionException e) {
             throw rethrowExecutionException(e);
         }
     }
 
-    static ElasticSearchException rethrowExecutionException(ExecutionException e) {
-        if (e.getCause() instanceof ElasticSearchException) {
-            ElasticSearchException esEx = (ElasticSearchException) e.getCause();
+    static RuntimeException rethrowExecutionException(ExecutionException e) {
+        if (e.getCause() instanceof ElasticsearchException) {
+            ElasticsearchException esEx = (ElasticsearchException) e.getCause();
             Throwable root = esEx.unwrapCause();
-            if (root instanceof ElasticSearchException) {
-                return (ElasticSearchException) root;
+            if (root instanceof ElasticsearchException) {
+                return (ElasticsearchException) root;
+            } else if (root instanceof RuntimeException) {
+                return (RuntimeException) root;
             }
             return new UncategorizedExecutionException("Failed execution", root);
+        } else if (e.getCause() instanceof RuntimeException) {
+            return (RuntimeException) e.getCause();
         } else {
             return new UncategorizedExecutionException("Failed execution", e);
         }

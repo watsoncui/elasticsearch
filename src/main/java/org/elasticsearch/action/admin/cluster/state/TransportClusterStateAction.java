@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,49 +19,51 @@
 
 package org.elasticsearch.action.admin.cluster.state;
 
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.action.support.master.TransportMasterNodeOperationAction;
+import com.carrotsearch.hppc.cursors.ObjectObjectCursor;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.support.ActionFilters;
+import org.elasticsearch.action.support.master.TransportMasterNodeReadOperationAction;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
-import org.elasticsearch.cluster.metadata.IndexTemplateMetaData;
 import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.metadata.MetaData.Custom;
+import org.elasticsearch.cluster.routing.RoutingTable;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
-import static org.elasticsearch.cluster.ClusterState.newClusterStateBuilder;
-import static org.elasticsearch.cluster.metadata.MetaData.newMetaDataBuilder;
-
 /**
  *
  */
-public class TransportClusterStateAction extends TransportMasterNodeOperationAction<ClusterStateRequest, ClusterStateResponse> {
+public class TransportClusterStateAction extends TransportMasterNodeReadOperationAction<ClusterStateRequest, ClusterStateResponse> {
 
     private final ClusterName clusterName;
 
     @Inject
     public TransportClusterStateAction(Settings settings, TransportService transportService, ClusterService clusterService, ThreadPool threadPool,
-                                       ClusterName clusterName) {
-        super(settings, transportService, clusterService, threadPool);
+                                       ClusterName clusterName, ActionFilters actionFilters) {
+        super(settings, ClusterStateAction.NAME, transportService, clusterService, threadPool, actionFilters, ClusterStateRequest.class);
         this.clusterName = clusterName;
     }
 
     @Override
     protected String executor() {
-        return ThreadPool.Names.GENERIC;
+        // very lightweight operation in memory, no need to fork to a thread
+        return ThreadPool.Names.SAME;
     }
 
     @Override
-    protected String transportAction() {
-        return ClusterStateAction.NAME;
-    }
-
-    @Override
-    protected ClusterStateRequest newRequest() {
-        return new ClusterStateRequest();
+    protected ClusterBlockException checkBlock(ClusterStateRequest request, ClusterState state) {
+        // cluster state calls are done also on a fully blocked cluster to figure out what is going
+        // on in the cluster. For example, which nodes have joined yet the recovery has not yet kicked
+        // in, we need to make sure we allow those calls
+        // return state.blocks().globalBlockedException(ClusterBlockLevel.METADATA);
+        return null;
     }
 
     @Override
@@ -70,32 +72,41 @@ public class TransportClusterStateAction extends TransportMasterNodeOperationAct
     }
 
     @Override
-    protected boolean localExecute(ClusterStateRequest request) {
-        return request.local();
-    }
-
-    @Override
-    protected ClusterStateResponse masterOperation(ClusterStateRequest request, ClusterState state) throws ElasticSearchException {
+    protected void masterOperation(final ClusterStateRequest request, final ClusterState state, ActionListener<ClusterStateResponse> listener) {
         ClusterState currentState = clusterService.state();
-        ClusterState.Builder builder = newClusterStateBuilder();
-        if (!request.filterNodes()) {
+        logger.trace("Serving cluster state request using version {}", currentState.version());
+        ClusterState.Builder builder = ClusterState.builder(currentState.getClusterName());
+        builder.version(currentState.version());
+        builder.uuid(currentState.uuid());
+        if (request.nodes()) {
             builder.nodes(currentState.nodes());
         }
-        if (!request.filterRoutingTable()) {
-            builder.routingTable(currentState.routingTable());
-            builder.allocationExplanation(currentState.allocationExplanation());
+        if (request.routingTable()) {
+            if (request.indices().length > 0) {
+                RoutingTable.Builder routingTableBuilder = RoutingTable.builder();
+                for (String filteredIndex : request.indices()) {
+                    if (currentState.routingTable().getIndicesRouting().containsKey(filteredIndex)) {
+                        routingTableBuilder.add(currentState.routingTable().getIndicesRouting().get(filteredIndex));
+                    }
+                }
+                builder.routingTable(routingTableBuilder);
+            } else {
+                builder.routingTable(currentState.routingTable());
+            }
         }
-        if (!request.filterBlocks()) {
+        if (request.blocks()) {
             builder.blocks(currentState.blocks());
         }
-        if (!request.filterMetaData()) {
-            MetaData.Builder mdBuilder = newMetaDataBuilder();
-            if (request.filteredIndices().length == 0 && request.filteredIndexTemplates().length == 0) {
-                mdBuilder.metaData(currentState.metaData());
+        if (request.metaData()) {
+            MetaData.Builder mdBuilder;
+            if (request.indices().length == 0) {
+                mdBuilder = MetaData.builder(currentState.metaData());
+            } else {
+                mdBuilder = MetaData.builder();
             }
 
-            if (request.filteredIndices().length > 0) {
-                String[] indices = currentState.metaData().concreteIndicesIgnoreMissing(request.filteredIndices());
+            if (request.indices().length > 0) {
+                String[] indices = currentState.metaData().concreteIndices(request.indicesOptions(), request.indices());
                 for (String filteredIndex : indices) {
                     IndexMetaData indexMetaData = currentState.metaData().index(filteredIndex);
                     if (indexMetaData != null) {
@@ -104,17 +115,17 @@ public class TransportClusterStateAction extends TransportMasterNodeOperationAct
                 }
             }
 
-            if (request.filteredIndexTemplates().length > 0) {
-                for (String templateName : request.filteredIndexTemplates()) {
-                    IndexTemplateMetaData indexTemplateMetaData = currentState.metaData().templates().get(templateName);
-                    if (indexTemplateMetaData != null) {
-                        mdBuilder.put(indexTemplateMetaData);
-                    }
+            // Filter our metadata that shouldn't be returned by API
+            for(ObjectObjectCursor<String, Custom> custom :  currentState.metaData().customs()) {
+                if(!custom.value.context().contains(MetaData.XContentContext.API)) {
+                    mdBuilder.removeCustom(custom.key);
                 }
             }
 
             builder.metaData(mdBuilder);
         }
-        return new ClusterStateResponse(clusterName, builder.build());
+        listener.onResponse(new ClusterStateResponse(clusterName, builder.build()));
     }
+
+
 }

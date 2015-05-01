@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -66,7 +66,7 @@ public class BoostingQueryParser implements QueryParser {
                     negativeQuery = parseContext.parseInnerQuery();
                     negativeQueryFound = true;
                 } else {
-                    throw new QueryParsingException(parseContext.index(), "[boosting] query does not support [" + currentFieldName + "]");
+                    throw new QueryParsingException(parseContext, "[boosting] query does not support [" + currentFieldName + "]");
                 }
             } else if (token.isValue()) {
                 if ("negative_boost".equals(currentFieldName) || "negativeBoost".equals(currentFieldName)) {
@@ -74,19 +74,19 @@ public class BoostingQueryParser implements QueryParser {
                 } else if ("boost".equals(currentFieldName)) {
                     boost = parser.floatValue();
                 } else {
-                    throw new QueryParsingException(parseContext.index(), "[boosting] query does not support [" + currentFieldName + "]");
+                    throw new QueryParsingException(parseContext, "[boosting] query does not support [" + currentFieldName + "]");
                 }
             }
         }
 
         if (positiveQuery == null && !positiveQueryFound) {
-            throw new QueryParsingException(parseContext.index(), "[boosting] query requires 'positive' query to be set'");
+            throw new QueryParsingException(parseContext, "[boosting] query requires 'positive' query to be set'");
         }
         if (negativeQuery == null && !negativeQueryFound) {
-            throw new QueryParsingException(parseContext.index(), "[boosting] query requires 'negative' query to be set'");
+            throw new QueryParsingException(parseContext, "[boosting] query requires 'negative' query to be set'");
         }
         if (negativeBoost == -1) {
-            throw new QueryParsingException(parseContext.index(), "[boosting] query requires 'negative_boost' to be set'");
+            throw new QueryParsingException(parseContext, "[boosting] query requires 'negative_boost' to be set'");
         }
 
         // parsers returned null

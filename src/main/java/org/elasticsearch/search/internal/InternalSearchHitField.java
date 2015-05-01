@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,6 +21,7 @@ package org.elasticsearch.search.internal;
 
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.search.SearchHitField;
 
 import java.io.IOException;
@@ -34,11 +35,9 @@ import java.util.List;
 public class InternalSearchHitField implements SearchHitField {
 
     private String name;
-
     private List<Object> values;
 
     private InternalSearchHitField() {
-
     }
 
     public InternalSearchHitField(String name, List<Object> values) {
@@ -46,6 +45,7 @@ public class InternalSearchHitField implements SearchHitField {
         this.values = values;
     }
 
+    @Override
     public String name() {
         return name;
     }
@@ -68,6 +68,7 @@ public class InternalSearchHitField implements SearchHitField {
         return value();
     }
 
+    @Override
     public List<Object> values() {
         return values;
     }
@@ -77,6 +78,10 @@ public class InternalSearchHitField implements SearchHitField {
         return values();
     }
 
+    @Override
+    public boolean isMetadataField() {
+        return MapperService.isMetadataField(name);
+    }
 
     @Override
     public Iterator<Object> iterator() {
@@ -93,7 +98,7 @@ public class InternalSearchHitField implements SearchHitField {
     public void readFrom(StreamInput in) throws IOException {
         name = in.readString();
         int size = in.readVInt();
-        values = new ArrayList<Object>(size);
+        values = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             values.add(in.readGenericValue());
         }

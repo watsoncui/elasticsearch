@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,11 +20,10 @@
 package org.elasticsearch.index.similarity;
 
 import org.apache.lucene.search.similarities.*;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
 import org.elasticsearch.common.settings.Settings;
 
 /**
- * Abstract implemenetation of {@link SimilarityProvider} providing common behaviour
+ * Abstract implementation of {@link SimilarityProvider} providing common behaviour
  */
 public abstract class AbstractSimilarityProvider implements SimilarityProvider {
 
@@ -73,7 +72,7 @@ public abstract class AbstractSimilarityProvider implements SimilarityProvider {
             float z = settings.getAsFloat("normalization.z.z", 0.30f);
             return new NormalizationZ(z);
         } else {
-            throw new ElasticSearchIllegalArgumentException("Unsupported Normalization [" + normalization + "]");
+            throw new IllegalArgumentException("Unsupported Normalization [" + normalization + "]");
         }
     }
 }

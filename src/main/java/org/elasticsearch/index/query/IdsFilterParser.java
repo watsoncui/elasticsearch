@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,7 +21,8 @@ package org.elasticsearch.index.query;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
-import org.apache.lucene.queries.TermsFilter;
+
+import org.apache.lucene.queries.TermsQuery;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.inject.Inject;
@@ -52,7 +53,7 @@ public class IdsFilterParser implements FilterParser {
     public Filter parse(QueryParseContext parseContext) throws IOException, QueryParsingException {
         XContentParser parser = parseContext.parser();
 
-        List<BytesRef> ids = new ArrayList<BytesRef>();
+        List<BytesRef> ids = new ArrayList<>();
         Collection<String> types = null;
         String filterName = null;
         String currentFieldName = null;
@@ -65,23 +66,23 @@ public class IdsFilterParser implements FilterParser {
                 if ("values".equals(currentFieldName)) {
                     idsProvided = true;
                     while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
-                        BytesRef value = parser.bytesOrNull();
+                        BytesRef value = parser.utf8BytesOrNull();
                         if (value == null) {
-                            throw new QueryParsingException(parseContext.index(), "No value specified for term filter");
+                            throw new QueryParsingException(parseContext, "No value specified for term filter");
                         }
                         ids.add(value);
                     }
                 } else if ("types".equals(currentFieldName) || "type".equals(currentFieldName)) {
-                    types = new ArrayList<String>();
+                    types = new ArrayList<>();
                     while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
                         String value = parser.textOrNull();
                         if (value == null) {
-                            throw new QueryParsingException(parseContext.index(), "No type specified for term filter");
+                            throw new QueryParsingException(parseContext, "No type specified for term filter");
                         }
                         types.add(value);
                     }
                 } else {
-                    throw new QueryParsingException(parseContext.index(), "[ids] filter does not support [" + currentFieldName + "]");
+                    throw new QueryParsingException(parseContext, "[ids] filter does not support [" + currentFieldName + "]");
                 }
             } else if (token.isValue()) {
                 if ("type".equals(currentFieldName) || "_type".equals(currentFieldName)) {
@@ -89,17 +90,17 @@ public class IdsFilterParser implements FilterParser {
                 } else if ("_name".equals(currentFieldName)) {
                     filterName = parser.text();
                 } else {
-                    throw new QueryParsingException(parseContext.index(), "[ids] filter does not support [" + currentFieldName + "]");
+                    throw new QueryParsingException(parseContext, "[ids] filter does not support [" + currentFieldName + "]");
                 }
             }
         }
 
         if (!idsProvided) {
-            throw new QueryParsingException(parseContext.index(), "[ids] filter requires providing a values element");
+            throw new QueryParsingException(parseContext, "[ids] filter requires providing a values element");
         }
 
         if (ids.isEmpty()) {
-            return Queries.MATCH_NO_FILTER;
+            return Queries.newMatchNoDocsFilter();
         }
 
         if (types == null || types.isEmpty()) {
@@ -108,7 +109,7 @@ public class IdsFilterParser implements FilterParser {
             types = parseContext.mapperService().types();
         }
 
-        TermsFilter filter = new TermsFilter(UidFieldMapper.NAME, Uid.createTypeUids(types, ids));
+        Filter filter = Queries.wrap(new TermsQuery(UidFieldMapper.NAME, Uid.createTypeUids(types, ids)));
         if (filterName != null) {
             parseContext.addNamedFilter(filterName, filter);
         }

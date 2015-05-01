@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,15 +19,26 @@
 
 package org.elasticsearch.common.geo;
 
+
 /**
  *
  */
-public class GeoPoint {
+public final class GeoPoint {
 
     private double lat;
     private double lon;
 
     public GeoPoint() {
+    }
+
+    /**
+     * Create a new Geopointform a string. This String must either be a geohash
+     * or a lat-lon tuple.
+     *   
+     * @param value String to create the point from
+     */
+    public GeoPoint(String value) {
+        this.resetFromString(value);
     }
 
     public GeoPoint(double lat, double lon) {
@@ -65,11 +76,6 @@ public class GeoPoint {
     public GeoPoint resetFromGeoHash(String hash) {
         GeoHashUtils.decode(hash, this);
         return this;
-    }
-
-    void latlon(double lat, double lon) {
-        this.lat = lat;
-        this.lon = lon;
     }
 
     public final double lat() {
@@ -120,7 +126,14 @@ public class GeoPoint {
         return result;
     }
 
+    @Override
     public String toString() {
         return "[" + lat + ", " + lon + "]";
+    }
+
+    public static GeoPoint parseFromLatLon(String latLon) {
+        GeoPoint point = new GeoPoint();
+        point.resetFromString(latLon);
+        return point;
     }
 }

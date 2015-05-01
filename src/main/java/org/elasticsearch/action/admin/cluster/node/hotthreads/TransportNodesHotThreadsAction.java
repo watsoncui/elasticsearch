@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,7 +20,8 @@
 package org.elasticsearch.action.admin.cluster.node.hotthreads;
 
 import com.google.common.collect.Lists;
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.nodes.NodeOperationRequest;
 import org.elasticsearch.action.support.nodes.TransportNodesOperationAction;
 import org.elasticsearch.cluster.ClusterName;
@@ -44,18 +45,9 @@ public class TransportNodesHotThreadsAction extends TransportNodesOperationActio
 
     @Inject
     public TransportNodesHotThreadsAction(Settings settings, ClusterName clusterName, ThreadPool threadPool,
-                                          ClusterService clusterService, TransportService transportService) {
-        super(settings, clusterName, threadPool, clusterService, transportService);
-    }
-
-    @Override
-    protected String executor() {
-        return ThreadPool.Names.GENERIC;
-    }
-
-    @Override
-    protected String transportAction() {
-        return NodesHotThreadsAction.NAME;
+                                          ClusterService clusterService, TransportService transportService, ActionFilters actionFilters) {
+        super(settings, NodesHotThreadsAction.NAME, clusterName, threadPool, clusterService, transportService, actionFilters,
+                NodesHotThreadsRequest.class, NodeRequest.class, ThreadPool.Names.GENERIC);
     }
 
     @Override
@@ -71,16 +63,6 @@ public class TransportNodesHotThreadsAction extends TransportNodesOperationActio
     }
 
     @Override
-    protected NodesHotThreadsRequest newRequest() {
-        return new NodesHotThreadsRequest();
-    }
-
-    @Override
-    protected NodeRequest newNodeRequest() {
-        return new NodeRequest();
-    }
-
-    @Override
     protected NodeRequest newNodeRequest(String nodeId, NodesHotThreadsRequest request) {
         return new NodeRequest(nodeId, request);
     }
@@ -91,16 +73,17 @@ public class TransportNodesHotThreadsAction extends TransportNodesOperationActio
     }
 
     @Override
-    protected NodeHotThreads nodeOperation(NodeRequest request) throws ElasticSearchException {
+    protected NodeHotThreads nodeOperation(NodeRequest request) {
         HotThreads hotThreads = new HotThreads()
                 .busiestThreads(request.request.threads)
                 .type(request.request.type)
                 .interval(request.request.interval)
-                .threadElementsSnapshotCount(request.request.snapshots);
+                .threadElementsSnapshotCount(request.request.snapshots)
+                .ignoreIdleThreads(request.request.ignoreIdleThreads);
         try {
-            return new NodeHotThreads(clusterService.state().nodes().localNode(), hotThreads.detect());
+            return new NodeHotThreads(clusterService.localNode(), hotThreads.detect());
         } catch (Exception e) {
-            throw new ElasticSearchException("failed to detect hot threads", e);
+            throw new ElasticsearchException("failed to detect hot threads", e);
         }
     }
 

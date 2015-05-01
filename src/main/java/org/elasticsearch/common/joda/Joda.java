@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -26,15 +26,28 @@ import org.joda.time.field.OffsetDateTimeField;
 import org.joda.time.field.ScaledDurationField;
 import org.joda.time.format.*;
 
+import java.util.Locale;
+
 /**
  *
  */
 public class Joda {
 
+    public static FormatDateTimeFormatter forPattern(String input) {
+        return forPattern(input, Locale.ROOT);
+    }
+
     /**
      * Parses a joda based pattern, including some named ones (similar to the built in Joda ISO ones).
      */
-    public static FormatDateTimeFormatter forPattern(String input) {
+    public static FormatDateTimeFormatter forPattern(String input, Locale locale) {
+        if (Strings.hasLength(input)) {
+            input = input.trim();
+        }
+        if (input == null || input.length() == 0) {
+            throw new IllegalArgumentException("No date pattern provided");
+        }
+
         DateTimeFormatter formatter;
         if ("basicDate".equals(input) || "basic_date".equals(input)) {
             formatter = ISODateTimeFormat.basicDate();
@@ -76,9 +89,10 @@ public class Joda {
             formatter = ISODateTimeFormat.dateHourMinuteSecondMillis();
         } else if ("dateOptionalTime".equals(input) || "date_optional_time".equals(input)) {
             // in this case, we have a separate parser and printer since the dataOptionalTimeParser can't print
+            // this sucks we should use the root local by default and not be dependent on the node
             return new FormatDateTimeFormatter(input,
                     ISODateTimeFormat.dateOptionalTimeParser().withZone(DateTimeZone.UTC),
-                    ISODateTimeFormat.dateTime().withZone(DateTimeZone.UTC));
+                    ISODateTimeFormat.dateTime().withZone(DateTimeZone.UTC), locale);
         } else if ("dateTime".equals(input) || "date_time".equals(input)) {
             formatter = ISODateTimeFormat.dateTime();
         } else if ("dateTimeNoMillis".equals(input) || "date_time_no_millis".equals(input)) {
@@ -119,27 +133,42 @@ public class Joda {
             formatter = ISODateTimeFormat.yearMonth();
         } else if ("yearMonthDay".equals(input) || "year_month_day".equals(input)) {
             formatter = ISODateTimeFormat.yearMonthDay();
-        } else {
-            String[] formats = Strings.delimitedListToStringArray(input, "||");
-            if (formats == null || formats.length == 1) {
-                formatter = DateTimeFormat.forPattern(input);
-            } else {
+        } else if (Strings.hasLength(input) && input.contains("||")) {
+                String[] formats = Strings.delimitedListToStringArray(input, "||");
                 DateTimeParser[] parsers = new DateTimeParser[formats.length];
-                for (int i = 0; i < formats.length; i++) {
-                    parsers[i] = DateTimeFormat.forPattern(formats[i]).withZone(DateTimeZone.UTC).getParser();
+
+                if (formats.length == 1) {
+                    formatter = forPattern(input, locale).parser();
+                } else {
+                    DateTimeFormatter dateTimeFormatter = null;
+                    for (int i = 0; i < formats.length; i++) {
+                        FormatDateTimeFormatter currentFormatter = forPattern(formats[i], locale);
+                        DateTimeFormatter currentParser = currentFormatter.parser();
+                        if (dateTimeFormatter == null) {
+                            dateTimeFormatter = currentFormatter.printer();
+                        }
+                        parsers[i] = currentParser.getParser();
+                    }
+
+                    DateTimeFormatterBuilder builder = new DateTimeFormatterBuilder().append(dateTimeFormatter.withZone(DateTimeZone.UTC).getPrinter(), parsers);
+                    formatter = builder.toFormatter();
                 }
-                DateTimeFormatterBuilder builder = new DateTimeFormatterBuilder()
-                        .append(DateTimeFormat.forPattern(formats[0]).withZone(DateTimeZone.UTC).getPrinter(), parsers);
-                formatter = builder.toFormatter();
+        } else {
+            try {
+                formatter = DateTimeFormat.forPattern(input);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("Invalid format: [" + input + "]: " + e.getMessage(), e);
             }
         }
-        return new FormatDateTimeFormatter(input, formatter.withZone(DateTimeZone.UTC));
+
+        return new FormatDateTimeFormatter(input, formatter.withZone(DateTimeZone.UTC), locale);
     }
 
 
     public static final DurationFieldType Quarters = new DurationFieldType("quarters") {
         private static final long serialVersionUID = -8167713675442491871L;
 
+        @Override
         public DurationField getField(Chronology chronology) {
             return new ScaledDurationField(chronology.months(), Quarters, 3);
         }
@@ -148,14 +177,17 @@ public class Joda {
     public static final DateTimeFieldType QuarterOfYear = new DateTimeFieldType("quarterOfYear") {
         private static final long serialVersionUID = -5677872459807379123L;
 
+        @Override
         public DurationFieldType getDurationType() {
             return Quarters;
         }
 
+        @Override
         public DurationFieldType getRangeDurationType() {
             return DurationFieldType.years();
         }
 
+        @Override
         public DateTimeField getField(Chronology chronology) {
             return new OffsetDateTimeField(new DividedDateTimeField(new OffsetDateTimeField(chronology.monthOfYear(), -1), QuarterOfYear, 3), 1);
         }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,19 +20,23 @@
 package org.elasticsearch.script;
 
 import com.google.common.collect.ImmutableMap;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+
+import org.apache.lucene.index.LeafReaderContext;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.search.lookup.SearchLookup;
 
+import java.io.IOException;
 import java.util.Map;
 
 /**
  * A native script engine service.
  */
 public class NativeScriptEngineService extends AbstractComponent implements ScriptEngineService {
+
+    public static final String NAME = "native";
 
     private final ImmutableMap<String, NativeScriptFactory> scripts;
 
@@ -44,7 +48,7 @@ public class NativeScriptEngineService extends AbstractComponent implements Scri
 
     @Override
     public String[] types() {
-        return new String[]{"native"};
+        return new String[]{NAME};
     }
 
     @Override
@@ -53,12 +57,17 @@ public class NativeScriptEngineService extends AbstractComponent implements Scri
     }
 
     @Override
+    public boolean sandboxed() {
+        return false;
+    }
+
+    @Override
     public Object compile(String script) {
         NativeScriptFactory scriptFactory = scripts.get(script);
         if (scriptFactory != null) {
             return scriptFactory;
         }
-        throw new ElasticSearchIllegalArgumentException("Native script [" + script + "] not found");
+        throw new IllegalArgumentException("Native script [" + script + "] not found");
     }
 
     @Override
@@ -68,11 +77,16 @@ public class NativeScriptEngineService extends AbstractComponent implements Scri
     }
 
     @Override
-    public SearchScript search(Object compiledScript, SearchLookup lookup, @Nullable Map<String, Object> vars) {
-        NativeScriptFactory scriptFactory = (NativeScriptFactory) compiledScript;
-        AbstractSearchScript script = (AbstractSearchScript) scriptFactory.newScript(vars);
-        script.setLookup(lookup);
-        return script;
+    public SearchScript search(Object compiledScript, final SearchLookup lookup, @Nullable final Map<String, Object> vars) {
+        final NativeScriptFactory scriptFactory = (NativeScriptFactory) compiledScript;
+        return new SearchScript() {
+            @Override
+            public LeafSearchScript getLeafSearchScript(LeafReaderContext context) throws IOException {
+                AbstractSearchScript script = (AbstractSearchScript) scriptFactory.newScript(vars);
+                script.setLookup(lookup.getLeafSearchLookup(context));
+                return script;
+            }
+        };
     }
 
     @Override
@@ -87,5 +101,10 @@ public class NativeScriptEngineService extends AbstractComponent implements Scri
 
     @Override
     public void close() {
+    }
+
+    @Override
+    public void scriptRemoved(CompiledScript script) {
+        // Nothing to do here
     }
 }

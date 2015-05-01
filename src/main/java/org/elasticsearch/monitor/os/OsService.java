@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,6 +23,7 @@ import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.common.util.SingleObjectCache;
 
 /**
  *
@@ -33,22 +34,19 @@ public class OsService extends AbstractComponent {
 
     private final OsInfo info;
 
-    private final TimeValue refreshInterval;
-
-    private OsStats cachedStats;
+    private SingleObjectCache<OsStats> osStatsCache;
 
     @Inject
     public OsService(Settings settings, OsProbe probe) {
         super(settings);
         this.probe = probe;
 
-        this.refreshInterval = componentSettings.getAsTime("refresh_interval", TimeValue.timeValueSeconds(1));
+        TimeValue refreshInterval = settings.getAsTime("monitor.os.refresh_interval", TimeValue.timeValueSeconds(1));
 
         this.info = probe.osInfo();
         this.info.refreshInterval = refreshInterval.millis();
         this.info.availableProcessors = Runtime.getRuntime().availableProcessors();
-        this.cachedStats = probe.osStats();
-
+        osStatsCache = new OsStatsCache(refreshInterval, probe.osStats());
         logger.debug("Using probe [{}] with refresh_interval [{}]", probe, refreshInterval);
     }
 
@@ -57,9 +55,17 @@ public class OsService extends AbstractComponent {
     }
 
     public synchronized OsStats stats() {
-        if ((System.currentTimeMillis() - cachedStats.timestamp()) > refreshInterval.millis()) {
-            cachedStats = probe.osStats();
+        return osStatsCache.getOrRefresh();
+    }
+
+    private class OsStatsCache extends SingleObjectCache<OsStats> {
+        public OsStatsCache(TimeValue interval, OsStats initValue) {
+            super(interval, initValue);
         }
-        return cachedStats;
+
+        @Override
+        protected OsStats refresh() {
+            return probe.osStats();
+        }
     }
 }

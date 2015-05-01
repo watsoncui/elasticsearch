@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,6 +22,7 @@ package org.elasticsearch.common.lucene.docset;
 import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.RamUsageEstimator;
 
 import java.io.IOException;
 
@@ -42,6 +43,11 @@ public class AllDocIdSet extends DocIdSet {
     @Override
     public boolean isCacheable() {
         return true;
+    }
+
+    @Override
+    public long ramBytesUsed() {
+        return RamUsageEstimator.NUM_BYTES_INT;
     }
 
     @Override
@@ -83,6 +89,12 @@ public class AllDocIdSet extends DocIdSet {
                 return doc;
             }
             return doc = NO_MORE_DOCS;
+        }
+
+        @Override
+        public long cost() {
+            
+            return maxDoc;
         }
     }
 }

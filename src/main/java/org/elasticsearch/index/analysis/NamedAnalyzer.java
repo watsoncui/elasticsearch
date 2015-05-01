@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,28 +20,37 @@
 package org.elasticsearch.index.analysis;
 
 import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.analysis.CustomAnalyzerWrapper;
+import org.apache.lucene.analysis.DelegatingAnalyzerWrapper;
 
 /**
  * Named analyzer is an analyzer wrapper around an actual analyzer ({@link #analyzer} that is associated
  * with a name ({@link #name()}.
  */
-public class NamedAnalyzer extends CustomAnalyzerWrapper {
+public class NamedAnalyzer extends DelegatingAnalyzerWrapper {
 
     private final String name;
-
     private final AnalyzerScope scope;
-
     private final Analyzer analyzer;
+    private final int positionOffsetGap;
+
+    public NamedAnalyzer(NamedAnalyzer analyzer, int positionOffsetGap) {
+        this(analyzer.name(), analyzer.scope(), analyzer.analyzer(), positionOffsetGap);
+    }
 
     public NamedAnalyzer(String name, Analyzer analyzer) {
         this(name, AnalyzerScope.INDEX, analyzer);
     }
 
     public NamedAnalyzer(String name, AnalyzerScope scope, Analyzer analyzer) {
+        this(name, scope, analyzer, Integer.MIN_VALUE);
+    }
+
+    public NamedAnalyzer(String name, AnalyzerScope scope, Analyzer analyzer, int positionOffsetGap) {
+        super(ERROR_STRATEGY);
         this.name = name;
         this.scope = scope;
         this.analyzer = analyzer;
+        this.positionOffsetGap = positionOffsetGap;
     }
 
     /**
@@ -71,12 +80,28 @@ public class NamedAnalyzer extends CustomAnalyzerWrapper {
     }
 
     @Override
-    protected TokenStreamComponents wrapComponents(String fieldName, TokenStreamComponents components) {
-        return components;
+    public int getPositionIncrementGap(String fieldName) {
+        if (positionOffsetGap != Integer.MIN_VALUE) {
+            return positionOffsetGap;
+        }
+        return super.getPositionIncrementGap(fieldName);
     }
 
     @Override
     public String toString() {
         return "analyzer name[" + name + "], analyzer [" + analyzer + "]";
     }
+    
+    /** It is an error if this is ever used, it means we screwed up! */
+    static final ReuseStrategy ERROR_STRATEGY = new Analyzer.ReuseStrategy() {
+        @Override
+        public TokenStreamComponents getReusableComponents(Analyzer a, String f) {
+            throw new IllegalStateException("NamedAnalyzer cannot be wrapped with a wrapper, only a delegator");
+        }
+
+        @Override
+        public void setReusableComponents(Analyzer a, String f, TokenStreamComponents c) {
+            throw new IllegalStateException("NamedAnalyzer cannot be wrapped with a wrapper, only a delegator");
+        }
+    };
 }

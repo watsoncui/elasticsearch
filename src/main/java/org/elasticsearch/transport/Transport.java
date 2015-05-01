@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -25,11 +25,16 @@ import org.elasticsearch.common.transport.BoundTransportAddress;
 import org.elasticsearch.common.transport.TransportAddress;
 
 import java.io.IOException;
+import java.util.Map;
 
 /**
  *
  */
 public interface Transport extends LifecycleComponent<Transport> {
+
+    public static class TransportSettings {
+        public static final String TRANSPORT_TCP_COMPRESS = "transport.tcp.compress";
+    }
 
     void transportServiceAdapter(TransportServiceAdapter service);
 
@@ -37,6 +42,12 @@ public interface Transport extends LifecycleComponent<Transport> {
      * The address the transport is bound on.
      */
     BoundTransportAddress boundAddress();
+
+    /**
+     * Further profile bound addresses
+     * @return Should return null if transport does not support profiles, otherwise a map with name of profile and its bound transport address
+     */
+    Map<String, BoundTransportAddress> profileBoundAddresses();
 
     /**
      * Returns an address from its string representation.
@@ -74,5 +85,8 @@ public interface Transport extends LifecycleComponent<Transport> {
      */
     void sendRequest(DiscoveryNode node, long requestId, String action, TransportRequest request, TransportRequestOptions options) throws IOException, TransportException;
 
+    /**
+     * Returns count of currently open connections
+     */
     long serverOpen();
 }

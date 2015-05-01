@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -32,7 +32,7 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.node.Node;
 import org.elasticsearch.search.suggest.Suggest.Suggestion.Entry.Option;
-import org.elasticsearch.search.suggest.SuggestBuilder;
+import org.elasticsearch.search.suggest.SuggestBuilders;
 
 import java.io.IOException;
 import java.util.List;
@@ -118,7 +118,7 @@ public class SuggestSearchBenchMark {
             String term = "prefix" + startChar;
             SearchResponse response = client.prepareSearch()
                     .setQuery(prefixQuery("field", term))
-                    .addSuggestion(SuggestBuilder.termSuggestion("field").field("field").text(term).suggestMode("always"))
+                    .addSuggestion(SuggestBuilders.termSuggestion("field").field("field").text(term).suggestMode("always"))
                     .execute().actionGet();
             if (response.getHits().totalHits() == 0) {
                 System.err.println("No hits");
@@ -135,7 +135,7 @@ public class SuggestSearchBenchMark {
             String term = "prefix" + startChar;
             SearchResponse response = client.prepareSearch()
                     .setQuery(matchQuery("field", term))
-                    .addSuggestion(SuggestBuilder.termSuggestion("field").text(term).field("field").suggestMode("always"))
+                    .addSuggestion(SuggestBuilders.termSuggestion("field").text(term).field("field").suggestMode("always"))
                     .execute().actionGet();
             timeTaken += response.getTookInMillis();
             if (response.getSuggest() == null) {

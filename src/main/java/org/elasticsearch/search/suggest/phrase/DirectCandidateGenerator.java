@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -18,25 +18,18 @@
  */
 package org.elasticsearch.search.suggest.phrase;
 
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
-
 import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.MultiFields;
-import org.apache.lucene.index.Term;
-import org.apache.lucene.index.Terms;
-import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.index.*;
 import org.apache.lucene.search.spell.DirectSpellChecker;
 import org.apache.lucene.search.spell.SuggestMode;
 import org.apache.lucene.search.spell.SuggestWord;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.CharsRef;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.apache.lucene.util.BytesRefBuilder;
+import org.apache.lucene.util.CharsRefBuilder;
 import org.elasticsearch.search.suggest.SuggestUtils;
+
+import java.io.IOException;
+import java.util.*;
 
 //TODO public for tests
 public final class DirectCandidateGenerator extends CandidateGenerator {
@@ -53,25 +46,24 @@ public final class DirectCandidateGenerator extends CandidateGenerator {
     private final Analyzer postFilter;
     private final double nonErrorLikelihood;
     private final boolean useTotalTermFrequency;
-    private final CharsRef spare = new CharsRef();
-    private final BytesRef byteSpare = new BytesRef();
+    private final CharsRefBuilder spare = new CharsRefBuilder();
+    private final BytesRefBuilder byteSpare = new BytesRefBuilder();
     private final int numCandidates;
     
     public DirectCandidateGenerator(DirectSpellChecker spellchecker, String field, SuggestMode suggestMode, IndexReader reader, double nonErrorLikelihood, int numCandidates) throws IOException {
-        this(spellchecker, field, suggestMode, reader,  nonErrorLikelihood, numCandidates, null, null);
+        this(spellchecker, field, suggestMode, reader,  nonErrorLikelihood, numCandidates, null, null, MultiFields.getTerms(reader, field));
     }
 
 
-    public DirectCandidateGenerator(DirectSpellChecker spellchecker, String field, SuggestMode suggestMode, IndexReader reader, double nonErrorLikelihood,  int numCandidates, Analyzer preFilter, Analyzer postFilter) throws IOException {
+    public DirectCandidateGenerator(DirectSpellChecker spellchecker, String field, SuggestMode suggestMode, IndexReader reader, double nonErrorLikelihood,  int numCandidates, Analyzer preFilter, Analyzer postFilter, Terms terms) throws IOException {
+        if (terms == null) {
+            throw new IllegalArgumentException("generator field [" + field + "] doesn't exist");
+        }
         this.spellchecker = spellchecker;
         this.field = field;
         this.numCandidates = numCandidates;
         this.suggestMode = suggestMode;
         this.reader = reader;
-        Terms terms = MultiFields.getTerms(reader, field);
-        if (terms == null) {
-            throw new ElasticSearchIllegalArgumentException("generator field [" + field + "] doesn't exist");
-        }
         final long dictSize = terms.getSumTotalTermFreq();
         this.useTotalTermFrequency = dictSize != -1;
         this.dictSize =  dictSize == -1 ? reader.maxDoc() : dictSize;
@@ -80,7 +72,7 @@ public final class DirectCandidateGenerator extends CandidateGenerator {
         this.nonErrorLikelihood = nonErrorLikelihood;
         float thresholdFrequency = spellchecker.getThresholdFrequency();
         this.frequencyPlateau = thresholdFrequency >= 1.0f ? (int) thresholdFrequency: (int)(dictSize * thresholdFrequency);
-        termsEnum = terms.iterator(null);
+        termsEnum = terms.iterator();
     }
 
     /* (non-Javadoc)
@@ -102,7 +94,7 @@ public final class DirectCandidateGenerator extends CandidateGenerator {
 
 
     public long internalFrequency(BytesRef term) throws IOException {
-        if (termsEnum.seekExact(term, true)) {
+        if (termsEnum.seekExact(term)) {
             return useTotalTermFrequency ? termsEnum.totalTermFreq() : termsEnum.docFreq(); 
         }
         return 0;
@@ -120,23 +112,23 @@ public final class DirectCandidateGenerator extends CandidateGenerator {
         Candidate original = set.originalTerm;
         BytesRef term = preFilter(original.term, spare, byteSpare);
         final long frequency = original.frequency;
-        spellchecker.setThresholdFrequency(thresholdFrequency(frequency, dictSize));
+        spellchecker.setThresholdFrequency(this.suggestMode == SuggestMode.SUGGEST_ALWAYS ? 0 : thresholdFrequency(frequency, dictSize));
         SuggestWord[] suggestSimilar = spellchecker.suggestSimilar(new Term(field, term), numCandidates, reader, this.suggestMode);
-        List<Candidate> candidates = new ArrayList<Candidate>(suggestSimilar.length);
+        List<Candidate> candidates = new ArrayList<>(suggestSimilar.length);
         for (int i = 0; i < suggestSimilar.length; i++) {
             SuggestWord suggestWord = suggestSimilar[i];
             BytesRef candidate = new BytesRef(suggestWord.string);
-            postFilter(new Candidate(candidate, internalFrequency(candidate), suggestWord.score, score(suggestWord.freq, suggestWord.score, dictSize)), spare, byteSpare, candidates);
+            postFilter(new Candidate(candidate, internalFrequency(candidate), suggestWord.score, score(suggestWord.freq, suggestWord.score, dictSize), false), spare, byteSpare, candidates);
         }
         set.addCandidates(candidates);
         return set;
     }
     
-    protected BytesRef preFilter(final BytesRef term, final CharsRef spare, final BytesRef byteSpare) throws IOException {
+    protected BytesRef preFilter(final BytesRef term, final CharsRefBuilder spare, final BytesRefBuilder byteSpare) throws IOException {
         if (preFilter == null) {
             return term;
         }
-        final BytesRef result = byteSpare;
+        final BytesRefBuilder result = byteSpare;
         SuggestUtils.analyze(preFilter, term, field, new SuggestUtils.TokenConsumer() {
             
             @Override
@@ -144,25 +136,25 @@ public final class DirectCandidateGenerator extends CandidateGenerator {
                 this.fillBytesRef(result);
             }
         }, spare);
-        return result;
+        return result.get();
     }
     
-    protected void postFilter(final Candidate candidate, final CharsRef spare, BytesRef byteSpare, final List<Candidate> candidates) throws IOException {
+    protected void postFilter(final Candidate candidate, final CharsRefBuilder spare, BytesRefBuilder byteSpare, final List<Candidate> candidates) throws IOException {
         if (postFilter == null) {
             candidates.add(candidate);
         } else {
-            final BytesRef result = byteSpare;
+            final BytesRefBuilder result = byteSpare;
             SuggestUtils.analyze(postFilter, candidate.term, field, new SuggestUtils.TokenConsumer() {
                 @Override
                 public void nextToken() throws IOException {
                     this.fillBytesRef(result);
                     
-                    if (posIncAttr.getPositionIncrement() > 0 && result.bytesEquals(candidate.term))  {
-                        BytesRef term = BytesRef.deepCopyOf(result);    
+                    if (posIncAttr.getPositionIncrement() > 0 && result.get().bytesEquals(candidate.term))  {
+                        BytesRef term = result.toBytesRef();
                         long freq = frequency(term);
-                        candidates.add(new Candidate(BytesRef.deepCopyOf(term), freq, candidate.stringDistance, score(candidate.frequency, candidate.stringDistance, dictSize)));
+                        candidates.add(new Candidate(result.toBytesRef(), freq, candidate.stringDistance, score(candidate.frequency, candidate.stringDistance, dictSize), false));
                     } else {
-                        candidates.add(new Candidate(BytesRef.deepCopyOf(result), candidate.frequency, nonErrorLikelihood, score(candidate.frequency, candidate.stringDistance, dictSize)));
+                        candidates.add(new Candidate(result.toBytesRef(), candidate.frequency, nonErrorLikelihood, score(candidate.frequency, candidate.stringDistance, dictSize), false));
                     }
                 }
             }, spare);
@@ -175,7 +167,7 @@ public final class DirectCandidateGenerator extends CandidateGenerator {
     
     protected long thresholdFrequency(long termFrequency, long dictionarySize) {
         if (termFrequency > 0) {
-            return (long) Math.round(termFrequency * (Math.log10(termFrequency - frequencyPlateau) * (1.0 / Math.log10(logBase))) + 1);
+            return (long) Math.max(0, Math.round(termFrequency * (Math.log10(termFrequency - frequencyPlateau) * (1.0 / Math.log10(logBase))) + 1));
         }
         return 0;
         
@@ -191,11 +183,15 @@ public final class DirectCandidateGenerator extends CandidateGenerator {
         }
         
         public void addCandidates(List<Candidate> candidates) {
-            final Set<Candidate> set = new HashSet<DirectCandidateGenerator.Candidate>(candidates);
+            // Merge new candidates into existing ones,
+            // deduping:
+            final Set<Candidate> set = new HashSet<>(candidates);
             for (int i = 0; i < this.candidates.length; i++) {
                 set.add(this.candidates[i]);
             }
             this.candidates = set.toArray(new Candidate[set.size()]);
+            // Sort strongest to weakest:
+            Arrays.sort(this.candidates, Collections.reverseOrder());
         }
 
         public void addOneCandidate(Candidate candidate) {
@@ -207,23 +203,26 @@ public final class DirectCandidateGenerator extends CandidateGenerator {
 
     }
 
-    public static class Candidate {
+    public static class Candidate implements Comparable<Candidate> {
         public static final Candidate[] EMPTY = new Candidate[0];
         public final BytesRef term;
         public final double stringDistance;
         public final long frequency;
         public final double score;
+        public final boolean userInput;
 
-        public Candidate(BytesRef term, long frequency, double stringDistance, double score) {
+        public Candidate(BytesRef term, long frequency, double stringDistance, double score, boolean userInput) {
             this.frequency = frequency;
             this.term = term;
             this.stringDistance = stringDistance;
             this.score = score;
+            this.userInput = userInput;
         }
 
         @Override
         public String toString() {
-            return "Candidate [term=" + term.utf8ToString() + ", stringDistance=" + stringDistance + ", frequency=" + frequency + "]";
+            return "Candidate [term=" + term.utf8ToString() + ", stringDistance=" + stringDistance + ", score=" + score + ", frequency=" + frequency + 
+                    (userInput ? ", userInput" : "" ) + "]";
         }
 
         @Override
@@ -250,11 +249,22 @@ public final class DirectCandidateGenerator extends CandidateGenerator {
                 return false;
             return true;
         }
+
+        /** Lower scores sort first; if scores are equal, then later (zzz) terms sort first */
+        @Override
+        public int compareTo(Candidate other) {
+            if (score == other.score) {
+                // Later (zzz) terms sort before earlier (aaa) terms:
+                return other.term.compareTo(term);
+            } else {
+                return Double.compare(score, other.score);
+            }
+        }
     }
 
     @Override
-    public Candidate createCandidate(BytesRef term, long frequency, double channelScore) throws IOException {
-        return new Candidate(term, frequency, channelScore, score(frequency, channelScore, dictSize));
+    public Candidate createCandidate(BytesRef term, long frequency, double channelScore, boolean userInput) throws IOException {
+        return new Candidate(term, frequency, channelScore, score(frequency, channelScore, dictSize), userInput);
     }
 
 }

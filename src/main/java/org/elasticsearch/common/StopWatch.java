@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -24,6 +24,7 @@ import org.elasticsearch.common.unit.TimeValue;
 import java.text.NumberFormat;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -52,7 +53,7 @@ public class StopWatch {
 
     private boolean keepTaskList = true;
 
-    private final List<TaskInfo> taskList = new LinkedList<TaskInfo>();
+    private final List<TaskInfo> taskList = new LinkedList<>();
 
     /**
      * Start time of the current task
@@ -228,10 +229,10 @@ public class StopWatch {
             sb.append("-----------------------------------------\n");
             sb.append("ms     %     Task name\n");
             sb.append("-----------------------------------------\n");
-            NumberFormat nf = NumberFormat.getNumberInstance();
+            NumberFormat nf = NumberFormat.getNumberInstance(Locale.ROOT);
             nf.setMinimumIntegerDigits(5);
             nf.setGroupingUsed(false);
-            NumberFormat pf = NumberFormat.getPercentInstance();
+            NumberFormat pf = NumberFormat.getPercentInstance(Locale.ROOT);
             pf.setMinimumIntegerDigits(3);
             pf.setGroupingUsed(false);
             for (TaskInfo task : taskInfo()) {

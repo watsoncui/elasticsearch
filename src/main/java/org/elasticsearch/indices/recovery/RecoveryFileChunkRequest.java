@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,12 +19,14 @@
 
 package org.elasticsearch.indices.recovery;
 
+import org.apache.lucene.util.Version;
 import org.elasticsearch.common.Nullable;
-import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.index.shard.ShardId;
+import org.elasticsearch.index.store.StoreFileMetaData;
 import org.elasticsearch.transport.TransportRequest;
 
 import java.io.IOException;
@@ -32,27 +34,30 @@ import java.io.IOException;
 /**
  *
  */
-class RecoveryFileChunkRequest extends TransportRequest {
-
+public final class RecoveryFileChunkRequest extends TransportRequest {  // public for testing
+    private boolean lastChunk;
     private long recoveryId;
     private ShardId shardId;
-    private String name;
     private long position;
-    private long length;
-    private String checksum;
     private BytesReference content;
+    private StoreFileMetaData metaData;
+    private long sourceThrottleTimeInNanos;
+
+    private int totalTranslogOps;
 
     RecoveryFileChunkRequest() {
     }
 
-    RecoveryFileChunkRequest(long recoveryId, ShardId shardId, String name, long position, long length, String checksum, BytesArray content) {
+    public RecoveryFileChunkRequest(long recoveryId, ShardId shardId, StoreFileMetaData metaData, long position, BytesReference content,
+                                    boolean lastChunk, int totalTranslogOps, long sourceThrottleTimeInNanos) {
         this.recoveryId = recoveryId;
         this.shardId = shardId;
-        this.name = name;
+        this.metaData = metaData;
         this.position = position;
-        this.length = length;
-        this.checksum = checksum;
         this.content = content;
+        this.lastChunk = lastChunk;
+        this.totalTranslogOps = totalTranslogOps;
+        this.sourceThrottleTimeInNanos = sourceThrottleTimeInNanos;
     }
 
     public long recoveryId() {
@@ -64,7 +69,7 @@ class RecoveryFileChunkRequest extends TransportRequest {
     }
 
     public String name() {
-        return name;
+        return metaData.name();
     }
 
     public long position() {
@@ -73,21 +78,23 @@ class RecoveryFileChunkRequest extends TransportRequest {
 
     @Nullable
     public String checksum() {
-        return this.checksum;
+        return metaData.checksum();
     }
 
     public long length() {
-        return length;
+        return metaData.length();
     }
 
     public BytesReference content() {
         return content;
     }
 
-    public RecoveryFileChunkRequest readFileChunk(StreamInput in) throws IOException {
-        RecoveryFileChunkRequest request = new RecoveryFileChunkRequest();
-        request.readFrom(in);
-        return request;
+    public int totalTranslogOps() {
+        return totalTranslogOps;
+    }
+
+    public long sourceThrottleTimeInNanos() {
+        return sourceThrottleTimeInNanos;
     }
 
     @Override
@@ -95,11 +102,18 @@ class RecoveryFileChunkRequest extends TransportRequest {
         super.readFrom(in);
         recoveryId = in.readLong();
         shardId = ShardId.readShardId(in);
-        name = in.readString();
+        String name = in.readString();
         position = in.readVLong();
-        length = in.readVLong();
-        checksum = in.readOptionalString();
+        long length = in.readVLong();
+        String checksum = in.readOptionalString();
         content = in.readBytesReference();
+        Version writtenBy = null;
+        String versionString = in.readOptionalString();
+        writtenBy = Lucene.parseVersionLenient(versionString, null);
+        metaData = new StoreFileMetaData(name, length, checksum, writtenBy);
+        lastChunk = in.readBoolean();
+        totalTranslogOps = in.readVInt();
+        sourceThrottleTimeInNanos = in.readLong();
     }
 
     @Override
@@ -107,17 +121,32 @@ class RecoveryFileChunkRequest extends TransportRequest {
         super.writeTo(out);
         out.writeLong(recoveryId);
         shardId.writeTo(out);
-        out.writeString(name);
+        out.writeString(metaData.name());
         out.writeVLong(position);
-        out.writeVLong(length);
-        out.writeOptionalString(checksum);
+        out.writeVLong(metaData.length());
+        out.writeOptionalString(metaData.checksum());
         out.writeBytesReference(content);
+        out.writeOptionalString(metaData.writtenBy() == null ? null : metaData.writtenBy().toString());
+        out.writeBoolean(lastChunk);
+        out.writeVInt(totalTranslogOps);
+        out.writeLong(sourceThrottleTimeInNanos);
     }
 
     @Override
     public String toString() {
-        return shardId + ": name='" + name + '\'' +
+        return shardId + ": name='" + name() + '\'' +
                 ", position=" + position +
-                ", length=" + length;
+                ", length=" + length();
+    }
+
+    public StoreFileMetaData metadata() {
+        return metaData;
+    }
+
+    /**
+     * Returns <code>true</code> if this chunk is the last chunk in the stream.
+     */
+    public boolean lastChunk() {
+        return lastChunk;
     }
 }

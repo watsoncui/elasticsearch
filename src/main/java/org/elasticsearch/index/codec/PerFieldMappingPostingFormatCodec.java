@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,12 +19,20 @@
 
 package org.elasticsearch.index.codec;
 
+import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.codecs.PostingsFormat;
-import org.apache.lucene.codecs.lucene42.Lucene42Codec;
-import org.elasticsearch.ElasticSearchIllegalStateException;
-import org.elasticsearch.index.codec.postingsformat.PostingsFormatProvider;
+import org.apache.lucene.codecs.lucene50.Lucene50Codec;
+import org.apache.lucene.codecs.lucene50.Lucene50StoredFieldsFormat;
+import org.elasticsearch.common.logging.ESLogger;
+import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.index.mapper.FieldMappers;
 import org.elasticsearch.index.mapper.MapperService;
+import org.elasticsearch.index.mapper.core.CompletionFieldMapper;
+import org.elasticsearch.search.suggest.completion.Completion090PostingsFormat;
+import org.elasticsearch.search.suggest.completion.Completion090PostingsFormat.CompletionLookupProvider;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * {@link PerFieldMappingPostingFormatCodec This postings format} is the default
@@ -35,23 +43,32 @@ import org.elasticsearch.index.mapper.MapperService;
  * configured for a specific field the default postings format is used.
  */
 // LUCENE UPGRADE: make sure to move to a new codec depending on the lucene version
-public class PerFieldMappingPostingFormatCodec extends Lucene42Codec {
-
+public class PerFieldMappingPostingFormatCodec extends Lucene50Codec {
+    private final ESLogger logger;
     private final MapperService mapperService;
-    private final PostingsFormat defaultPostingFormat;
 
-    public PerFieldMappingPostingFormatCodec(MapperService mapperService, PostingsFormat defaultPostingFormat) {
+    static {
+        assert Codec.forName(Lucene.LATEST_CODEC).getClass().isAssignableFrom(PerFieldMappingPostingFormatCodec.class) : "PerFieldMappingPostingFormatCodec must subclass the latest lucene codec: " + Lucene.LATEST_CODEC;
+    }
+
+    public PerFieldMappingPostingFormatCodec(Lucene50StoredFieldsFormat.Mode compressionMode, MapperService mapperService, ESLogger logger) {
+        super(compressionMode);
         this.mapperService = mapperService;
-        this.defaultPostingFormat = defaultPostingFormat;
+        this.logger = logger;
     }
 
     @Override
     public PostingsFormat getPostingsFormatForField(String field) {
         final FieldMappers indexName = mapperService.indexName(field);
         if (indexName == null) {
-            throw new ElasticSearchIllegalStateException("no index mapper found for field: [" + field + "]");
+            logger.warn("no index mapper found for field: [{}] returning default postings format", field);
+        } else if (indexName.mapper() instanceof CompletionFieldMapper) {
+            // CompletionFieldMapper needs a special postings format
+            final CompletionFieldMapper mapper = (CompletionFieldMapper) indexName.mapper();
+            final PostingsFormat defaultFormat = super.getPostingsFormatForField(field);
+            return mapper.postingsFormat(defaultFormat);
         }
-        PostingsFormatProvider postingsFormat = indexName.mapper().postingsFormatProvider();
-        return postingsFormat != null ? postingsFormat.get() : defaultPostingFormat;
+        return super.getPostingsFormatForField(field);
     }
+
 }

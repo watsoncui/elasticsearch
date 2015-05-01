@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,16 +22,13 @@ package org.elasticsearch.index.merge.scheduler;
 import org.elasticsearch.common.inject.AbstractModule;
 import org.elasticsearch.common.settings.Settings;
 
-import static org.elasticsearch.index.merge.scheduler.MergeSchedulerModule.MergeSchedulerSettings.TYPE;
-
 /**
  *
  */
 public class MergeSchedulerModule extends AbstractModule {
 
-    public static class MergeSchedulerSettings {
-        public static final String TYPE = "index.merge.scheduler.type";
-    }
+    public static final String MERGE_SCHEDULER_TYPE_KEY = "index.merge.scheduler.type";
+    public static final Class<? extends MergeSchedulerProvider> DEFAULT = ConcurrentMergeSchedulerProvider.class;
 
     private final Settings settings;
 
@@ -42,7 +39,7 @@ public class MergeSchedulerModule extends AbstractModule {
     @Override
     protected void configure() {
         bind(MergeSchedulerProvider.class)
-                .to(settings.getAsClass(TYPE, ConcurrentMergeSchedulerProvider.class, "org.elasticsearch.index.merge.scheduler.", "MergeSchedulerProvider"))
+                .to(settings.getAsClass(MERGE_SCHEDULER_TYPE_KEY, DEFAULT, "org.elasticsearch.index.merge.scheduler.", "MergeSchedulerProvider"))
                 .asEagerSingleton();
     }
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,13 +22,13 @@ package org.elasticsearch.index.analysis;
 import org.apache.lucene.analysis.Tokenizer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.analysis.standard.UAX29URLEmailTokenizer;
+import org.apache.lucene.analysis.standard.std40.UAX29URLEmailTokenizer40;
+import org.apache.lucene.util.Version;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.assistedinject.Assisted;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.settings.IndexSettings;
-
-import java.io.Reader;
 
 /**
  *
@@ -44,9 +44,15 @@ public class UAX29URLEmailTokenizerFactory extends AbstractTokenizerFactory {
     }
 
     @Override
-    public Tokenizer create(Reader reader) {
-        UAX29URLEmailTokenizer tokenizer = new UAX29URLEmailTokenizer(version, reader);
-        tokenizer.setMaxTokenLength(maxTokenLength);
-        return tokenizer;
+    public Tokenizer create() {
+        if (version.onOrAfter(Version.LUCENE_4_7)) {
+            UAX29URLEmailTokenizer tokenizer = new UAX29URLEmailTokenizer();
+            tokenizer.setMaxTokenLength(maxTokenLength);
+            return tokenizer;
+        } else {
+            UAX29URLEmailTokenizer40 tokenizer = new UAX29URLEmailTokenizer40();
+            tokenizer.setMaxTokenLength(maxTokenLength);
+            return tokenizer;
+        }
     }
 }

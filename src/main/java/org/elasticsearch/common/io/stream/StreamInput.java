@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,6 +20,7 @@
 package org.elasticsearch.common.io.stream;
 
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.CharsRefBuilder;
 import org.elasticsearch.Version;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
@@ -31,6 +32,7 @@ import org.joda.time.DateTime;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.ObjectInputStream;
 import java.util.*;
 
 /**
@@ -117,22 +119,31 @@ public abstract class StreamInput extends InputStream {
 
     /**
      * Reads an int stored in variable-length format.  Reads between one and
-     * five bytes.  Smaller values take fewer bytes.  Negative numbers are not
-     * supported.
+     * five bytes.  Smaller values take fewer bytes.  Negative numbers
+     * will always use all 5 bytes and are therefore better serialized
+     * using {@link #readInt}
      */
     public int readVInt() throws IOException {
         byte b = readByte();
         int i = b & 0x7F;
-        if ((b & 0x80) == 0) return i;
+        if ((b & 0x80) == 0) {
+            return i;
+        }
         b = readByte();
         i |= (b & 0x7F) << 7;
-        if ((b & 0x80) == 0) return i;
+        if ((b & 0x80) == 0) {
+            return i;
+        }
         b = readByte();
         i |= (b & 0x7F) << 14;
-        if ((b & 0x80) == 0) return i;
+        if ((b & 0x80) == 0) {
+            return i;
+        }
         b = readByte();
         i |= (b & 0x7F) << 21;
-        if ((b & 0x80) == 0) return i;
+        if ((b & 0x80) == 0) {
+            return i;
+        }
         b = readByte();
         assert (b & 0x80) == 0;
         return i | ((b & 0x7F) << 28);
@@ -153,28 +164,44 @@ public abstract class StreamInput extends InputStream {
     public long readVLong() throws IOException {
         byte b = readByte();
         long i = b & 0x7FL;
-        if ((b & 0x80) == 0) return i;
+        if ((b & 0x80) == 0) {
+            return i;
+        }
         b = readByte();
         i |= (b & 0x7FL) << 7;
-        if ((b & 0x80) == 0) return i;
+        if ((b & 0x80) == 0) {
+            return i;
+        }
         b = readByte();
         i |= (b & 0x7FL) << 14;
-        if ((b & 0x80) == 0) return i;
+        if ((b & 0x80) == 0) {
+            return i;
+        }
         b = readByte();
         i |= (b & 0x7FL) << 21;
-        if ((b & 0x80) == 0) return i;
+        if ((b & 0x80) == 0) {
+            return i;
+        }
         b = readByte();
         i |= (b & 0x7FL) << 28;
-        if ((b & 0x80) == 0) return i;
+        if ((b & 0x80) == 0) {
+            return i;
+        }
         b = readByte();
         i |= (b & 0x7FL) << 35;
-        if ((b & 0x80) == 0) return i;
+        if ((b & 0x80) == 0) {
+            return i;
+        }
         b = readByte();
         i |= (b & 0x7FL) << 42;
-        if ((b & 0x80) == 0) return i;
+        if ((b & 0x80) == 0) {
+            return i;
+        }
         b = readByte();
         i |= (b & 0x7FL) << 49;
-        if ((b & 0x80) == 0) return i;
+        if ((b & 0x80) == 0) {
+            return i;
+        }
         b = readByte();
         assert (b & 0x80) == 0;
         return i | ((b & 0x7FL) << 56);
@@ -195,10 +222,6 @@ public abstract class StreamInput extends InputStream {
         return new StringAndBytesText(readBytesReference(length));
     }
 
-    public Text readSharedText() throws IOException {
-        return readText();
-    }
-
     @Nullable
     public String readOptionalString() throws IOException {
         if (readBoolean()) {
@@ -207,11 +230,22 @@ public abstract class StreamInput extends InputStream {
         return null;
     }
 
+    @Nullable
+    public Integer readOptionalVInt() throws IOException {
+        if (readBoolean()) {
+            return readVInt();
+        }
+        return null;
+    }
+
+    private final CharsRefBuilder spare = new CharsRefBuilder();
+
     public String readString() throws IOException {
-        int charCount = readVInt();
-        char[] chars = CachedStreamInput.getCharArray(charCount);
-        int c, charIndex = 0;
-        while (charIndex < charCount) {
+        final int charCount = readVInt();
+        spare.clear();
+        spare.grow(charCount);
+        int c = 0;
+        while (spare.length() < charCount) {
             c = readByte() & 0xff;
             switch (c >> 4) {
                 case 0:
@@ -222,18 +256,18 @@ public abstract class StreamInput extends InputStream {
                 case 5:
                 case 6:
                 case 7:
-                    chars[charIndex++] = (char) c;
+                    spare.append((char) c);
                     break;
                 case 12:
                 case 13:
-                    chars[charIndex++] = (char) ((c & 0x1F) << 6 | readByte() & 0x3F);
+                    spare.append((char) ((c & 0x1F) << 6 | readByte() & 0x3F));
                     break;
                 case 14:
-                    chars[charIndex++] = (char) ((c & 0x0F) << 12 | (readByte() & 0x3F) << 6 | (readByte() & 0x3F) << 0);
+                    spare.append((char) ((c & 0x0F) << 12 | (readByte() & 0x3F) << 6 | (readByte() & 0x3F) << 0));
                     break;
             }
         }
-        return new String(chars, 0, charCount);
+        return spare.toString();
     }
 
 
@@ -267,11 +301,13 @@ public abstract class StreamInput extends InputStream {
     /**
      * Resets the stream.
      */
+    @Override
     public abstract void reset() throws IOException;
 
     /**
      * Closes the stream to further operations.
      */
+    @Override
     public abstract void close() throws IOException;
 
 //    // IS
@@ -368,8 +404,75 @@ public abstract class StreamInput extends InputStream {
                 return readText();
             case 16:
                 return readShort();
+            case 17:
+                return readIntArray();
+            case 18:
+                return readLongArray();
+            case 19:
+                return readFloatArray();
+            case 20:
+                return readDoubleArray();
+            case 21:
+                return readBytesRef();
             default:
                 throw new IOException("Can't read unknown type [" + type + "]");
+        }
+    }
+
+    public int[] readIntArray() throws IOException {
+        int length = readVInt();
+        int[] values = new int[length];
+        for(int i=0; i<length; i++) {
+            values[i] = readInt();
+        }
+        return values;
+    }
+    
+    public long[] readLongArray() throws IOException {
+        int length = readVInt();
+        long[] values = new long[length];
+        for(int i=0; i<length; i++) {
+            values[i] = readLong();
+        }
+        return values;
+    }
+    
+    public float[] readFloatArray() throws IOException {
+        int length = readVInt();
+        float[] values = new float[length];
+        for(int i=0; i<length; i++) {
+            values[i] = readFloat();
+        }
+        return values;
+    }
+    
+    public double[] readDoubleArray() throws IOException {
+        int length = readVInt();
+        double[] values = new double[length];
+        for(int i=0; i<length; i++) {
+            values[i] = readDouble();
+        }
+        return values;
+    }
+
+    /**
+     * Serializes a potential null value.
+     */
+    public <T extends Streamable> T readOptionalStreamable(T streamable) throws IOException {
+        if (readBoolean()) {
+            streamable.readFrom(this);
+            return streamable;
+        } else {
+            return null;
+        }
+    }
+
+    public <T extends Throwable> T readThrowable() throws IOException {
+        try {
+            ObjectInputStream oin = new ObjectInputStream(this);
+            return (T) oin.readObject();
+        } catch (ClassNotFoundException e) {
+            throw new IOException("failed to deserialize exception", e);
         }
     }
 }

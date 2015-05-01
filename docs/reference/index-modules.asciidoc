@@ -1,0 +1,72 @@
+[[index-modules]]
+= Index Modules
+
+[partintro]
+--
+Index Modules are modules created per index and control all aspects
+related to an index. Since those modules lifecycle are tied to an index,
+all the relevant modules settings can be provided when creating an index
+(and it is actually the recommended way to configure an index).
+
+[float]
+[[index-modules-settings]]
+== Index Settings
+
+There are specific index level settings that are not associated with any
+specific module. These include:
+
+`index.refresh_interval`::
+	A time setting controlling how often the
+	refresh operation will be executed. Defaults to `1s`. Can be set to `-1`
+	in order to disable it.
+
+`index.codec`::
+
+        experimental[]
+        The `default` value compresses stored data with LZ4 compression, but
+        this can be set to `best_compression` for a higher compression ratio,
+        at the expense of slower stored fields performance.
+
+`index.shard.check_on_startup`::
+
+        experimental[]
+        Should shard consistency be checked upon opening. When corruption is detected,
+        it will prevent the shard from being opened.
+        +
+        When `checksum`, check for physical corruption.
+        When `true`, check for both physical and logical corruption. This is much
+        more expensive in terms of CPU and memory usage.
+        When `fix`, check for both physical and logical corruption, and segments
+        that were reported as corrupted will be automatically removed.
+        Default value is `false`, which performs no checks.
+
+NOTE: Checking shards may take a lot of time on large indices.
+
+WARNING: Setting `index.shard.check_on_startup` to `fix` may result in data loss,
+         use with extreme caution.
+
+--
+
+include::index-modules/analysis.asciidoc[]
+
+include::index-modules/allocation.asciidoc[]
+
+include::index-modules/slowlog.asciidoc[]
+
+include::index-modules/merge.asciidoc[]
+
+include::index-modules/store.asciidoc[]
+
+include::index-modules/mapper.asciidoc[]
+
+include::index-modules/translog.asciidoc[]
+
+include::index-modules/cache.asciidoc[]
+
+include::index-modules/query-cache.asciidoc[]
+
+include::index-modules/fielddata.asciidoc[]
+
+include::index-modules/similarity.asciidoc[]
+
+

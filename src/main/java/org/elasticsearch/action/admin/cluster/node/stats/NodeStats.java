@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,13 +19,19 @@
 
 package org.elasticsearch.action.admin.cluster.node.stats;
 
+import org.elasticsearch.Version;
 import org.elasticsearch.action.support.nodes.NodeOperationResponse;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.common.xcontent.ToXContent;
+import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.http.HttpStats;
 import org.elasticsearch.indices.NodeIndicesStats;
+import org.elasticsearch.indices.breaker.AllCircuitBreakerStats;
+import org.elasticsearch.indices.breaker.CircuitBreakerStats;
 import org.elasticsearch.monitor.fs.FsStats;
 import org.elasticsearch.monitor.jvm.JvmStats;
 import org.elasticsearch.monitor.network.NetworkStats;
@@ -35,16 +41,14 @@ import org.elasticsearch.threadpool.ThreadPoolStats;
 import org.elasticsearch.transport.TransportStats;
 
 import java.io.IOException;
+import java.util.Map;
 
 /**
  * Node statistics (dynamic, changes depending on when created).
  */
-public class NodeStats extends NodeOperationResponse {
+public class NodeStats extends NodeOperationResponse implements ToXContent {
 
     private long timestamp;
-
-    @Nullable
-    private String hostname;
 
     @Nullable
     private NodeIndicesStats indices;
@@ -73,15 +77,18 @@ public class NodeStats extends NodeOperationResponse {
     @Nullable
     private HttpStats http;
 
+    @Nullable
+    private AllCircuitBreakerStats breaker;
+
     NodeStats() {
     }
 
-    public NodeStats(DiscoveryNode node, long timestamp, @Nullable String hostname, @Nullable NodeIndicesStats indices,
-                     @Nullable OsStats os, @Nullable ProcessStats process, @Nullable JvmStats jvm, @Nullable ThreadPoolStats threadPool, @Nullable NetworkStats network,
-                     @Nullable FsStats fs, @Nullable TransportStats transport, @Nullable HttpStats http) {
+    public NodeStats(DiscoveryNode node, long timestamp, @Nullable NodeIndicesStats indices,
+                     @Nullable OsStats os, @Nullable ProcessStats process, @Nullable JvmStats jvm, @Nullable ThreadPoolStats threadPool,
+                     @Nullable NetworkStats network, @Nullable FsStats fs, @Nullable TransportStats transport, @Nullable HttpStats http,
+                     @Nullable AllCircuitBreakerStats breaker) {
         super(node);
         this.timestamp = timestamp;
-        this.hostname = hostname;
         this.indices = indices;
         this.os = os;
         this.process = process;
@@ -91,6 +98,7 @@ public class NodeStats extends NodeOperationResponse {
         this.fs = fs;
         this.transport = transport;
         this.http = http;
+        this.breaker = breaker;
     }
 
     public long getTimestamp() {
@@ -99,7 +107,7 @@ public class NodeStats extends NodeOperationResponse {
 
     @Nullable
     public String getHostname() {
-        return this.hostname;
+        return getNode().getHostName();
     }
 
     /**
@@ -168,6 +176,11 @@ public class NodeStats extends NodeOperationResponse {
         return this.http;
     }
 
+    @Nullable
+    public AllCircuitBreakerStats getBreaker() {
+        return this.breaker;
+    }
+
     public static NodeStats readNodeStats(StreamInput in) throws IOException {
         NodeStats nodeInfo = new NodeStats();
         nodeInfo.readFrom(in);
@@ -178,9 +191,6 @@ public class NodeStats extends NodeOperationResponse {
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
         timestamp = in.readVLong();
-        if (in.readBoolean()) {
-            hostname = in.readString();
-        }
         if (in.readBoolean()) {
             indices = NodeIndicesStats.readIndicesStats(in);
         }
@@ -208,18 +218,14 @@ public class NodeStats extends NodeOperationResponse {
         if (in.readBoolean()) {
             http = HttpStats.readHttpStats(in);
         }
+        breaker = AllCircuitBreakerStats.readOptionalAllCircuitBreakerStats(in);
+
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
         out.writeVLong(timestamp);
-        if (hostname == null) {
-            out.writeBoolean(false);
-        } else {
-            out.writeBoolean(true);
-            out.writeString(hostname);
-        }
         if (indices == null) {
             out.writeBoolean(false);
         } else {
@@ -274,5 +280,58 @@ public class NodeStats extends NodeOperationResponse {
             out.writeBoolean(true);
             http.writeTo(out);
         }
+        out.writeOptionalStreamable(breaker);
+    }
+
+    @Override
+    public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
+        if (!params.param("node_info_format", "default").equals("none")) {
+            builder.field("name", getNode().name(), XContentBuilder.FieldCaseConversion.NONE);
+            builder.field("transport_address", getNode().address().toString(), XContentBuilder.FieldCaseConversion.NONE);
+            builder.field("host", getNode().getHostName(), XContentBuilder.FieldCaseConversion.NONE);
+            builder.field("ip", getNode().getAddress(), XContentBuilder.FieldCaseConversion.NONE);
+
+            if (!getNode().attributes().isEmpty()) {
+                builder.startObject("attributes");
+                for (Map.Entry<String, String> attr : getNode().attributes().entrySet()) {
+                    builder.field(attr.getKey(), attr.getValue(), XContentBuilder.FieldCaseConversion.NONE);
+                }
+                builder.endObject();
+            }
+        }
+
+        if (getIndices() != null) {
+            getIndices().toXContent(builder, params);
+        }
+
+        if (getOs() != null) {
+            getOs().toXContent(builder, params);
+        }
+        if (getProcess() != null) {
+            getProcess().toXContent(builder, params);
+        }
+        if (getJvm() != null) {
+            getJvm().toXContent(builder, params);
+        }
+        if (getThreadPool() != null) {
+            getThreadPool().toXContent(builder, params);
+        }
+        if (getNetwork() != null) {
+            getNetwork().toXContent(builder, params);
+        }
+        if (getFs() != null) {
+            getFs().toXContent(builder, params);
+        }
+        if (getTransport() != null) {
+            getTransport().toXContent(builder, params);
+        }
+        if (getHttp() != null) {
+            getHttp().toXContent(builder, params);
+        }
+        if (getBreaker() != null) {
+            getBreaker().toXContent(builder, params);
+        }
+
+        return builder;
     }
 }

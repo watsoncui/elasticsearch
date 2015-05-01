@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,12 +19,12 @@
 
 package org.elasticsearch.cluster.routing.allocation.command;
 
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
-import org.elasticsearch.ElasticSearchParseException;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.routing.MutableShardRouting;
 import org.elasticsearch.cluster.routing.RoutingNode;
+import org.elasticsearch.cluster.routing.allocation.RerouteExplanation;
 import org.elasticsearch.cluster.routing.allocation.RoutingAllocation;
 import org.elasticsearch.cluster.routing.allocation.decider.Decision;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -82,28 +82,32 @@ public class AllocateAllocationCommand implements AllocationCommand {
                     } else if ("allow_primary".equals(currentFieldName) || "allowPrimary".equals(currentFieldName)) {
                         allowPrimary = parser.booleanValue();
                     } else {
-                        throw new ElasticSearchParseException("[allocate] command does not support field [" + currentFieldName + "]");
+                        throw new ElasticsearchParseException("[allocate] command does not support field [" + currentFieldName + "]");
                     }
                 } else {
-                    throw new ElasticSearchParseException("[allocate] command does not support complex json tokens [" + token + "]");
+                    throw new ElasticsearchParseException("[allocate] command does not support complex json tokens [" + token + "]");
                 }
             }
             if (index == null) {
-                throw new ElasticSearchParseException("[allocate] command missing the index parameter");
+                throw new ElasticsearchParseException("[allocate] command missing the index parameter");
             }
             if (shardId == -1) {
-                throw new ElasticSearchParseException("[allocate] command missing the shard parameter");
+                throw new ElasticsearchParseException("[allocate] command missing the shard parameter");
             }
             if (nodeId == null) {
-                throw new ElasticSearchParseException("[allocate] command missing the node parameter");
+                throw new ElasticsearchParseException("[allocate] command missing the node parameter");
             }
             return new AllocateAllocationCommand(new ShardId(index, shardId), nodeId, allowPrimary);
         }
 
         @Override
-        public void toXContent(AllocateAllocationCommand command, XContentBuilder builder, ToXContent.Params params) throws IOException {
-            builder.startObject();
-            builder.field("index", command.shardId().index());
+        public void toXContent(AllocateAllocationCommand command, XContentBuilder builder, ToXContent.Params params, String objectName) throws IOException {
+            if (objectName == null) {
+                builder.startObject();
+            } else {
+                builder.startObject(objectName);
+            }
+            builder.field("index", command.shardId().index().name());
             builder.field("shard", command.shardId().id());
             builder.field("node", command.node());
             builder.field("allow_primary", command.allowPrimary());
@@ -117,9 +121,9 @@ public class AllocateAllocationCommand implements AllocationCommand {
 
     /**
      * Create a new {@link AllocateAllocationCommand}
-     * 
-     * @param shardId {@link ShardId} of the shrad to assign
-     * @param node Node to assign the shard to
+     *
+     * @param shardId      {@link ShardId} of the shrad to assign
+     * @param node         Node to assign the shard to
      * @param allowPrimary should the node be allow to allocate the shard as primary
      */
     public AllocateAllocationCommand(ShardId shardId, String node, boolean allowPrimary) {
@@ -134,7 +138,8 @@ public class AllocateAllocationCommand implements AllocationCommand {
     }
 
     /**
-     * Get the shards id 
+     * Get the shards id
+     *
      * @return id of the shard
      */
     public ShardId shardId() {
@@ -143,6 +148,7 @@ public class AllocateAllocationCommand implements AllocationCommand {
 
     /**
      * Get the id of the Node
+     *
      * @return id of the Node
      */
     public String node() {
@@ -150,15 +156,16 @@ public class AllocateAllocationCommand implements AllocationCommand {
     }
 
     /**
-     * Determine if primary allocation is allowed 
-     * @return <code>true</code> if primary allocation is allowed. Otherwise <code>false</code> 
+     * Determine if primary allocation is allowed
+     *
+     * @return <code>true</code> if primary allocation is allowed. Otherwise <code>false</code>
      */
     public boolean allowPrimary() {
         return this.allowPrimary;
     }
 
     @Override
-    public void execute(RoutingAllocation allocation) throws ElasticSearchException {
+    public RerouteExplanation execute(RoutingAllocation allocation, boolean explain) {
         DiscoveryNode discoNode = allocation.nodes().resolveNode(node);
 
         MutableShardRouting shardRouting = null;
@@ -172,17 +179,44 @@ public class AllocateAllocationCommand implements AllocationCommand {
         }
 
         if (shardRouting == null) {
-            throw new ElasticSearchIllegalArgumentException("[allocate] failed to find " + shardId + " on the list of unassigned shards");
+            if (explain) {
+                return new RerouteExplanation(this, allocation.decision(Decision.NO, "allocate_allocation_command",
+                        "failed to find " + shardId + " on the list of unassigned shards"));
+            }
+            throw new IllegalArgumentException("[allocate] failed to find " + shardId + " on the list of unassigned shards");
         }
 
         if (shardRouting.primary() && !allowPrimary) {
-            throw new ElasticSearchIllegalArgumentException("[allocate] trying to allocate a primary shard " + shardId + "], which is disabled");
+            if (explain) {
+                return new RerouteExplanation(this, allocation.decision(Decision.NO, "allocate_allocation_command",
+                        "trying to allocate a primary shard " + shardId + ", which is disabled"));
+            }
+            throw new IllegalArgumentException("[allocate] trying to allocate a primary shard " + shardId + ", which is disabled");
         }
 
         RoutingNode routingNode = allocation.routingNodes().node(discoNode.id());
+        if (routingNode == null) {
+            if (!discoNode.dataNode()) {
+                if (explain) {
+                    return new RerouteExplanation(this, allocation.decision(Decision.NO, "allocate_allocation_command",
+                            "Allocation can only be done on data nodes, not [" + node + "]"));
+                }
+                throw new IllegalArgumentException("Allocation can only be done on data nodes, not [" + node + "]");
+            } else {
+                if (explain) {
+                    return new RerouteExplanation(this, allocation.decision(Decision.NO, "allocate_allocation_command",
+                            "Could not find [" + node + "] among the routing nodes"));
+                }
+                throw new IllegalStateException("Could not find [" + node + "] among the routing nodes");
+            }
+        }
+
         Decision decision = allocation.deciders().canAllocate(shardRouting, routingNode, allocation);
         if (decision.type() == Decision.Type.NO) {
-            throw new ElasticSearchIllegalArgumentException("[allocate] allocation of " + shardId + " on node " + discoNode + " is not allowed, reason: " + decision);
+            if (explain) {
+                return new RerouteExplanation(this, decision);
+            }
+            throw new IllegalArgumentException("[allocate] allocation of " + shardId + " on node " + discoNode + " is not allowed, reason: " + decision);
         }
         // go over and remove it from the unassigned
         for (Iterator<MutableShardRouting> it = allocation.routingNodes().unassigned().iterator(); it.hasNext(); ) {
@@ -190,8 +224,14 @@ public class AllocateAllocationCommand implements AllocationCommand {
                 continue;
             }
             it.remove();
-            routingNode.add(shardRouting);
+            allocation.routingNodes().assign(shardRouting, routingNode.nodeId());
+            if (shardRouting.primary()) {
+                // we need to clear the post allocation flag, since its an explicit allocation of the primary shard
+                // and we want to force allocate it (and create a new index for it)
+                allocation.routingNodes().addClearPostAllocationFlag(shardRouting.shardId());
+            }
             break;
         }
+        return new RerouteExplanation(this, decision);
     }
 }

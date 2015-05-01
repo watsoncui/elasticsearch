@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,12 +19,14 @@
 
 package org.elasticsearch.index.query;
 
-import gnu.trove.impl.Constants;
-import gnu.trove.map.hash.TObjectFloatHashMap;
+import com.carrotsearch.hppc.ObjectFloatOpenHashMap;
+
+import org.elasticsearch.common.unit.Fuzziness;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Locale;
 
 import static com.google.common.collect.Lists.newArrayList;
 
@@ -35,7 +37,6 @@ import static com.google.common.collect.Lists.newArrayList;
  * (using {@link #field(String)}), will run the parsed query against the provided fields, and combine
  * them either using DisMax or a plain boolean query (see {@link #useDisMax(boolean)}).
  * <p/>
- * (shay.baon)
  */
 public class QueryStringQueryBuilder extends BaseQueryBuilder implements BoostableQueryBuilder<QueryStringQueryBuilder> {
 
@@ -65,10 +66,12 @@ public class QueryStringQueryBuilder extends BaseQueryBuilder implements Boostab
 
     private Boolean analyzeWildcard;
 
+    private Locale locale;
+
 
     private float boost = -1;
 
-    private float fuzzyMinSim = -1;
+    private Fuzziness fuzziness;
     private int fuzzyPrefixLength = -1;
     private int fuzzyMaxExpansions = -1;
     private String fuzzyRewrite;
@@ -77,7 +80,7 @@ public class QueryStringQueryBuilder extends BaseQueryBuilder implements Boostab
 
     private List<String> fields;
 
-    private TObjectFloatHashMap<String> fieldsBoosts;
+    private ObjectFloatOpenHashMap<String> fieldsBoosts;
 
     private Boolean useDisMax;
 
@@ -88,6 +91,13 @@ public class QueryStringQueryBuilder extends BaseQueryBuilder implements Boostab
     private String minimumShouldMatch;
 
     private Boolean lenient;
+
+    private String queryName;
+
+    private String timeZone;
+
+    /** To limit effort spent determinizing regexp queries. */
+    private Integer maxDeterminizedStates;
 
     public QueryStringQueryBuilder(String queryString) {
         this.queryString = queryString;
@@ -122,7 +132,7 @@ public class QueryStringQueryBuilder extends BaseQueryBuilder implements Boostab
         }
         fields.add(field);
         if (fieldsBoosts == null) {
-            fieldsBoosts = new TObjectFloatHashMap<String>(Constants.DEFAULT_CAPACITY, Constants.DEFAULT_LOAD_FACTOR, -1);
+            fieldsBoosts = new ObjectFloatOpenHashMap<>();
         }
         fieldsBoosts.put(field, boost);
         return this;
@@ -195,6 +205,14 @@ public class QueryStringQueryBuilder extends BaseQueryBuilder implements Boostab
     }
 
     /**
+     * Protects against too-difficult regular expression queries.
+     */
+    public QueryStringQueryBuilder maxDeterminizedStates(int maxDeterminizedStates) {
+        this.maxDeterminizedStates = maxDeterminizedStates;
+        return this;
+    }
+
+    /**
      * Should leading wildcards be allowed or not. Defaults to <tt>true</tt>.
      */
     public QueryStringQueryBuilder allowLeadingWildcard(boolean allowLeadingWildcard) {
@@ -224,15 +242,15 @@ public class QueryStringQueryBuilder extends BaseQueryBuilder implements Boostab
     }
 
     /**
-     * Set the minimum similarity for fuzzy queries. Default is 0.5f.
+     * Set the edit distance for fuzzy queries. Default is "AUTO".
      */
-    public QueryStringQueryBuilder fuzzyMinSim(float fuzzyMinSim) {
-        this.fuzzyMinSim = fuzzyMinSim;
+    public QueryStringQueryBuilder fuzziness(Fuzziness fuzziness) {
+        this.fuzziness = fuzziness;
         return this;
     }
 
     /**
-     * Set the minimum similarity for fuzzy queries. Default is 0.5f.
+     * Set the minimum prefix length for fuzzy queries. Default is 1.
      */
     public QueryStringQueryBuilder fuzzyPrefixLength(int fuzzyPrefixLength) {
         this.fuzzyPrefixLength = fuzzyPrefixLength;
@@ -280,6 +298,7 @@ public class QueryStringQueryBuilder extends BaseQueryBuilder implements Boostab
      * Sets the boost for this query.  Documents matching this query will (in addition to the normal
      * weightings) have their score multiplied by the boost provided.
      */
+    @Override
     public QueryStringQueryBuilder boost(float boost) {
         this.boost = boost;
         return this;
@@ -302,6 +321,27 @@ public class QueryStringQueryBuilder extends BaseQueryBuilder implements Boostab
         return this;
     }
 
+    /**
+     * Sets the query name for the filter that can be used when searching for matched_filters per hit.
+     */
+    public QueryStringQueryBuilder queryName(String queryName) {
+        this.queryName = queryName;
+        return this;
+    }
+
+    public QueryStringQueryBuilder locale(Locale locale) {
+        this.locale = locale;
+        return this;
+    }
+
+    /**
+     * In case of date field, we can adjust the from/to fields using a timezone
+     */
+    public QueryStringQueryBuilder timeZone(String timeZone) {
+        this.timeZone = timeZone;
+        return this;
+    }
+
     @Override
     protected void doXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(QueryStringQueryParser.NAME);
@@ -312,12 +352,8 @@ public class QueryStringQueryBuilder extends BaseQueryBuilder implements Boostab
         if (fields != null) {
             builder.startArray("fields");
             for (String field : fields) {
-                float boost = -1;
-                if (fieldsBoosts != null) {
-                    boost = fieldsBoosts.get(field);
-                }
-                if (boost != -1) {
-                    field += "^" + boost;
+                if (fieldsBoosts != null && fieldsBoosts.containsKey(field)) {
+                    field += "^" + fieldsBoosts.get(field);
                 }
                 builder.value(field);
             }
@@ -330,7 +366,7 @@ public class QueryStringQueryBuilder extends BaseQueryBuilder implements Boostab
             builder.field("tie_breaker", tieBreaker);
         }
         if (defaultOperator != null) {
-            builder.field("default_operator", defaultOperator.name().toLowerCase());
+            builder.field("default_operator", defaultOperator.name().toLowerCase(Locale.ROOT));
         }
         if (analyzer != null) {
             builder.field("analyzer", analyzer);
@@ -341,6 +377,9 @@ public class QueryStringQueryBuilder extends BaseQueryBuilder implements Boostab
         if (autoGeneratePhraseQueries != null) {
             builder.field("auto_generate_phrase_queries", autoGeneratePhraseQueries);
         }
+        if (maxDeterminizedStates != null) {
+            builder.field("max_determinized_states", maxDeterminizedStates);
+        }
         if (allowLeadingWildcard != null) {
             builder.field("allow_leading_wildcard", allowLeadingWildcard);
         }
@@ -350,8 +389,8 @@ public class QueryStringQueryBuilder extends BaseQueryBuilder implements Boostab
         if (enablePositionIncrements != null) {
             builder.field("enable_position_increments", enablePositionIncrements);
         }
-        if (fuzzyMinSim != -1) {
-            builder.field("fuzzy_min_sim", fuzzyMinSim);
+        if (fuzziness != null) {
+            fuzziness.toXContent(builder, params);
         }
         if (boost != -1) {
             builder.field("boost", boost);
@@ -382,6 +421,15 @@ public class QueryStringQueryBuilder extends BaseQueryBuilder implements Boostab
         }
         if (lenient != null) {
             builder.field("lenient", lenient);
+        }
+        if (queryName != null) {
+            builder.field("_name", queryName);
+        }
+        if (locale != null) {
+            builder.field("locale", locale.toString());
+        }
+        if (timeZone != null) {
+            builder.field("time_zone", timeZone);
         }
         builder.endObject();
     }

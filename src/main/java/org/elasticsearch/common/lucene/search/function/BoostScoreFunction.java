@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,72 +19,47 @@
 
 package org.elasticsearch.common.lucene.search.function;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.Explanation;
 
 /**
  *
  */
-public class BoostScoreFunction implements ScoreFunction {
+@Deprecated
+public class BoostScoreFunction extends ScoreFunction {
+
+    public static final String BOOST_WEIGHT_ERROR_MESSAGE = "'boost_factor' and 'weight' cannot be used together. Use 'weight'.";
 
     private final float boost;
 
     public BoostScoreFunction(float boost) {
+        super(CombineFunction.MULT);
         this.boost = boost;
     }
-
 
     public float getBoost() {
         return boost;
     }
 
     @Override
-    public void setNextReader(AtomicReaderContext context) {
-        // nothing to do here...
-    }
+    public LeafScoreFunction getLeafScoreFunction(LeafReaderContext ctx) {
+        return new LeafScoreFunction() {
 
-    @Override
-    public float score(int docId, float subQueryScore) {
-        return subQueryScore * boost;
-    }
+            @Override
+            public double score(int docId, float subQueryScore) {
+                return boost;
+            }
 
-    @Override
-    public float factor(int docId) {
-        return boost;
-    }
-
-    @Override
-    public Explanation explainScore(int docId, Explanation subQueryExpl) {
-        Explanation exp = new Explanation(boost * subQueryExpl.getValue(), "static boost function: product of:");
-        exp.addDetail(subQueryExpl);
-        exp.addDetail(new Explanation(boost, "boostFactor"));
-        return exp;
-    }
-
-    @Override
-    public Explanation explainFactor(int docId) {
-        return new Explanation(boost, "boostFactor");
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-
-        BoostScoreFunction that = (BoostScoreFunction) o;
-
-        if (Float.compare(that.boost, boost) != 0) return false;
-
-        return true;
-    }
-
-    @Override
-    public int hashCode() {
-        return (boost != +0.0f ? Float.floatToIntBits(boost) : 0);
+            @Override
+            public Explanation explainScore(int docId, Explanation subQueryScore) {
+                return Explanation.match(boost, "static boost factor", Explanation.match(boost, "boostFactor"));
+            }
+        };
     }
 
     @Override
     public String toString() {
         return "boost[" + boost + "]";
     }
+
 }

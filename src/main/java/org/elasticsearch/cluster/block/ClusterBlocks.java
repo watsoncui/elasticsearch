@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,8 +23,9 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import org.elasticsearch.cluster.AbstractDiffable;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
-import org.elasticsearch.cluster.metadata.MetaDataStateIndexService;
+import org.elasticsearch.cluster.metadata.MetaDataIndexStateService;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.rest.RestStatus;
@@ -36,9 +37,11 @@ import java.util.Set;
 /**
  * Represents current cluster level blocks to block dirty operations done against the cluster.
  */
-public class ClusterBlocks {
+public class ClusterBlocks extends AbstractDiffable<ClusterBlocks> {
 
     public static final ClusterBlocks EMPTY_CLUSTER_BLOCK = new ClusterBlocks(ImmutableSet.<ClusterBlock>of(), ImmutableMap.<String, ImmutableSet<ClusterBlock>>of());
+
+    public static final ClusterBlocks PROTO = EMPTY_CLUSTER_BLOCK;
 
     private final ImmutableSet<ClusterBlock> global;
 
@@ -106,6 +109,19 @@ public class ClusterBlocks {
 
     public boolean hasGlobalBlock(ClusterBlock block) {
         return global.contains(block);
+    }
+
+    public boolean hasGlobalBlock(int blockId) {
+        for (ClusterBlock clusterBlock : global) {
+            if (clusterBlock.id() == blockId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean hasGlobalBlock(ClusterBlockLevel level) {
+        return global(level).size() > 0;
     }
 
     /**
@@ -190,6 +206,43 @@ public class ClusterBlocks {
         return new ClusterBlockException(builder.build());
     }
 
+    @Override
+    public void writeTo(StreamOutput out) throws IOException {
+        writeBlockSet(global, out);
+        out.writeVInt(indicesBlocks.size());
+        for (Map.Entry<String, ImmutableSet<ClusterBlock>> entry : indicesBlocks.entrySet()) {
+            out.writeString(entry.getKey());
+            writeBlockSet(entry.getValue(), out);
+        }
+    }
+
+    private static void writeBlockSet(ImmutableSet<ClusterBlock> blocks, StreamOutput out) throws IOException {
+        out.writeVInt(blocks.size());
+        for (ClusterBlock block : blocks) {
+            block.writeTo(out);
+        }
+    }
+
+    @Override
+    public ClusterBlocks readFrom(StreamInput in) throws IOException {
+        ImmutableSet<ClusterBlock> global = readBlockSet(in);
+        ImmutableMap.Builder<String, ImmutableSet<ClusterBlock>> indicesBuilder = ImmutableMap.builder();
+        int size = in.readVInt();
+        for (int j = 0; j < size; j++) {
+            indicesBuilder.put(in.readString().intern(), readBlockSet(in));
+        }
+        return new ClusterBlocks(global, indicesBuilder.build());
+    }
+
+    private static ImmutableSet<ClusterBlock> readBlockSet(StreamInput in) throws IOException {
+        ImmutableSet.Builder<ClusterBlock> builder = ImmutableSet.builder();
+        int size = in.readVInt();
+        for (int i = 0; i < size; i++) {
+            builder.add(ClusterBlock.readClusterBlock(in));
+        }
+        return builder.build();
+    }
+
     static class ImmutableLevelHolder {
 
         static final ImmutableLevelHolder EMPTY = new ImmutableLevelHolder(ImmutableSet.<ClusterBlock>of(), ImmutableMap.<String, ImmutableSet<ClusterBlock>>of());
@@ -237,7 +290,7 @@ public class ClusterBlocks {
 
         public Builder addBlocks(IndexMetaData indexMetaData) {
             if (indexMetaData.state() == IndexMetaData.State.CLOSE) {
-                addIndexBlock(indexMetaData.index(), MetaDataStateIndexService.INDEX_CLOSED_BLOCK);
+                addIndexBlock(indexMetaData.index(), MetaDataIndexStateService.INDEX_CLOSED_BLOCK);
             }
             if (indexMetaData.settings().getAsBoolean(IndexMetaData.SETTING_READ_ONLY, false)) {
                 addIndexBlock(indexMetaData.index(), IndexMetaData.INDEX_READ_ONLY_BLOCK);
@@ -300,38 +353,7 @@ public class ClusterBlocks {
         }
 
         public static ClusterBlocks readClusterBlocks(StreamInput in) throws IOException {
-            ImmutableSet<ClusterBlock> global = readBlockSet(in);
-            ImmutableMap.Builder<String, ImmutableSet<ClusterBlock>> indicesBuilder = ImmutableMap.builder();
-            int size = in.readVInt();
-            for (int j = 0; j < size; j++) {
-                indicesBuilder.put(in.readString().intern(), readBlockSet(in));
-            }
-            return new ClusterBlocks(global, indicesBuilder.build());
-        }
-
-        public static void writeClusterBlocks(ClusterBlocks blocks, StreamOutput out) throws IOException {
-            writeBlockSet(blocks.global(), out);
-            out.writeVInt(blocks.indices().size());
-            for (Map.Entry<String, ImmutableSet<ClusterBlock>> entry : blocks.indices().entrySet()) {
-                out.writeString(entry.getKey());
-                writeBlockSet(entry.getValue(), out);
-            }
-        }
-
-        private static void writeBlockSet(ImmutableSet<ClusterBlock> blocks, StreamOutput out) throws IOException {
-            out.writeVInt(blocks.size());
-            for (ClusterBlock block : blocks) {
-                block.writeTo(out);
-            }
-        }
-
-        private static ImmutableSet<ClusterBlock> readBlockSet(StreamInput in) throws IOException {
-            ImmutableSet.Builder<ClusterBlock> builder = ImmutableSet.builder();
-            int size = in.readVInt();
-            for (int i = 0; i < size; i++) {
-                builder.add(ClusterBlock.readClusterBlock(in));
-            }
-            return builder.build();
+            return PROTO.readFrom(in);
         }
     }
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,14 +19,19 @@
 
 package org.elasticsearch.discovery;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.ElasticsearchTimeoutException;
+import org.elasticsearch.cluster.ClusterChangedEvent;
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.block.ClusterBlock;
 import org.elasticsearch.cluster.node.DiscoveryNode;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
 
+import java.util.Random;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -35,56 +40,73 @@ import java.util.concurrent.TimeUnit;
  */
 public class DiscoveryService extends AbstractLifecycleComponent<DiscoveryService> {
 
+    public static final String SETTING_INITIAL_STATE_TIMEOUT = "discovery.initial_state_timeout";
+
+    private static class InitialStateListener implements InitialStateDiscoveryListener {
+
+        private final CountDownLatch latch = new CountDownLatch(1);
+        private volatile boolean initialStateReceived;
+
+        @Override
+        public void initialStateProcessed() {
+            initialStateReceived = true;
+            latch.countDown();
+        }
+
+        public boolean waitForInitialState(TimeValue timeValue) throws InterruptedException {
+            if (timeValue.millis() > 0) {
+                latch.await(timeValue.millis(), TimeUnit.MILLISECONDS);
+            }
+            return initialStateReceived;
+        }
+    }
+
     private final TimeValue initialStateTimeout;
-
     private final Discovery discovery;
-
-    private volatile boolean initialStateReceived;
+    private InitialStateListener initialStateListener;
+    private final DiscoverySettings discoverySettings;
 
     @Inject
-    public DiscoveryService(Settings settings, Discovery discovery) {
+    public DiscoveryService(Settings settings, DiscoverySettings discoverySettings, Discovery discovery) {
         super(settings);
+        this.discoverySettings = discoverySettings;
         this.discovery = discovery;
-        this.initialStateTimeout = componentSettings.getAsTime("initial_state_timeout", TimeValue.timeValueSeconds(30));
+        this.initialStateTimeout = settings.getAsTime(SETTING_INITIAL_STATE_TIMEOUT, TimeValue.timeValueSeconds(30));
+    }
+
+    public ClusterBlock getNoMasterBlock() {
+        return discoverySettings.getNoMasterBlock();
     }
 
     @Override
-    protected void doStart() throws ElasticSearchException {
-        final CountDownLatch latch = new CountDownLatch(1);
-        InitialStateDiscoveryListener listener = new InitialStateDiscoveryListener() {
-            @Override
-            public void initialStateProcessed() {
-                latch.countDown();
-            }
-        };
-        discovery.addListener(listener);
-        try {
-            discovery.start();
-            try {
-                logger.trace("waiting for {} for the initial state to be set by the discovery", initialStateTimeout);
-                if (latch.await(initialStateTimeout.millis(), TimeUnit.MILLISECONDS)) {
-                    logger.trace("initial state set from discovery");
-                    initialStateReceived = true;
-                } else {
-                    initialStateReceived = false;
-                    logger.warn("waited for {} and no initial state was set by the discovery", initialStateTimeout);
-                }
-            } catch (InterruptedException e) {
-                // ignore
-            }
-        } finally {
-            discovery.removeListener(listener);
-        }
+    protected void doStart() {
+        initialStateListener = new InitialStateListener();
+        discovery.addListener(initialStateListener);
+        discovery.start();
         logger.info(discovery.nodeDescription());
     }
 
+    public void waitForInitialState() {
+        try {
+            if (!initialStateListener.waitForInitialState(initialStateTimeout)) {
+                logger.warn("waited for {} and no initial state was set by the discovery", initialStateTimeout);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ElasticsearchTimeoutException("Interrupted while waiting for initial discovery state");
+        }
+    }
+
     @Override
-    protected void doStop() throws ElasticSearchException {
+    protected void doStop() {
+        if (initialStateListener != null) {
+            discovery.removeListener(initialStateListener);
+        }
         discovery.stop();
     }
 
     @Override
-    protected void doClose() throws ElasticSearchException {
+    protected void doClose() {
         discovery.close();
     }
 
@@ -97,7 +119,7 @@ public class DiscoveryService extends AbstractLifecycleComponent<DiscoveryServic
      * on {@link #doStart()}.
      */
     public boolean initialStateReceived() {
-        return initialStateReceived;
+        return initialStateListener.initialStateReceived;
     }
 
     public String nodeDescription() {
@@ -107,11 +129,21 @@ public class DiscoveryService extends AbstractLifecycleComponent<DiscoveryServic
     /**
      * Publish all the changes to the cluster from the master (can be called just by the master). The publish
      * process should not publish this state to the master as well! (the master is sending it...).
+     * <p/>
+     * The {@link org.elasticsearch.discovery.Discovery.AckListener} allows to acknowledge the publish
+     * event based on the response gotten from all nodes
      */
-    public void publish(ClusterState clusterState) {
-        if (!lifecycle.started()) {
-            return;
+    public void publish(ClusterChangedEvent clusterChangedEvent, Discovery.AckListener ackListener) {
+        if (lifecycle.started()) {
+            discovery.publish(clusterChangedEvent, ackListener);
         }
-        discovery.publish(clusterState);
+    }
+
+    public static String generateNodeId(Settings settings) {
+        String seed = settings.get("discovery.id.seed");
+        if (seed != null) {
+            return Strings.randomBase64UUID(new Random(Long.parseLong(seed)));
+        }
+        return Strings.randomBase64UUID();
     }
 }

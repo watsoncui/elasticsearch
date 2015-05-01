@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,9 +20,9 @@
 package org.elasticsearch.action.admin.cluster.node.stats;
 
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.admin.indices.stats.CommonStatsFlags;
 import org.elasticsearch.action.support.nodes.NodesOperationRequestBuilder;
 import org.elasticsearch.client.ClusterAdminClient;
-import org.elasticsearch.client.internal.InternalClusterAdminClient;
 
 /**
  *
@@ -30,7 +30,7 @@ import org.elasticsearch.client.internal.InternalClusterAdminClient;
 public class NodesStatsRequestBuilder extends NodesOperationRequestBuilder<NodesStatsRequest, NodesStatsResponse, NodesStatsRequestBuilder> {
 
     public NodesStatsRequestBuilder(ClusterAdminClient clusterClient) {
-        super((InternalClusterAdminClient) clusterClient, new NodesStatsRequest());
+        super(clusterClient, new NodesStatsRequest());
     }
 
     /**
@@ -53,6 +53,19 @@ public class NodesStatsRequestBuilder extends NodesOperationRequestBuilder<Nodes
      * Should the node indices stats be returned.
      */
     public NodesStatsRequestBuilder setIndices(boolean indices) {
+        request.indices(indices);
+        return this;
+    }
+
+    public NodesStatsRequestBuilder setBreaker(boolean breaker) {
+        request.breaker(breaker);
+        return this;
+    }
+
+    /**
+     * Should the node indices stats be returned.
+     */
+    public NodesStatsRequestBuilder setIndices(CommonStatsFlags indices) {
         request.indices(indices);
         return this;
     }
@@ -123,6 +136,6 @@ public class NodesStatsRequestBuilder extends NodesOperationRequestBuilder<Nodes
 
     @Override
     protected void doExecute(ActionListener<NodesStatsResponse> listener) {
-        ((ClusterAdminClient) client).nodesStats(request, listener);
+        client.nodesStats(request, listener);
     }
 }

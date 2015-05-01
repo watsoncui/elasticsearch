@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -59,6 +59,7 @@ public class NetworkInfo implements Streamable, Serializable, ToXContent {
     static final class Fields {
         static final XContentBuilderString NETWORK = new XContentBuilderString("network");
         static final XContentBuilderString REFRESH_INTERVAL = new XContentBuilderString("refresh_interval");
+        static final XContentBuilderString REFRESH_INTERVAL_IN_MILLIS = new XContentBuilderString("refresh_interval_in_millis");
         static final XContentBuilderString PRIMARY_INTERFACE = new XContentBuilderString("primary_interface");
         static final XContentBuilderString ADDRESS = new XContentBuilderString("address");
         static final XContentBuilderString NAME = new XContentBuilderString("name");
@@ -68,7 +69,7 @@ public class NetworkInfo implements Streamable, Serializable, ToXContent {
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(Fields.NETWORK);
-        builder.field(Fields.REFRESH_INTERVAL, refreshInterval);
+        builder.timeValueField(Fields.REFRESH_INTERVAL_IN_MILLIS, Fields.REFRESH_INTERVAL, refreshInterval);
         if (primary != NA_INTERFACE) {
             builder.startObject(Fields.PRIMARY_INTERFACE);
             builder.field(Fields.ADDRESS, primary.address());

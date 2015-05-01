@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,7 +20,8 @@
 package org.elasticsearch.action.admin.cluster.node.stats;
 
 import com.google.common.collect.Lists;
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.nodes.NodeOperationRequest;
 import org.elasticsearch.action.support.nodes.TransportNodesOperationAction;
 import org.elasticsearch.cluster.ClusterName;
@@ -47,19 +48,10 @@ public class TransportNodesStatsAction extends TransportNodesOperationAction<Nod
     @Inject
     public TransportNodesStatsAction(Settings settings, ClusterName clusterName, ThreadPool threadPool,
                                      ClusterService clusterService, TransportService transportService,
-                                     NodeService nodeService) {
-        super(settings, clusterName, threadPool, clusterService, transportService);
+                                     NodeService nodeService, ActionFilters actionFilters) {
+        super(settings, NodesStatsAction.NAME, clusterName, threadPool, clusterService, transportService, actionFilters,
+                NodesStatsRequest.class, NodeStatsRequest.class, ThreadPool.Names.MANAGEMENT);
         this.nodeService = nodeService;
-    }
-
-    @Override
-    protected String executor() {
-        return ThreadPool.Names.MANAGEMENT;
-    }
-
-    @Override
-    protected String transportAction() {
-        return NodesStatsAction.NAME;
     }
 
     @Override
@@ -75,16 +67,6 @@ public class TransportNodesStatsAction extends TransportNodesOperationAction<Nod
     }
 
     @Override
-    protected NodesStatsRequest newRequest() {
-        return new NodesStatsRequest();
-    }
-
-    @Override
-    protected NodeStatsRequest newNodeRequest() {
-        return new NodeStatsRequest();
-    }
-
-    @Override
     protected NodeStatsRequest newNodeRequest(String nodeId, NodesStatsRequest request) {
         return new NodeStatsRequest(nodeId, request);
     }
@@ -95,9 +77,10 @@ public class TransportNodesStatsAction extends TransportNodesOperationAction<Nod
     }
 
     @Override
-    protected NodeStats nodeOperation(NodeStatsRequest nodeStatsRequest) throws ElasticSearchException {
+    protected NodeStats nodeOperation(NodeStatsRequest nodeStatsRequest) {
         NodesStatsRequest request = nodeStatsRequest.request;
-        return nodeService.stats(request.indices(), request.os(), request.process(), request.jvm(), request.threadPool(), request.network(), request.fs(), request.transport(), request.http());
+        return nodeService.stats(request.indices(), request.os(), request.process(), request.jvm(), request.threadPool(), request.network(),
+                request.fs(), request.transport(), request.http(), request.breaker());
     }
 
     @Override

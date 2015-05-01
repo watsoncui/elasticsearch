@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,10 +19,8 @@
 
 package org.elasticsearch.search.rescore;
 
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
-import org.elasticsearch.ElasticSearchParseException;
+import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.xcontent.XContentParser;
-import org.elasticsearch.index.query.ParsedQuery;
 import org.elasticsearch.search.SearchParseElement;
 import org.elasticsearch.search.internal.SearchContext;
 
@@ -33,6 +31,16 @@ public class RescoreParseElement implements SearchParseElement {
 
     @Override
     public void parse(XContentParser parser, SearchContext context) throws Exception {
+        if (parser.currentToken() == XContentParser.Token.START_ARRAY) {
+            while (parser.nextToken() != XContentParser.Token.END_ARRAY) {
+                parseSingleRescoreContext(parser, context);
+            }
+        } else {
+            parseSingleRescoreContext(parser, context);
+        }
+    }
+
+    public void parseSingleRescoreContext(XContentParser parser, SearchContext context) throws Exception {
         String fieldName = null;
         RescoreSearchContext rescoreContext = null;
         Integer windowSize = null;
@@ -45,7 +53,7 @@ public class RescoreParseElement implements SearchParseElement {
                     Rescorer rescorer = QueryRescorer.INSTANCE;
                     token = parser.nextToken();
                     if (token != XContentParser.Token.START_OBJECT) {
-                        throw new ElasticSearchParseException("rescore type malformed, must start with start_object");
+                        throw new ElasticsearchParseException("rescore type malformed, must start with start_object");
                     }
                     rescoreContext = rescorer.parse(parser, context);
                 }
@@ -53,17 +61,17 @@ public class RescoreParseElement implements SearchParseElement {
                 if ("window_size".equals(fieldName)) {
                     windowSize = parser.intValue();
                 } else {
-                    throw new ElasticSearchIllegalArgumentException("rescore doesn't support [" + fieldName + "]");
+                    throw new IllegalArgumentException("rescore doesn't support [" + fieldName + "]");
                 }
             }
         }
         if (rescoreContext == null) {
-            throw new ElasticSearchIllegalArgumentException("missing rescore type");
+            throw new IllegalArgumentException("missing rescore type");
         }
         if (windowSize != null) {
             rescoreContext.setWindowSize(windowSize.intValue());
         }
-        context.rescore(rescoreContext);
+        context.addRescore(rescoreContext);
     }
 
 }

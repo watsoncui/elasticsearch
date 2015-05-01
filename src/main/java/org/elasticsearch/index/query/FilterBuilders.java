@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,8 +19,12 @@
 
 package org.elasticsearch.index.query;
 
-import com.spatial4j.core.shape.Shape;
+import org.elasticsearch.action.search.SearchRequestBuilder;
 import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.bytes.BytesReference;
+import org.elasticsearch.common.geo.GeoPoint;
+import org.elasticsearch.common.geo.ShapeRelation;
+import org.elasticsearch.common.geo.builders.ShapeBuilder;
 
 /**
  * A static factory for simple "import static" usage.
@@ -36,7 +40,9 @@ public abstract class FilterBuilders {
 
     /**
      * A filter that limits the results to the provided limit value (per shard!).
+     * @deprecated Use {@link SearchRequestBuilder#setTerminateAfter(int)} instead.
      */
+    @Deprecated
     public static LimitFilterBuilder limitFilter(int limit) {
         return new LimitFilterBuilder(limit);
     }
@@ -191,7 +197,7 @@ public abstract class FilterBuilders {
      * @param name   The field name
      * @param values The terms
      */
-    public static TermsFilterBuilder termsFilter(String name, Iterable values) {
+    public static TermsFilterBuilder termsFilter(String name, Iterable<?> values) {
         return new TermsFilterBuilder(name, values);
     }
 
@@ -294,16 +300,6 @@ public abstract class FilterBuilders {
     }
 
     /**
-     * A filter that restricts search results to values that are within the given numeric range. Uses the
-     * field data cache (loading all the values for the specified field into memory)
-     *
-     * @param name The field name
-     */
-    public static NumericRangeFilterBuilder numericRangeFilter(String name) {
-        return new NumericRangeFilterBuilder(name);
-    }
-
-    /**
      * A filter that simply wraps a query.
      *
      * @param queryBuilder The query to wrap as a filter
@@ -349,6 +345,54 @@ public abstract class FilterBuilders {
     }
 
     /**
+     * A filter based on a bounding box defined by geohash. The field this filter is applied to
+     * must have <code>{&quot;type&quot;:&quot;geo_point&quot;, &quot;geohash&quot;:true}</code>
+     * to work.
+     *
+     * @param name The geo point field name.
+     */
+    public static GeohashCellFilter.Builder geoHashCellFilter(String name) {
+        return new GeohashCellFilter.Builder(name);
+    }
+
+    /**
+     * A filter based on a bounding box defined by geohash. The field this filter is applied to
+     * must have <code>{&quot;type&quot;:&quot;geo_point&quot;, &quot;geohash&quot;:true}</code>
+     * to work.
+     *
+     * @param name The geo point field name.
+     * @param geohash The Geohash to filter
+     */
+    public static GeohashCellFilter.Builder geoHashCellFilter(String name, String geohash) {
+        return new GeohashCellFilter.Builder(name, geohash);
+    }
+
+    /**
+     * A filter based on a bounding box defined by geohash. The field this filter is applied to
+     * must have <code>{&quot;type&quot;:&quot;geo_point&quot;, &quot;geohash&quot;:true}</code>
+     * to work.
+     *
+     * @param name The geo point field name.
+     * @param point a geo point within the geohash bucket
+     */
+    public static GeohashCellFilter.Builder geoHashCellFilter(String name, GeoPoint point) {
+        return new GeohashCellFilter.Builder(name, point);
+    }
+
+    /**
+     * A filter based on a bounding box defined by geohash. The field this filter is applied to
+     * must have <code>{&quot;type&quot;:&quot;geo_point&quot;, &quot;geohash&quot;:true}</code>
+     * to work.
+     *
+     * @param name The geo point field name
+     * @param geohash The Geohash to filter
+     * @param neighbors should the neighbor cell also be filtered
+     */
+    public static GeohashCellFilter.Builder geoHashCellFilter(String name, String geohash, boolean neighbors) {
+        return new GeohashCellFilter.Builder(name, geohash, neighbors);
+    }
+    
+    /**
      * A filter to filter based on a polygon defined by a set of locations  / points.
      *
      * @param name The location field name.
@@ -358,17 +402,60 @@ public abstract class FilterBuilders {
     }
 
     /**
-     * A filter to filter based on the relationship between a shape and indexed shapes
+     * A filter based on the relationship of a shape and indexed shapes
+     *
+     * @param name  The shape field name
+     * @param shape Shape to use in the filter
+     * @param relation relation of the shapes
+     */
+    public static GeoShapeFilterBuilder geoShapeFilter(String name, ShapeBuilder shape, ShapeRelation relation) {
+        return new GeoShapeFilterBuilder(name, shape, relation);
+    }
+
+    public static GeoShapeFilterBuilder geoShapeFilter(String name, String indexedShapeId, String indexedShapeType, ShapeRelation relation) {
+        return new GeoShapeFilterBuilder(name, indexedShapeId, indexedShapeType, relation);
+    }
+
+    /**
+     * A filter to filter indexed shapes intersecting with shapes
      *
      * @param name  The shape field name
      * @param shape Shape to use in the filter
      */
-    public static GeoShapeFilterBuilder geoShapeFilter(String name, Shape shape) {
-        return new GeoShapeFilterBuilder(name, shape);
+    public static GeoShapeFilterBuilder geoIntersectionFilter(String name, ShapeBuilder shape) {
+        return geoShapeFilter(name, shape, ShapeRelation.INTERSECTS);
     }
 
-    public static GeoShapeFilterBuilder geoShapeFilter(String name, String indexedShapeId, String indexedShapeType) {
-        return new GeoShapeFilterBuilder(name, indexedShapeId, indexedShapeType);
+    public static GeoShapeFilterBuilder geoIntersectionFilter(String name, String indexedShapeId, String indexedShapeType) {
+        return geoShapeFilter(name, indexedShapeId, indexedShapeType, ShapeRelation.INTERSECTS);
+    }
+
+    /**
+     * A filter to filter indexed shapes that are contained by a shape
+     *
+     * @param name  The shape field name
+     * @param shape Shape to use in the filter
+     */
+    public static GeoShapeFilterBuilder geoWithinFilter(String name, ShapeBuilder shape) {
+        return geoShapeFilter(name, shape, ShapeRelation.WITHIN);
+    }
+
+    public static GeoShapeFilterBuilder geoWithinFilter(String name, String indexedShapeId, String indexedShapeType) {
+        return geoShapeFilter(name, indexedShapeId, indexedShapeType, ShapeRelation.WITHIN);
+    }
+
+    /**
+     * A filter to filter indexed shapes that are not intersection with the query shape
+     *
+     * @param name  The shape field name
+     * @param shape Shape to use in the filter
+     */
+    public static GeoShapeFilterBuilder geoDisjointFilter(String name, ShapeBuilder shape) {
+        return geoShapeFilter(name, shape, ShapeRelation.DISJOINT);
+    }
+
+    public static GeoShapeFilterBuilder geoDisjointFilter(String name, String indexedShapeId, String indexedShapeType) {
+        return geoShapeFilter(name, indexedShapeId, indexedShapeType, ShapeRelation.DISJOINT);
     }
 
     /**
@@ -437,10 +524,18 @@ public abstract class FilterBuilders {
         return new BoolFilterBuilder();
     }
 
+    /**
+     * @deprecated Use {@link #boolFilter()} instead
+     */
+    @Deprecated
     public static AndFilterBuilder andFilter(FilterBuilder... filters) {
         return new AndFilterBuilder(filters);
     }
 
+    /**
+     * @deprecated Use {@link #boolFilter()} instead
+     */
+    @Deprecated
     public static OrFilterBuilder orFilter(FilterBuilder... filters) {
         return new OrFilterBuilder(filters);
     }
@@ -459,6 +554,15 @@ public abstract class FilterBuilders {
 
     public static WrapperFilterBuilder wrapperFilter(byte[] data, int offset, int length) {
         return new WrapperFilterBuilder(data, offset, length);
+    }
+
+    /**
+     * Constructs a bytes filter to generate a filter from a {@link BytesReference} source
+     *
+     * @param source The filter source
+     */
+    public static BytesFilterBuilder bytesFilter(BytesReference source) {
+        return new BytesFilterBuilder(source);
     }
 
     private FilterBuilders() {

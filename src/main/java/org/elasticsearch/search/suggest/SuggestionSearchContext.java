@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -18,17 +18,16 @@
  */
 package org.elasticsearch.search.suggest;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
-
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
 /**
  */
 public class SuggestionSearchContext {
 
-    private final Map<String, SuggestionContext> suggestions = new LinkedHashMap<String, SuggestionContext>(4);
+    private final Map<String, SuggestionContext> suggestions = new LinkedHashMap<>(4);
 
     public void addSuggestion(String name, SuggestionContext suggestion) {
         suggestions.put(name, suggestion);
@@ -46,7 +45,9 @@ public class SuggestionSearchContext {
         private Analyzer analyzer;
         private int size = 5;
         private int shardSize = -1;
-
+        private int shardId;
+        private String index;
+        
         public BytesRef getText() {
             return text;
         }
@@ -55,10 +56,10 @@ public class SuggestionSearchContext {
             this.text = text;
         }
         
-        protected SuggestionContext(Suggester suggester) {
+        public SuggestionContext(Suggester suggester) {
             this.suggester = suggester;
         }
-        
+
         public Suggester<SuggestionContext> getSuggester() {
             return this.suggester;
         }
@@ -85,7 +86,7 @@ public class SuggestionSearchContext {
 
         public void setSize(int size) {
             if (size <= 0) {
-                throw new ElasticSearchIllegalArgumentException("Size must be positive but was: " + size);
+                throw new IllegalArgumentException("Size must be positive but was: " + size);
             }
             this.size = size;
         }
@@ -96,9 +97,25 @@ public class SuggestionSearchContext {
 
         public void setShardSize(int shardSize) {
             if (shardSize <= 0) {
-                throw new ElasticSearchIllegalArgumentException("ShardSize must be positive but was: " + shardSize);
+                throw new IllegalArgumentException("ShardSize must be positive but was: " + shardSize);
             }
             this.shardSize = shardSize;
+        }
+        
+        public void setShard(int shardId) {
+            this.shardId = shardId;
+        }
+
+        public void setIndex(String index) {
+            this.index = index;
+        }
+        
+        public String getIndex() {
+            return index;
+        }
+        
+        public int getShard() {
+            return shardId;
         }
     }
 

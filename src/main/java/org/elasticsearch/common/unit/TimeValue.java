@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,7 @@
 
 package org.elasticsearch.common.unit;
 
-import org.elasticsearch.ElasticSearchParseException;
+import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -234,7 +234,7 @@ public class TimeValue implements Serializable, Streamable {
             if (sValue.endsWith("S")) {
                 millis = Long.parseLong(sValue.substring(0, sValue.length() - 1));
             } else if (sValue.endsWith("ms")) {
-                millis = (long) (Double.parseDouble(sValue.substring(0, sValue.length() - "ms".length())));
+                millis = (long) (Double.parseDouble(sValue.substring(0, sValue.length() - 2)));
             } else if (sValue.endsWith("s")) {
                 millis = (long) (Double.parseDouble(sValue.substring(0, sValue.length() - 1)) * 1000);
             } else if (sValue.endsWith("m")) {
@@ -250,7 +250,7 @@ public class TimeValue implements Serializable, Streamable {
             }
             return new TimeValue(millis, TimeUnit.MILLISECONDS);
         } catch (NumberFormatException e) {
-            throw new ElasticSearchParseException("Failed to parse [" + sValue + "]", e);
+            throw new ElasticsearchParseException("Failed to parse [" + sValue + "]", e);
         }
     }
 
@@ -268,6 +268,9 @@ public class TimeValue implements Serializable, Streamable {
         return timeValue;
     }
 
+    /**
+     * serialization converts TimeValue internally to NANOSECONDS
+     */
     @Override
     public void readFrom(StreamInput in) throws IOException {
         duration = in.readLong();
@@ -285,17 +288,12 @@ public class TimeValue implements Serializable, Streamable {
         if (o == null || getClass() != o.getClass()) return false;
 
         TimeValue timeValue = (TimeValue) o;
-
-        if (duration != timeValue.duration) return false;
-        if (timeUnit != timeValue.timeUnit) return false;
-
-        return true;
+        return timeUnit.toNanos(duration) == timeValue.timeUnit.toNanos(timeValue.duration);
     }
 
     @Override
     public int hashCode() {
-        int result = (int) (duration ^ (duration >>> 32));
-        result = 31 * result + (timeUnit != null ? timeUnit.hashCode() : 0);
-        return result;
+        long normalized = timeUnit.toNanos(duration);
+        return (int) (normalized ^ (normalized >>> 32));
     }
 }

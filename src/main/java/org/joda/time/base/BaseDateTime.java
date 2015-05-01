@@ -13,6 +13,7 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  */
+
 package org.joda.time.base;
 
 import org.joda.time.Chronology;
@@ -24,10 +25,6 @@ import org.joda.time.convert.ConverterManager;
 import org.joda.time.convert.InstantConverter;
 
 import java.io.Serializable;
-
-/**
- * WE COPIED THIS FILE TO REMOVE THE volatile from it!...
- */
 
 /**
  * BaseDateTime is an abstract implementation of ReadableDateTime that stores
@@ -56,11 +53,12 @@ public abstract class BaseDateTime
     /**
      * The millis from 1970-01-01T00:00:00Z
      */
+    // THIS IS THE ES CHANGE not to have it volatile...
     private long iMillis;
     /**
      * The chronology to use
      */
-    private Chronology iChronology;
+    private volatile Chronology iChronology;
 
     //-----------------------------------------------------------------------
 
@@ -136,6 +134,10 @@ public abstract class BaseDateTime
         super();
         iChronology = checkChronology(chronology);
         iMillis = checkInstant(instant, iChronology);
+        // validate not over maximum
+        if (iChronology.year().isSupported()) {
+            iChronology.year().set(iMillis, iChronology.year().get(iMillis));
+        }
     }
 
     //-----------------------------------------------------------------------
@@ -307,6 +309,7 @@ public abstract class BaseDateTime
      *
      * @return the number of milliseconds since 1970-01-01T00:00:00Z
      */
+    @Override
     public long getMillis() {
         return iMillis;
     }
@@ -316,6 +319,7 @@ public abstract class BaseDateTime
      *
      * @return the Chronology that the datetime is using
      */
+    @Override
     public Chronology getChronology() {
         return iChronology;
     }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,18 +19,16 @@
 
 package org.elasticsearch.rest.action.main;
 
-import org.elasticsearch.ExceptionsHelper;
+import org.apache.lucene.util.Constants;
+import org.elasticsearch.Build;
 import org.elasticsearch.Version;
-import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.admin.cluster.state.ClusterStateRequest;
-import org.elasticsearch.action.admin.cluster.state.ClusterStateResponse;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.cluster.ClusterName;
+import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.rest.*;
-import org.elasticsearch.rest.action.support.RestXContentBuilder;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 import static org.elasticsearch.rest.RestRequest.Method.HEAD;
@@ -40,62 +38,54 @@ import static org.elasticsearch.rest.RestRequest.Method.HEAD;
  */
 public class RestMainAction extends BaseRestHandler {
 
-    @Inject
-    public RestMainAction(Settings settings, Client client, RestController controller) {
-        super(settings, client);
+    private final Version version;
+    private final ClusterName clusterName;
+    private final ClusterService clusterService;
 
+    @Inject
+    public RestMainAction(Settings settings, Version version, RestController controller, ClusterName clusterName, Client client, ClusterService clusterService) {
+        super(settings, controller, client);
+        this.version = version;
+        this.clusterName = clusterName;
+        this.clusterService = clusterService;
         controller.registerHandler(GET, "/", this);
         controller.registerHandler(HEAD, "/", this);
     }
 
     @Override
-    public void handleRequest(final RestRequest request, final RestChannel channel) {
-        ClusterStateRequest clusterStateRequest = new ClusterStateRequest();
-        clusterStateRequest.listenerThreaded(false);
-        clusterStateRequest.masterNodeTimeout(TimeValue.timeValueMillis(0));
-        clusterStateRequest.local(true);
-        clusterStateRequest.filterAll().filterBlocks(false);
-        client.admin().cluster().state(clusterStateRequest, new ActionListener<ClusterStateResponse>() {
-            @Override
-            public void onResponse(ClusterStateResponse response) {
-                RestStatus status = RestStatus.OK;
-                if (response.getState().blocks().hasGlobalBlock(RestStatus.SERVICE_UNAVAILABLE)) {
-                    status = RestStatus.SERVICE_UNAVAILABLE;
-                }
-                if (request.method() == RestRequest.Method.HEAD) {
-                    channel.sendResponse(new StringRestResponse(status));
-                    return;
-                }
+    public void handleRequest(final RestRequest request, RestChannel channel, final Client client) throws Exception {
 
-                try {
-                    XContentBuilder builder = RestXContentBuilder.restContentBuilder(request).prettyPrint();
-                    builder.startObject();
-                    builder.field("ok", true);
-                    builder.field("status", status.getStatus());
-                    if (settings.get("name") != null) {
-                        builder.field("name", settings.get("name"));
-                    }
-                    builder.startObject("version").field("number", Version.CURRENT.number()).field("snapshot_build", Version.CURRENT.snapshot).endObject();
-                    builder.field("tagline", "You Know, for Search");
-                    builder.endObject();
-                    channel.sendResponse(new XContentRestResponse(request, status, builder));
-                } catch (Exception e) {
-                    onFailure(e);
-                }
-            }
+        RestStatus status = RestStatus.OK;
+        if (clusterService.state().blocks().hasGlobalBlock(RestStatus.SERVICE_UNAVAILABLE)) {
+            status = RestStatus.SERVICE_UNAVAILABLE;
+        }
+        if (request.method() == RestRequest.Method.HEAD) {
+            channel.sendResponse(new BytesRestResponse(status));
+            return;
+        }
 
-            @Override
-            public void onFailure(Throwable e) {
-                try {
-                    if (request.method() == HEAD) {
-                        channel.sendResponse(new StringRestResponse(ExceptionsHelper.status(e)));
-                    } else {
-                        channel.sendResponse(new XContentThrowableRestResponse(request, e));
-                    }
-                } catch (Exception e1) {
-                    logger.warn("Failed to send response", e);
-                }
-            }
-        });
+        XContentBuilder builder = channel.newBuilder();
+
+        // Default to pretty printing, but allow ?pretty=false to disable
+        if (!request.hasParam("pretty")) {
+            builder.prettyPrint().lfAtEnd();
+        }
+
+        builder.startObject();
+        if (settings.get("name") != null) {
+            builder.field("name", settings.get("name"));
+        }
+        builder.field("cluster_name", clusterName.value());
+        builder.startObject("version")
+                .field("number", version.number())
+                .field("build_hash", Build.CURRENT.hash())
+                .field("build_timestamp", Build.CURRENT.timestamp())
+                .field("build_snapshot", version.snapshot)
+                .field("lucene_version", version.luceneVersion.toString())
+                .endObject();
+        builder.field("tagline", "You Know, for Search");
+        builder.endObject();
+
+        channel.sendResponse(new BytesRestResponse(status, builder));
     }
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,13 +21,21 @@ package org.elasticsearch.client;
 
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthRequest;
 import org.elasticsearch.action.admin.cluster.node.info.NodesInfoRequest;
-import org.elasticsearch.action.admin.cluster.node.restart.NodesRestartRequest;
-import org.elasticsearch.action.admin.cluster.node.shutdown.NodesShutdownRequest;
 import org.elasticsearch.action.admin.cluster.node.stats.NodesStatsRequest;
+import org.elasticsearch.action.admin.cluster.repositories.delete.DeleteRepositoryRequest;
+import org.elasticsearch.action.admin.cluster.repositories.get.GetRepositoriesRequest;
+import org.elasticsearch.action.admin.cluster.repositories.put.PutRepositoryRequest;
+import org.elasticsearch.action.admin.cluster.repositories.verify.VerifyRepositoryRequest;
 import org.elasticsearch.action.admin.cluster.reroute.ClusterRerouteRequest;
 import org.elasticsearch.action.admin.cluster.settings.ClusterUpdateSettingsRequest;
 import org.elasticsearch.action.admin.cluster.shards.ClusterSearchShardsRequest;
+import org.elasticsearch.action.admin.cluster.snapshots.create.CreateSnapshotRequest;
+import org.elasticsearch.action.admin.cluster.snapshots.delete.DeleteSnapshotRequest;
+import org.elasticsearch.action.admin.cluster.snapshots.get.GetSnapshotsRequest;
+import org.elasticsearch.action.admin.cluster.snapshots.restore.RestoreSnapshotRequest;
+import org.elasticsearch.action.admin.cluster.snapshots.status.SnapshotsStatusRequest;
 import org.elasticsearch.action.admin.cluster.state.ClusterStateRequest;
+import org.elasticsearch.action.admin.cluster.stats.ClusterStatsRequest;
 import org.elasticsearch.action.admin.indices.alias.IndicesAliasesRequest;
 import org.elasticsearch.action.admin.indices.cache.clear.ClearIndicesCacheRequest;
 import org.elasticsearch.action.admin.indices.close.CloseIndexRequest;
@@ -35,24 +43,22 @@ import org.elasticsearch.action.admin.indices.create.CreateIndexRequest;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
 import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsRequest;
 import org.elasticsearch.action.admin.indices.flush.FlushRequest;
-import org.elasticsearch.action.admin.indices.gateway.snapshot.GatewaySnapshotRequest;
-import org.elasticsearch.action.admin.indices.mapping.delete.DeleteMappingRequest;
 import org.elasticsearch.action.admin.indices.mapping.put.PutMappingRequest;
 import org.elasticsearch.action.admin.indices.open.OpenIndexRequest;
 import org.elasticsearch.action.admin.indices.optimize.OptimizeRequest;
 import org.elasticsearch.action.admin.indices.refresh.RefreshRequest;
 import org.elasticsearch.action.admin.indices.segments.IndicesSegmentsRequest;
-import org.elasticsearch.action.admin.indices.settings.UpdateSettingsRequest;
-import org.elasticsearch.action.admin.indices.status.IndicesStatusRequest;
+import org.elasticsearch.action.admin.indices.settings.put.UpdateSettingsRequest;
 import org.elasticsearch.action.bulk.BulkRequest;
 import org.elasticsearch.action.count.CountRequest;
 import org.elasticsearch.action.delete.DeleteRequest;
-import org.elasticsearch.action.deletebyquery.DeleteByQueryRequest;
+import org.elasticsearch.action.exists.ExistsRequest;
 import org.elasticsearch.action.get.GetRequest;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.mlt.MoreLikeThisRequest;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchScrollRequest;
+import org.elasticsearch.action.suggest.SuggestRequest;
 import org.elasticsearch.common.xcontent.XContentType;
 
 /**
@@ -106,18 +112,6 @@ public class Requests {
     }
 
     /**
-     * Creates a delete by query request. Note, the query itself must be set either by setting the JSON source
-     * of the query, or by using a {@link org.elasticsearch.index.query.QueryBuilder} (using {@link org.elasticsearch.index.query.QueryBuilders}).
-     *
-     * @param indices The indices the delete by query against. Use <tt>null</tt> or <tt>_all</tt> to execute against all indices
-     * @return The delete by query request
-     * @see org.elasticsearch.client.Client#deleteByQuery(org.elasticsearch.action.deletebyquery.DeleteByQueryRequest)
-     */
-    public static DeleteByQueryRequest deleteByQueryRequest(String... indices) {
-        return new DeleteByQueryRequest(indices);
-    }
-
-    /**
      * Creates a get request to get the JSON source from an index based on a type and id. Note, the
      * {@link GetRequest#type(String)} and {@link GetRequest#id(String)} must be set.
      *
@@ -139,6 +133,28 @@ public class Requests {
      */
     public static CountRequest countRequest(String... indices) {
         return new CountRequest(indices);
+    }
+
+    /**
+     * Creates a exists request which checks if any of the hits matched against a query exists. Note, the query itself must be set
+     * either using the JSON source of the query, or using a {@link org.elasticsearch.index.query.QueryBuilder} (using {@link org.elasticsearch.index.query.QueryBuilders}).
+     *
+     * @param indices The indices to count matched documents against a query. Use <tt>null</tt> or <tt>_all</tt> to execute against all indices
+     * @return The exists request
+     * @see org.elasticsearch.client.Client#exists(org.elasticsearch.action.exists.ExistsRequest)
+     */
+    public static ExistsRequest existsRequest(String... indices) {
+        return new ExistsRequest(indices);
+    }
+
+    /**
+     * Creates a suggest request for getting suggestions from provided <code>indices</code>.
+     * The suggest query has to be set using the JSON source using {@link org.elasticsearch.action.suggest.SuggestRequest#suggest(org.elasticsearch.common.bytes.BytesReference)}.
+     * @param indices The indices to suggest from. Use <tt>null</tt> or <tt>_all</tt> to execute against all indices
+     * @see org.elasticsearch.client.Client#suggest(org.elasticsearch.action.suggest.SuggestRequest)
+     */
+    public static SuggestRequest suggestRequest(String... indices) {
+        return new SuggestRequest(indices);
     }
 
     /**
@@ -174,17 +190,6 @@ public class Requests {
      */
     public static SearchScrollRequest searchScrollRequest(String scrollId) {
         return new SearchScrollRequest(scrollId);
-    }
-
-    /**
-     * Creates an indices status request.
-     *
-     * @param indices The indices to query status about. Use <tt>null</tt> or <tt>_all</tt> to execute against all indices
-     * @return The indices status request
-     * @see org.elasticsearch.client.IndicesAdminClient#status(org.elasticsearch.action.admin.indices.status.IndicesStatusRequest)
-     */
-    public static IndicesStatusRequest indicesStatusRequest(String... indices) {
-        return new IndicesStatusRequest(indices);
     }
 
     public static IndicesSegmentsRequest indicesSegmentsRequest(String... indices) {
@@ -258,17 +263,6 @@ public class Requests {
     }
 
     /**
-     * Deletes mapping (and all its data) from one or more indices.
-     *
-     * @param indices The indices the mapping will be deleted from. Use <tt>null</tt> or <tt>_all</tt> to execute against all indices
-     * @return The create mapping request
-     * @see org.elasticsearch.client.IndicesAdminClient#deleteMapping(org.elasticsearch.action.admin.indices.mapping.delete.DeleteMappingRequest)
-     */
-    public static DeleteMappingRequest deleteMappingRequest(String... indices) {
-        return new DeleteMappingRequest(indices);
-    }
-
-    /**
      * Creates an index aliases request allowing to add and remove aliases.
      *
      * @return The index aliases request
@@ -308,17 +302,6 @@ public class Requests {
      */
     public static OptimizeRequest optimizeRequest(String... indices) {
         return new OptimizeRequest(indices);
-    }
-
-    /**
-     * Creates a gateway snapshot indices request.
-     *
-     * @param indices The indices the gateway snapshot will be performed on. Use <tt>null</tt> or <tt>_all</tt> to execute against all indices
-     * @return The gateway snapshot request
-     * @see org.elasticsearch.client.IndicesAdminClient#gatewaySnapshot(org.elasticsearch.action.admin.indices.gateway.snapshot.GatewaySnapshotRequest)
-     */
-    public static GatewaySnapshotRequest gatewaySnapshotRequest(String... indices) {
-        return new GatewaySnapshotRequest(indices);
     }
 
     /**
@@ -417,39 +400,107 @@ public class Requests {
     }
 
     /**
-     * Shuts down all nodes in the cluster.
-     */
-    public static NodesShutdownRequest nodesShutdownRequest() {
-        return new NodesShutdownRequest();
-    }
-
-    /**
-     * Shuts down the specified nodes in the cluster.
+     * Creates a cluster stats request.
      *
-     * @param nodesIds The nodes ids to get the status for
-     * @return The nodes info request
-     * @see org.elasticsearch.client.ClusterAdminClient#nodesShutdown(org.elasticsearch.action.admin.cluster.node.shutdown.NodesShutdownRequest)
+     * @return The cluster stats request
+     * @see org.elasticsearch.client.ClusterAdminClient#clusterStats(org.elasticsearch.action.admin.cluster.stats.ClusterStatsRequest)
      */
-    public static NodesShutdownRequest nodesShutdownRequest(String... nodesIds) {
-        return new NodesShutdownRequest(nodesIds);
+    public static ClusterStatsRequest clusterStatsRequest() {
+        return new ClusterStatsRequest();
     }
 
     /**
-     * Restarts all nodes in the cluster.
-     */
-    public static NodesRestartRequest nodesRestartRequest() {
-        return new NodesRestartRequest();
-    }
-
-    /**
-     * Restarts specific nodes in the cluster.
+     * Registers snapshot repository
      *
-     * @param nodesIds The nodes ids to restart
-     * @return The nodes info request
-     * @see org.elasticsearch.client.ClusterAdminClient#nodesRestart(org.elasticsearch.action.admin.cluster.node.restart.NodesRestartRequest)
+     * @param name repository name
+     * @return repository registration request
      */
-    public static NodesRestartRequest nodesRestartRequest(String... nodesIds) {
-        return new NodesRestartRequest(nodesIds);
+    public static PutRepositoryRequest putRepositoryRequest(String name) {
+        return new PutRepositoryRequest(name);
+    }
+
+    /**
+     * Gets snapshot repository
+     *
+     * @param repositories names of repositories
+     * @return get repository request
+     */
+    public static GetRepositoriesRequest getRepositoryRequest(String... repositories) {
+        return new GetRepositoriesRequest(repositories);
+    }
+
+    /**
+     * Deletes registration for snapshot repository
+     *
+     * @param name repository name
+     * @return delete repository request
+     */
+    public static DeleteRepositoryRequest deleteRepositoryRequest(String name) {
+        return new DeleteRepositoryRequest(name);
+    }
+
+    /**
+     * Verifies snapshot repository
+     *
+     * @param name repository name
+     * @return repository verification request
+     */
+    public static VerifyRepositoryRequest verifyRepositoryRequest(String name) {
+        return new VerifyRepositoryRequest(name);
+    }
+
+
+    /**
+     * Creates new snapshot
+     *
+     * @param repository repository name
+     * @param snapshot   snapshot name
+     * @return create snapshot request
+     */
+    public static CreateSnapshotRequest createSnapshotRequest(String repository, String snapshot) {
+        return new CreateSnapshotRequest(repository, snapshot);
+    }
+
+    /**
+     * Gets snapshots from repository
+     *
+     * @param repository repository name
+     * @return get snapshot  request
+     */
+    public static GetSnapshotsRequest getSnapshotsRequest(String repository) {
+        return new GetSnapshotsRequest(repository);
+    }
+
+    /**
+     * Restores new snapshot
+     *
+     * @param repository repository name
+     * @param snapshot   snapshot name
+     * @return snapshot creation request
+     */
+    public static RestoreSnapshotRequest restoreSnapshotRequest(String repository, String snapshot) {
+        return new RestoreSnapshotRequest(repository, snapshot);
+    }
+
+    /**
+     * Deletes a snapshot
+     *
+     * @param snapshot   snapshot name
+     * @param repository repository name
+     * @return delete snapshot request
+     */
+    public static DeleteSnapshotRequest deleteSnapshotRequest(String repository, String snapshot) {
+        return new DeleteSnapshotRequest(repository, snapshot);
+    }
+
+    /**
+     *  Get status of snapshots
+     *
+     * @param repository repository name
+     * @return snapshot status request
+     */
+    public static SnapshotsStatusRequest snapshotsStatusRequest(String repository) {
+        return new SnapshotsStatusRequest(repository);
     }
 
 }

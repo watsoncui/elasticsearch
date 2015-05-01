@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,10 +19,10 @@
 
 package org.elasticsearch.search.rescore;
 
-import java.io.IOException;
-import java.util.Map;
-
-import org.elasticsearch.ElasticSearchException;
+import com.google.common.collect.ImmutableMap;
+import org.apache.lucene.search.ScoreDoc;
+import org.apache.lucene.search.TopDocs;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
@@ -30,7 +30,8 @@ import org.elasticsearch.search.SearchParseElement;
 import org.elasticsearch.search.SearchPhase;
 import org.elasticsearch.search.internal.SearchContext;
 
-import com.google.common.collect.ImmutableMap;
+import java.io.IOException;
+import java.util.Map;
 
 /**
  */
@@ -53,18 +54,20 @@ public class RescorePhase extends AbstractComponent implements SearchPhase {
     }
 
     @Override
-    public void execute(SearchContext context) throws ElasticSearchException {
-        final RescoreSearchContext ctx = context.rescore();
-        final Rescorer rescorer = ctx.rescorer();
+    public void execute(SearchContext context) {
         try {
-            rescorer.rescore(context.queryResult().topDocs(), context, ctx);
+            TopDocs topDocs = context.queryResult().topDocs();
+            for (RescoreSearchContext ctx : context.rescore()) {
+                topDocs = ctx.rescorer().rescore(topDocs, context, ctx);
+            }
+            if (context.size() < topDocs.scoreDocs.length) {
+                ScoreDoc[] hits = new ScoreDoc[context.size()];
+                System.arraycopy(topDocs.scoreDocs, 0, hits, 0, hits.length);
+                topDocs = new TopDocs(topDocs.totalHits, hits, topDocs.getMaxScore());
+            }
+            context.queryResult().topDocs(topDocs);
         } catch (IOException e) {
-            throw new ElasticSearchException("Rescore Phase Failed", e);
-        }    
+            throw new ElasticsearchException("Rescore Phase Failed", e);
+        }
     }
-  
-    
-
-    
-
 }

@@ -1,13 +1,13 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,10 +16,11 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.action.admin.indices.template.delete;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.master.TransportMasterNodeOperationAction;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
@@ -31,9 +32,6 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.atomic.AtomicReference;
-
 /**
  * Delete index action.
  */
@@ -43,24 +41,15 @@ public class TransportDeleteIndexTemplateAction extends TransportMasterNodeOpera
 
     @Inject
     public TransportDeleteIndexTemplateAction(Settings settings, TransportService transportService, ClusterService clusterService,
-                                              ThreadPool threadPool, MetaDataIndexTemplateService indexTemplateService) {
-        super(settings, transportService, clusterService, threadPool);
+                                              ThreadPool threadPool, MetaDataIndexTemplateService indexTemplateService, ActionFilters actionFilters) {
+        super(settings, DeleteIndexTemplateAction.NAME, transportService, clusterService, threadPool, actionFilters, DeleteIndexTemplateRequest.class);
         this.indexTemplateService = indexTemplateService;
     }
 
     @Override
     protected String executor() {
-        return ThreadPool.Names.MANAGEMENT;
-    }
-
-    @Override
-    protected String transportAction() {
-        return DeleteIndexTemplateAction.NAME;
-    }
-
-    @Override
-    protected DeleteIndexTemplateRequest newRequest() {
-        return new DeleteIndexTemplateRequest();
+        // we go async right away
+        return ThreadPool.Names.SAME;
     }
 
     @Override
@@ -70,43 +59,22 @@ public class TransportDeleteIndexTemplateAction extends TransportMasterNodeOpera
 
     @Override
     protected ClusterBlockException checkBlock(DeleteIndexTemplateRequest request, ClusterState state) {
-        return state.blocks().indexBlockedException(ClusterBlockLevel.METADATA, "");
+        return state.blocks().indexBlockedException(ClusterBlockLevel.METADATA_WRITE, "");
     }
 
     @Override
-    protected DeleteIndexTemplateResponse masterOperation(DeleteIndexTemplateRequest request, ClusterState state) throws ElasticSearchException {
-        final AtomicReference<DeleteIndexTemplateResponse> responseRef = new AtomicReference<DeleteIndexTemplateResponse>();
-        final AtomicReference<Throwable> failureRef = new AtomicReference<Throwable>();
-        final CountDownLatch latch = new CountDownLatch(1);
-
-        indexTemplateService.removeTemplate(new MetaDataIndexTemplateService.RemoveRequest(request.name()), new MetaDataIndexTemplateService.RemoveListener() {
+    protected void masterOperation(final DeleteIndexTemplateRequest request, final ClusterState state, final ActionListener<DeleteIndexTemplateResponse> listener) {
+        indexTemplateService.removeTemplates(new MetaDataIndexTemplateService.RemoveRequest(request.name()).masterTimeout(request.masterNodeTimeout()), new MetaDataIndexTemplateService.RemoveListener() {
             @Override
             public void onResponse(MetaDataIndexTemplateService.RemoveResponse response) {
-                responseRef.set(new DeleteIndexTemplateResponse(response.acknowledged()));
-                latch.countDown();
+                listener.onResponse(new DeleteIndexTemplateResponse(response.acknowledged()));
             }
 
             @Override
             public void onFailure(Throwable t) {
-                failureRef.set(t);
-                latch.countDown();
+                logger.debug("failed to delete templates [{}]", t, request.name());
+                listener.onFailure(t);
             }
         });
-
-        try {
-            latch.await();
-        } catch (InterruptedException e) {
-            failureRef.set(e);
-        }
-
-        if (failureRef.get() != null) {
-            if (failureRef.get() instanceof ElasticSearchException) {
-                throw (ElasticSearchException) failureRef.get();
-            } else {
-                throw new ElasticSearchException(failureRef.get().getMessage(), failureRef.get());
-            }
-        }
-
-        return responseRef.get();
     }
 }

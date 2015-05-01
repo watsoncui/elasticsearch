@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,11 +20,8 @@
 package org.elasticsearch.action.delete;
 
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.WriteConsistencyLevel;
-import org.elasticsearch.action.support.replication.ReplicationType;
 import org.elasticsearch.action.support.replication.ShardReplicationOperationRequestBuilder;
 import org.elasticsearch.client.Client;
-import org.elasticsearch.client.internal.InternalClient;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.index.VersionType;
 
@@ -34,11 +31,11 @@ import org.elasticsearch.index.VersionType;
 public class DeleteRequestBuilder extends ShardReplicationOperationRequestBuilder<DeleteRequest, DeleteResponse, DeleteRequestBuilder> {
 
     public DeleteRequestBuilder(Client client) {
-        super((InternalClient) client, new DeleteRequest());
+        super(client, new DeleteRequest());
     }
 
     public DeleteRequestBuilder(Client client, @Nullable String index) {
-        super((InternalClient) client, new DeleteRequest(index));
+        super(client, new DeleteRequest(index));
     }
 
     /**
@@ -102,24 +99,8 @@ public class DeleteRequestBuilder extends ShardReplicationOperationRequestBuilde
         return this;
     }
 
-    /**
-     * Set the replication type for this operation.
-     */
-    public DeleteRequestBuilder setReplicationType(ReplicationType replicationType) {
-        request.replicationType(replicationType);
-        return this;
-    }
-
-    /**
-     * Sets the consistency level. Defaults to {@link org.elasticsearch.action.WriteConsistencyLevel#DEFAULT}.
-     */
-    public DeleteRequestBuilder setConsistencyLevel(WriteConsistencyLevel consistencyLevel) {
-        request.consistencyLevel(consistencyLevel);
-        return this;
-    }
-
     @Override
     protected void doExecute(ActionListener<DeleteResponse> listener) {
-        ((Client) client).delete(request, listener);
+        client.delete(request, listener);
     }
 }

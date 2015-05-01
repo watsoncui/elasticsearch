@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,6 +19,7 @@
 
 package org.elasticsearch.index.indexing;
 
+import org.elasticsearch.Version;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -46,17 +47,25 @@ public class IndexingStats implements Streamable, ToXContent {
         private long deleteTimeInMillis;
         private long deleteCurrent;
 
+        private long noopUpdateCount;
+
+        private long throttleTimeInMillis;
+        private boolean isThrottled;
+
         Stats() {
 
         }
 
-        public Stats(long indexCount, long indexTimeInMillis, long indexCurrent, long deleteCount, long deleteTimeInMillis, long deleteCurrent) {
+        public Stats(long indexCount, long indexTimeInMillis, long indexCurrent, long deleteCount, long deleteTimeInMillis, long deleteCurrent, long noopUpdateCount, boolean isThrottled, long throttleTimeInMillis) {
             this.indexCount = indexCount;
             this.indexTimeInMillis = indexTimeInMillis;
             this.indexCurrent = indexCurrent;
             this.deleteCount = deleteCount;
             this.deleteTimeInMillis = deleteTimeInMillis;
             this.deleteCurrent = deleteCurrent;
+            this.noopUpdateCount = noopUpdateCount;
+            this.isThrottled = isThrottled;
+            this.throttleTimeInMillis = throttleTimeInMillis;
         }
 
         public void add(Stats stats) {
@@ -67,6 +76,12 @@ public class IndexingStats implements Streamable, ToXContent {
             deleteCount += stats.deleteCount;
             deleteTimeInMillis += stats.deleteTimeInMillis;
             deleteCurrent += stats.deleteCurrent;
+
+            noopUpdateCount += stats.noopUpdateCount;
+            throttleTimeInMillis += stats.throttleTimeInMillis;
+            if (isThrottled != stats.isThrottled) {
+                isThrottled = true; //When combining if one is throttled set result to throttled.
+            }
         }
 
         public long getIndexCount() {
@@ -89,6 +104,30 @@ public class IndexingStats implements Streamable, ToXContent {
             return deleteCount;
         }
 
+        /**
+         * Returns if the index is under merge throttling control
+         * @return
+         */
+        public boolean isThrottled() {
+            return isThrottled;
+        }
+
+        /**
+         * Gets the amount of time in milliseconds that the index has been under merge throttling control
+         * @return
+         */
+        public long getThrottleTimeInMillis() {
+            return throttleTimeInMillis;
+        }
+
+        /**
+         * Gets the amount of time in a TimeValue that the index has been under merge throttling control
+         * @return
+         */
+        public TimeValue getThrottleTime() {
+            return new TimeValue(throttleTimeInMillis);
+        }
+
         public TimeValue getDeleteTime() {
             return new TimeValue(deleteTimeInMillis);
         }
@@ -99,6 +138,10 @@ public class IndexingStats implements Streamable, ToXContent {
 
         public long getDeleteCurrent() {
             return deleteCurrent;
+        }
+
+        public long getNoopUpdateCount() {
+            return noopUpdateCount;
         }
 
         public static Stats readStats(StreamInput in) throws IOException {
@@ -116,6 +159,9 @@ public class IndexingStats implements Streamable, ToXContent {
             deleteCount = in.readVLong();
             deleteTimeInMillis = in.readVLong();
             deleteCurrent = in.readVLong();
+            noopUpdateCount = in.readVLong();
+            isThrottled = in.readBoolean();
+            throttleTimeInMillis = in.readLong();
         }
 
         @Override
@@ -127,20 +173,26 @@ public class IndexingStats implements Streamable, ToXContent {
             out.writeVLong(deleteCount);
             out.writeVLong(deleteTimeInMillis);
             out.writeVLong(deleteCurrent);
+            out.writeVLong(noopUpdateCount);
+            out.writeBoolean(isThrottled);
+            out.writeLong(throttleTimeInMillis);
+
         }
 
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
             builder.field(Fields.INDEX_TOTAL, indexCount);
-            builder.field(Fields.INDEX_TIME, getIndexTime().toString());
-            builder.field(Fields.INDEX_TIME_IN_MILLIS, indexTimeInMillis);
+            builder.timeValueField(Fields.INDEX_TIME_IN_MILLIS, Fields.INDEX_TIME, indexTimeInMillis);
             builder.field(Fields.INDEX_CURRENT, indexCurrent);
 
             builder.field(Fields.DELETE_TOTAL, deleteCount);
-            builder.field(Fields.DELETE_TIME, getDeleteTime().toString());
-            builder.field(Fields.DELETE_TIME_IN_MILLIS, deleteTimeInMillis);
+            builder.timeValueField(Fields.DELETE_TIME_IN_MILLIS, Fields.DELETE_TIME, deleteTimeInMillis);
             builder.field(Fields.DELETE_CURRENT, deleteCurrent);
 
+            builder.field(Fields.NOOP_UPDATE_TOTAL, noopUpdateCount);
+
+            builder.field(Fields.IS_THROTTLED, isThrottled);
+            builder.timeValueField(Fields.THROTTLED_TIME_IN_MILLIS, Fields.THROTTLED_TIME, throttleTimeInMillis);
             return builder;
         }
     }
@@ -170,7 +222,7 @@ public class IndexingStats implements Streamable, ToXContent {
         totalStats.add(indexingStats.totalStats);
         if (includeTypes && indexingStats.typeStats != null && !indexingStats.typeStats.isEmpty()) {
             if (typeStats == null) {
-                typeStats = new HashMap<String, Stats>(indexingStats.typeStats.size());
+                typeStats = new HashMap<>(indexingStats.typeStats.size());
             }
             for (Map.Entry<String, Stats> entry : indexingStats.typeStats.entrySet()) {
                 Stats stats = typeStats.get(entry.getKey());
@@ -220,6 +272,10 @@ public class IndexingStats implements Streamable, ToXContent {
         static final XContentBuilderString DELETE_TIME = new XContentBuilderString("delete_time");
         static final XContentBuilderString DELETE_TIME_IN_MILLIS = new XContentBuilderString("delete_time_in_millis");
         static final XContentBuilderString DELETE_CURRENT = new XContentBuilderString("delete_current");
+        static final XContentBuilderString NOOP_UPDATE_TOTAL = new XContentBuilderString("noop_update_total");
+        static final XContentBuilderString IS_THROTTLED = new XContentBuilderString("is_throttled");
+        static final XContentBuilderString THROTTLED_TIME_IN_MILLIS = new XContentBuilderString("throttle_time_in_millis");
+        static final XContentBuilderString THROTTLED_TIME = new XContentBuilderString("throttle_time");
     }
 
     public static IndexingStats readIndexingStats(StreamInput in) throws IOException {
@@ -233,7 +289,7 @@ public class IndexingStats implements Streamable, ToXContent {
         totalStats = Stats.readStats(in);
         if (in.readBoolean()) {
             int size = in.readVInt();
-            typeStats = new HashMap<String, Stats>(size);
+            typeStats = new HashMap<>(size);
             for (int i = 0; i < size; i++) {
                 typeStats.put(in.readString(), Stats.readStats(in));
             }

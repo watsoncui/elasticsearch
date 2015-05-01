@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,13 +19,11 @@
 
 package org.elasticsearch.action.mlt;
 
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchType;
 import org.elasticsearch.client.Client;
-import org.elasticsearch.client.internal.InternalClient;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.search.Scroll;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
@@ -34,14 +32,14 @@ import java.util.Map;
 
 /**
  */
-public class MoreLikeThisRequestBuilder extends ActionRequestBuilder<MoreLikeThisRequest, SearchResponse, MoreLikeThisRequestBuilder> {
+public class MoreLikeThisRequestBuilder extends ActionRequestBuilder<MoreLikeThisRequest, SearchResponse, MoreLikeThisRequestBuilder, Client> {
 
     public MoreLikeThisRequestBuilder(Client client) {
-        super((InternalClient) client, new MoreLikeThisRequest());
+        super(client, new MoreLikeThisRequest());
     }
 
     public MoreLikeThisRequestBuilder(Client client, String index, String type, String id) {
-        super((InternalClient) client, new MoreLikeThisRequest(index).type(type).id(id));
+        super(client, new MoreLikeThisRequest(index).type(type).id(id));
     }
 
     /**
@@ -62,11 +60,21 @@ public class MoreLikeThisRequestBuilder extends ActionRequestBuilder<MoreLikeThi
     }
 
     /**
+     * Number of terms that must match the generated query expressed in the
+     * common syntax for minimum should match. Defaults to <tt>30%</tt>.
+     *
+     * @see    org.elasticsearch.common.lucene.search.Queries#calculateMinShouldMatch(int, String)
+     */
+    public MoreLikeThisRequestBuilder setMinimumShouldMatch(String minimumShouldMatch) {
+        request.minimumShouldMatch(minimumShouldMatch);
+        return this;
+    }
+
+    /**
      * The percent of the terms to match for each field. Defaults to <tt>0.3f</tt>.
      */
     public MoreLikeThisRequestBuilder setPercentTermsToMatch(float percentTermsToMatch) {
-        request.percentTermsToMatch(percentTermsToMatch);
-        return this;
+        return setMinimumShouldMatch(Math.round(percentTermsToMatch * 100) + "%");
     }
 
     /**
@@ -120,7 +128,7 @@ public class MoreLikeThisRequestBuilder extends ActionRequestBuilder<MoreLikeThi
      * The minimum word length below which words will be ignored. Defaults to <tt>0</tt>.
      */
     public MoreLikeThisRequestBuilder setMinWordLen(int minWordLen) {
-        request.minWordLen(minWordLen);
+        request.minWordLength(minWordLen);
         return this;
     }
 
@@ -128,7 +136,7 @@ public class MoreLikeThisRequestBuilder extends ActionRequestBuilder<MoreLikeThi
      * The maximum word length above which words will be ignored. Defaults to unbounded.
      */
     public MoreLikeThisRequestBuilder setMaxWordLen(int maxWordLen) {
-        request().maxWordLen(maxWordLen);
+        request().maxWordLength(maxWordLen);
         return this;
     }
 
@@ -137,6 +145,14 @@ public class MoreLikeThisRequestBuilder extends ActionRequestBuilder<MoreLikeThi
      */
     public MoreLikeThisRequestBuilder setBoostTerms(float boostTerms) {
         request.boostTerms(boostTerms);
+        return this;
+    }
+
+    /**
+     * Whether to include the queried document. Defaults to <tt>false</tt>.
+     */
+    public MoreLikeThisRequestBuilder setInclude(boolean include) {
+        request.include(include);
         return this;
     }
 
@@ -196,7 +212,7 @@ public class MoreLikeThisRequestBuilder extends ActionRequestBuilder<MoreLikeThi
     /**
      * The search type of the mlt search query.
      */
-    public MoreLikeThisRequestBuilder setSearchType(String searchType) throws ElasticSearchIllegalArgumentException {
+    public MoreLikeThisRequestBuilder setSearchType(String searchType) {
         request.searchType(searchType);
         return this;
     }
@@ -247,6 +263,6 @@ public class MoreLikeThisRequestBuilder extends ActionRequestBuilder<MoreLikeThi
 
     @Override
     protected void doExecute(ActionListener<SearchResponse> listener) {
-        ((Client) client).moreLikeThis(request, listener);
+        client.moreLikeThis(request, listener);
     }
 }

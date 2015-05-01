@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,7 +21,6 @@ package org.elasticsearch.common.transport;
 
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.regex.Regex;
 
 import java.io.IOException;
 import java.net.Inet6Address;
@@ -37,6 +36,10 @@ public class InetSocketTransportAddress implements TransportAddress {
 
     public static void setResolveAddress(boolean resolveAddress) {
         InetSocketTransportAddress.resolveAddress = resolveAddress;
+    }
+
+    public static boolean getResolveAddress() {
+        return resolveAddress;
     }
 
     private InetSocketAddress address;
@@ -69,33 +72,9 @@ public class InetSocketTransportAddress implements TransportAddress {
     }
 
     @Override
-    public boolean match(String otherAddress) {
-        if (address.getHostName() != null && Regex.simpleMatch(otherAddress, address.getHostName())) {
-            return true;
-        }
-        if (address.getAddress() != null) {
-            if (address.getAddress().getHostName() != null && Regex.simpleMatch(otherAddress, address.getAddress().getHostName())) {
-                return true;
-            }
-            if (address.getAddress().getHostAddress() != null && Regex.simpleMatch(otherAddress, address.getAddress().getHostAddress())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    @Override
     public boolean sameHost(TransportAddress other) {
-        if (!(other instanceof InetSocketTransportAddress)) {
-            return false;
-        }
-        InetSocketTransportAddress otherAddr = (InetSocketTransportAddress) other;
-        if (address.isUnresolved() || otherAddr.address().isUnresolved()) {
-            String hostName = address.getHostName();
-            String otherHostName = otherAddr.address().getHostName();
-            return !(hostName == null || otherHostName == null) && hostName.equals(otherHostName);
-        }
-        return otherAddr.address().getAddress().equals(address.getAddress());
+        return other instanceof InetSocketTransportAddress &&
+                address.getAddress().equals(((InetSocketTransportAddress) other).address.getAddress());
     }
 
     public InetSocketAddress address() {

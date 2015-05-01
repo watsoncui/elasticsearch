@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,63 +19,47 @@
 
 package org.elasticsearch.rest.action.admin.indices.exists.indices;
 
-import org.elasticsearch.ExceptionsHelper;
-import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsRequest;
 import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsResponse;
+import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.settings.SettingsFilter;
 import org.elasticsearch.rest.*;
+import org.elasticsearch.rest.action.support.RestResponseListener;
 
 import static org.elasticsearch.rest.RestRequest.Method.HEAD;
 import static org.elasticsearch.rest.RestStatus.NOT_FOUND;
 import static org.elasticsearch.rest.RestStatus.OK;
-import static org.elasticsearch.rest.action.support.RestActions.splitIndices;
 
 /**
  *
  */
 public class RestIndicesExistsAction extends BaseRestHandler {
 
-    private final SettingsFilter settingsFilter;
-
     @Inject
-    public RestIndicesExistsAction(Settings settings, Client client, RestController controller,
-                                   SettingsFilter settingsFilter) {
-        super(settings, client);
+    public RestIndicesExistsAction(Settings settings, RestController controller, Client client) {
+        super(settings, controller, client);
         controller.registerHandler(HEAD, "/{index}", this);
-
-        this.settingsFilter = settingsFilter;
     }
 
     @Override
-    public void handleRequest(final RestRequest request, final RestChannel channel) {
-        IndicesExistsRequest indicesExistsRequest = new IndicesExistsRequest(splitIndices(request.param("index")));
+    public void handleRequest(final RestRequest request, final RestChannel channel, final Client client) {
+        IndicesExistsRequest indicesExistsRequest = new IndicesExistsRequest(Strings.splitStringByCommaToArray(request.param("index")));
+        indicesExistsRequest.indicesOptions(IndicesOptions.fromRequest(request, indicesExistsRequest.indicesOptions()));
+        indicesExistsRequest.local(request.paramAsBoolean("local", indicesExistsRequest.local()));
         indicesExistsRequest.listenerThreaded(false);
-        client.admin().indices().exists(indicesExistsRequest, new ActionListener<IndicesExistsResponse>() {
+        client.admin().indices().exists(indicesExistsRequest, new RestResponseListener<IndicesExistsResponse>(channel) {
             @Override
-            public void onResponse(IndicesExistsResponse response) {
-                try {
-                    if (response.isExists()) {
-                        channel.sendResponse(new StringRestResponse(OK));
-                    } else {
-                        channel.sendResponse(new StringRestResponse(NOT_FOUND));
-                    }
-                } catch (Exception e) {
-                    onFailure(e);
+            public RestResponse buildResponse(IndicesExistsResponse response) {
+                if (response.isExists()) {
+                    return new BytesRestResponse(OK);
+                } else {
+                    return new BytesRestResponse(NOT_FOUND);
                 }
             }
 
-            @Override
-            public void onFailure(Throwable e) {
-                try {
-                    channel.sendResponse(new StringRestResponse(ExceptionsHelper.status(e)));
-                } catch (Exception e1) {
-                    logger.error("Failed to send failure response", e1);
-                }
-            }
         });
     }
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,137 +19,75 @@
 
 package org.elasticsearch.index.fielddata.ordinals;
 
-import org.apache.lucene.util.IntsRef;
+import org.apache.lucene.index.DocValues;
+import org.apache.lucene.index.RandomAccessOrds;
+import org.apache.lucene.index.SortedDocValues;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
+import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.packed.PackedInts;
-import org.elasticsearch.common.RamUsage;
+
+import java.util.Collection;
+import java.util.Collections;
 
 /**
  */
-public class SinglePackedOrdinals implements Ordinals {
+public class SinglePackedOrdinals extends Ordinals {
 
     // ordinals with value 0 indicates no value
     private final PackedInts.Reader reader;
-    private final int numOrds;
-    private final int maxOrd;
+    private final int valueCount;
 
-    private long size = -1;
-
-    public SinglePackedOrdinals(PackedInts.Reader reader, int numOrds) {
+    public SinglePackedOrdinals(OrdinalsBuilder builder, float acceptableOverheadRatio) {
+        assert builder.getNumMultiValuesDocs() == 0;
+        this.valueCount = (int) builder.getValueCount();
+        // We don't reuse the builder as-is because it might have been built with a higher overhead ratio
+        final PackedInts.Mutable reader = PackedInts.getMutable(builder.maxDoc(), PackedInts.bitsRequired(valueCount), acceptableOverheadRatio);
+        PackedInts.copy(builder.getFirstOrdinals(), 0, reader, 0, builder.maxDoc(), 8 * 1024);
         this.reader = reader;
-        this.numOrds = numOrds;
-        this.maxOrd = numOrds + 1;
     }
 
     @Override
-    public boolean hasSingleArrayBackingStorage() {
-        return reader.hasArray();
+    public long ramBytesUsed() {
+        return RamUsageEstimator.NUM_BYTES_OBJECT_REF + reader.ramBytesUsed();
     }
 
     @Override
-    public Object getBackingStorage() {
-        if (reader.hasArray()) {
-            return reader.getArray();
-        }
-        return reader;
+    public Collection<Accountable> getChildResources() {
+        return Collections.singleton(Accountables.namedAccountable("reader", reader));
     }
 
     @Override
-    public long getMemorySizeInBytes() {
-        if (size == -1) {
-            size = RamUsage.NUM_BYTES_OBJECT_REF + reader.ramBytesUsed();
-        }
-        return size;
+    public RandomAccessOrds ordinals(ValuesHolder values) {
+        return (RandomAccessOrds) DocValues.singleton(new Docs(this, values));
     }
 
-    @Override
-    public boolean isMultiValued() {
-        return false;
-    }
+    private static class Docs extends SortedDocValues {
 
-    @Override
-    public int getNumDocs() {
-        return reader.size();
-    }
-
-    @Override
-    public int getNumOrds() {
-        return numOrds;
-    }
-
-    @Override
-    public int getMaxOrd() {
-        return maxOrd;
-    }
-
-    @Override
-    public Docs ordinals() {
-        return new Docs(this, reader);
-    }
-
-    public static class Docs implements Ordinals.Docs {
-
-        private final SinglePackedOrdinals parent;
+        private final int maxOrd;
         private final PackedInts.Reader reader;
+        private final ValuesHolder values;
 
-        private final IntsRef intsScratch = new IntsRef(1);
-        private final SingleValueIter iter = new SingleValueIter();
-
-        public Docs(SinglePackedOrdinals parent, PackedInts.Reader reader) {
-            this.parent = parent;
-            this.reader = reader;
+        public Docs(SinglePackedOrdinals parent, ValuesHolder values) {
+            this.maxOrd = parent.valueCount;
+            this.reader = parent.reader;
+            this.values = values;
         }
 
         @Override
-        public Ordinals ordinals() {
-            return parent;
+        public int getValueCount() {
+            return maxOrd;
         }
 
         @Override
-        public int getNumDocs() {
-            return parent.getNumDocs();
+        public BytesRef lookupOrd(int ord) {
+            return values.lookupOrd(ord);
         }
 
         @Override
-        public int getNumOrds() {
-            return parent.getNumOrds();
-        }
-
-        @Override
-        public int getMaxOrd() {
-            return parent.getMaxOrd();
-        }
-
-        @Override
-        public boolean isMultiValued() {
-            return false;
-        }
-
-        @Override
-        public int getOrd(int docId) {
-            return (int) reader.get(docId);
-        }
-
-        @Override
-        public IntsRef getOrds(int docId) {
-            final int ordinal = (int) reader.get(docId);
-            if (ordinal == 0)  {
-                intsScratch.length = 0;
-            } else {
-                intsScratch.offset = 0;
-                intsScratch.length = 1;
-                intsScratch.ints[0] = ordinal;
-            }
-            return intsScratch;
-        }
-
-        @Override
-        public Iter getIter(int docId) {
-            return iter.reset((int) reader.get(docId));
-        }
-
-        @Override
-        public void forEachOrdinalInDoc(int docId, OrdinalInDocProc proc) {
-            proc.onOrdinal(docId, (int) reader.get(docId));
+        public int getOrd(int docID) {
+            return (int) (reader.get(docID) - 1);
         }
     }
 }

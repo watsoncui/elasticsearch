@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,160 +19,102 @@
 
 package org.elasticsearch.index.mapper;
 
-import com.google.common.collect.*;
+import com.google.common.base.Function;
+import com.google.common.collect.Collections2;
+import com.google.common.collect.Maps;
 import org.apache.lucene.analysis.Analyzer;
-import org.elasticsearch.common.regex.Regex;
+import org.elasticsearch.index.analysis.AnalysisService;
 import org.elasticsearch.index.analysis.FieldNameAnalyzer;
 
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
-import java.util.Set;
-
-import static com.google.common.collect.Lists.newArrayList;
-import static com.google.common.collect.Maps.newHashMap;
 
 /**
  *
  */
-public class DocumentFieldMappers implements Iterable<FieldMapper> {
+public final class DocumentFieldMappers implements Iterable<FieldMapper<?>> {
 
-    private final ImmutableList<FieldMapper> fieldMappers;
-    private final Map<String, FieldMappers> fullNameFieldMappers;
-    private final Map<String, FieldMappers> nameFieldMappers;
-    private final Map<String, FieldMappers> indexNameFieldMappers;
+    private final FieldMappersLookup fieldMappers;
 
     private final FieldNameAnalyzer indexAnalyzer;
     private final FieldNameAnalyzer searchAnalyzer;
     private final FieldNameAnalyzer searchQuoteAnalyzer;
 
-    public DocumentFieldMappers(DocumentMapper docMapper, Iterable<FieldMapper> fieldMappers) {
-        final Map<String, FieldMappers> tempNameFieldMappers = newHashMap();
-        final Map<String, FieldMappers> tempIndexNameFieldMappers = newHashMap();
-        final Map<String, FieldMappers> tempFullNameFieldMappers = newHashMap();
-
-        final Map<String, Analyzer> indexAnalyzers = newHashMap();
-        final Map<String, Analyzer> searchAnalyzers = newHashMap();
-        final Map<String, Analyzer> searchQuoteAnalyzers = newHashMap();
-
-        for (FieldMapper fieldMapper : fieldMappers) {
-            FieldMappers mappers = tempNameFieldMappers.get(fieldMapper.names().name());
-            if (mappers == null) {
-                mappers = new FieldMappers(fieldMapper);
-            } else {
-                mappers = mappers.concat(fieldMapper);
-            }
-            tempNameFieldMappers.put(fieldMapper.names().name(), mappers);
-
-            mappers = tempIndexNameFieldMappers.get(fieldMapper.names().indexName());
-            if (mappers == null) {
-                mappers = new FieldMappers(fieldMapper);
-            } else {
-                mappers = mappers.concat(fieldMapper);
-            }
-            tempIndexNameFieldMappers.put(fieldMapper.names().indexName(), mappers);
-
-            mappers = tempFullNameFieldMappers.get(fieldMapper.names().fullName());
-            if (mappers == null) {
-                mappers = new FieldMappers(fieldMapper);
-            } else {
-                mappers = mappers.concat(fieldMapper);
-            }
-            tempFullNameFieldMappers.put(fieldMapper.names().fullName(), mappers);
-
-            if (fieldMapper.indexAnalyzer() != null) {
-                indexAnalyzers.put(fieldMapper.names().indexName(), fieldMapper.indexAnalyzer());
-            }
-            if (fieldMapper.searchAnalyzer() != null) {
-                searchAnalyzers.put(fieldMapper.names().indexName(), fieldMapper.searchAnalyzer());
-            }
-            if (fieldMapper.searchQuoteAnalyzer() != null) {
-                searchQuoteAnalyzers.put(fieldMapper.names().indexName(), fieldMapper.searchQuoteAnalyzer());
-            }
-        }
-        this.fieldMappers = ImmutableList.copyOf(fieldMappers);
-        this.nameFieldMappers = ImmutableMap.copyOf(tempNameFieldMappers);
-        this.indexNameFieldMappers = ImmutableMap.copyOf(tempIndexNameFieldMappers);
-        this.fullNameFieldMappers = ImmutableMap.copyOf(tempFullNameFieldMappers);
-
-        this.indexAnalyzer = new FieldNameAnalyzer(indexAnalyzers, docMapper.indexAnalyzer());
-        this.searchAnalyzer = new FieldNameAnalyzer(searchAnalyzers, docMapper.searchAnalyzer());
-        this.searchQuoteAnalyzer = new FieldNameAnalyzer(searchQuoteAnalyzers, docMapper.searchQuotedAnalyzer());
+    public DocumentFieldMappers(AnalysisService analysisService) {
+        this(new FieldMappersLookup(), new FieldNameAnalyzer(analysisService.defaultIndexAnalyzer()),
+                                       new FieldNameAnalyzer(analysisService.defaultSearchAnalyzer()),
+                                       new FieldNameAnalyzer(analysisService.defaultSearchQuoteAnalyzer()));
     }
 
-    @Override
-    public UnmodifiableIterator<FieldMapper> iterator() {
-        return fieldMappers.iterator();
+    private DocumentFieldMappers(FieldMappersLookup fieldMappers, FieldNameAnalyzer indexAnalyzer, FieldNameAnalyzer searchAnalyzer, FieldNameAnalyzer searchQuoteAnalyzer) {
+        this.fieldMappers = fieldMappers;
+        this.indexAnalyzer = indexAnalyzer;
+        this.searchAnalyzer = searchAnalyzer;
+        this.searchQuoteAnalyzer = searchQuoteAnalyzer;
     }
 
-    public ImmutableList<FieldMapper> mappers() {
-        return this.fieldMappers;
-    }
-
-    public boolean hasMapper(FieldMapper fieldMapper) {
-        return fieldMappers.contains(fieldMapper);
-    }
-
-    public FieldMappers name(String name) {
-        return nameFieldMappers.get(name);
-    }
-
-    public FieldMappers indexName(String indexName) {
-        return indexNameFieldMappers.get(indexName);
-    }
-
-    public FieldMappers fullName(String fullName) {
-        return fullNameFieldMappers.get(fullName);
-    }
-
-    public Set<String> simpleMatchToIndexNames(String pattern) {
-        Set<String> fields = Sets.newHashSet();
-        for (FieldMapper fieldMapper : fieldMappers) {
-            if (Regex.simpleMatch(pattern, fieldMapper.names().fullName())) {
-                fields.add(fieldMapper.names().indexName());
-            } else if (Regex.simpleMatch(pattern, fieldMapper.names().indexName())) {
-                fields.add(fieldMapper.names().indexName());
-            } else if (Regex.simpleMatch(pattern, fieldMapper.names().name())) {
-                fields.add(fieldMapper.names().indexName());
+    public DocumentFieldMappers copyAndAllAll(Collection<FieldMapper<?>> newMappers) {
+        FieldMappersLookup fieldMappers = this.fieldMappers.copyAndAddAll(newMappers);
+        FieldNameAnalyzer indexAnalyzer = this.indexAnalyzer.copyAndAddAll(Collections2.transform(newMappers, new Function<FieldMapper<?>, Map.Entry<String, Analyzer>>() {
+            @Override
+            public Map.Entry<String, Analyzer> apply(FieldMapper<?> input) {
+                return Maps.immutableEntry(input.names().indexName(), input.indexAnalyzer());
             }
-        }
-        return fields;
-    }
-
-    public Set<String> simpleMatchToFullName(String pattern) {
-        Set<String> fields = Sets.newHashSet();
-        for (FieldMapper fieldMapper : fieldMappers) {
-            if (Regex.simpleMatch(pattern, fieldMapper.names().fullName())) {
-                fields.add(fieldMapper.names().fullName());
-            } else if (Regex.simpleMatch(pattern, fieldMapper.names().indexName())) {
-                fields.add(fieldMapper.names().fullName());
-            } else if (Regex.simpleMatch(pattern, fieldMapper.names().name())) {
-                fields.add(fieldMapper.names().fullName());
+        }));
+        FieldNameAnalyzer searchAnalyzer = this.searchAnalyzer.copyAndAddAll(Collections2.transform(newMappers, new Function<FieldMapper<?>, Map.Entry<String, Analyzer>>() {
+            @Override
+            public Map.Entry<String, Analyzer> apply(FieldMapper<?> input) {
+                return Maps.immutableEntry(input.names().indexName(), input.searchAnalyzer());
             }
-        }
-        return fields;
+        }));
+        FieldNameAnalyzer searchQuoteAnalyzer = this.searchQuoteAnalyzer.copyAndAddAll(Collections2.transform(newMappers, new Function<FieldMapper<?>, Map.Entry<String, Analyzer>>() {
+            @Override
+            public Map.Entry<String, Analyzer> apply(FieldMapper<?> input) {
+                return Maps.immutableEntry(input.names().indexName(), input.searchQuoteAnalyzer());
+            }
+        }));
+        return new DocumentFieldMappers(fieldMappers, indexAnalyzer, searchAnalyzer, searchQuoteAnalyzer);
     }
 
     /**
-     * Tries to find first based on {@link #fullName(String)}, then by {@link #indexName(String)}, and last
-     * by {@link #name(String)}.
+     * Looks up a field by its index name.
+     *
+     * Overriding index name for a field is no longer possibly, and only supported for backcompat.
+     * This function first attempts to lookup the field by full name, and only when that fails,
+     * does a full scan of all field mappers, collecting those with this index name.
+     *
+     * This will be removed in 3.0, once backcompat for overriding index name is removed.
+     * @deprecated Use {@link #getMapper(String)}
      */
-    public FieldMappers smartName(String name) {
-        FieldMappers fieldMappers = fullName(name);
-        if (fieldMappers != null) {
-            return fieldMappers;
-        }
-        fieldMappers = indexName(name);
-        if (fieldMappers != null) {
-            return fieldMappers;
-        }
-        return name(name);
+    @Deprecated
+    public FieldMappers indexName(String indexName) {
+        return fieldMappers.indexName(indexName);
     }
 
-    public FieldMapper smartNameFieldMapper(String name) {
-        FieldMappers fieldMappers = smartName(name);
-        if (fieldMappers == null) {
-            return null;
-        }
-        return fieldMappers.mapper();
+    /** Returns the mapper for the given field */
+    public FieldMapper getMapper(String field) {
+        return fieldMappers.get(field);
+    }
+
+    List<String> simpleMatchToIndexNames(String pattern) {
+        return fieldMappers.simpleMatchToIndexNames(pattern);
+    }
+
+    public List<String> simpleMatchToFullName(String pattern) {
+        return fieldMappers.simpleMatchToFullName(pattern);
+    }
+
+    /**
+     * Tries to find first based on fullName, then by indexName.
+     */
+    FieldMappers smartName(String name) {
+        return fieldMappers.smartName(name);
+    }
+
+    public FieldMapper<?> smartNameFieldMapper(String name) {
+        return fieldMappers.smartNameFieldMapper(name);
     }
 
     /**
@@ -203,11 +145,7 @@ public class DocumentFieldMappers implements Iterable<FieldMapper> {
         return this.searchQuoteAnalyzer;
     }
 
-    public DocumentFieldMappers concat(DocumentMapper docMapper, FieldMapper... fieldMappers) {
-        return concat(docMapper, newArrayList(fieldMappers));
-    }
-
-    public DocumentFieldMappers concat(DocumentMapper docMapper, Iterable<FieldMapper> fieldMappers) {
-        return new DocumentFieldMappers(docMapper, Iterables.concat(this.fieldMappers, fieldMappers));
+    public Iterator<FieldMapper<?>> iterator() {
+        return fieldMappers.iterator();
     }
 }

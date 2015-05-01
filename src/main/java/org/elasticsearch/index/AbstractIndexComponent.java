@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -35,8 +35,6 @@ public abstract class AbstractIndexComponent implements IndexComponent {
 
     protected final Settings indexSettings;
 
-    protected final Settings componentSettings;
-
     /**
      * Constructs a new index component, with the index name and its settings.
      *
@@ -46,23 +44,6 @@ public abstract class AbstractIndexComponent implements IndexComponent {
     protected AbstractIndexComponent(Index index, @IndexSettings Settings indexSettings) {
         this.index = index;
         this.indexSettings = indexSettings;
-        this.componentSettings = indexSettings.getComponentSettings(getClass());
-
-        this.logger = Loggers.getLogger(getClass(), indexSettings, index);
-    }
-
-    /**
-     * Constructs a new index component, with the index name and its settings, as well as settings prefix.
-     *
-     * @param index          The index name
-     * @param indexSettings  The index settings
-     * @param prefixSettings A settings prefix (like "com.mycompany") to simplify extracting the component settings
-     */
-    protected AbstractIndexComponent(Index index, @IndexSettings Settings indexSettings, String prefixSettings) {
-        this.index = index;
-        this.indexSettings = indexSettings;
-        this.componentSettings = indexSettings.getComponentSettings(prefixSettings, getClass());
-
         this.logger = Loggers.getLogger(getClass(), indexSettings, index);
     }
 

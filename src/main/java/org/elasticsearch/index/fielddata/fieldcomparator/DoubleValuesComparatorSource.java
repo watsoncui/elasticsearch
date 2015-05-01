@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,26 +19,37 @@
 
 package org.elasticsearch.index.fielddata.fieldcomparator;
 
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.NumericDocValues;
+import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.FieldComparator;
+import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.SortField;
+import org.apache.lucene.util.BitSet;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.index.fielddata.IndexFieldData;
 import org.elasticsearch.index.fielddata.IndexNumericFieldData;
+import org.elasticsearch.index.fielddata.NumericDoubleValues;
+import org.elasticsearch.index.fielddata.SortedNumericDoubleValues;
+import org.elasticsearch.search.MultiValueMode;
 
 import java.io.IOException;
 
 /**
+ * Comparator source for double values.
  */
 public class DoubleValuesComparatorSource extends IndexFieldData.XFieldComparatorSource {
 
-    private final IndexNumericFieldData<?> indexFieldData;
+    private final IndexNumericFieldData indexFieldData;
     private final Object missingValue;
-    private final SortMode sortMode;
+    private final MultiValueMode sortMode;
+    private final Nested nested;
 
-    public DoubleValuesComparatorSource(IndexNumericFieldData<?> indexFieldData, @Nullable Object missingValue, SortMode sortMode) {
+    public DoubleValuesComparatorSource(IndexNumericFieldData indexFieldData, @Nullable Object missingValue, MultiValueMode sortMode, Nested nested) {
         this.indexFieldData = indexFieldData;
         this.missingValue = missingValue;
         this.sortMode = sortMode;
+        this.nested = nested;
     }
 
     @Override
@@ -46,19 +57,37 @@ public class DoubleValuesComparatorSource extends IndexFieldData.XFieldComparato
         return SortField.Type.DOUBLE;
     }
 
+    protected SortedNumericDoubleValues getValues(LeafReaderContext context) throws IOException {
+        return indexFieldData.load(context).getDoubleValues();
+    }
+
+    protected void setScorer(Scorer scorer) {}
+
     @Override
     public FieldComparator<?> newComparator(String fieldname, int numHits, int sortPos, boolean reversed) throws IOException {
-        assert fieldname.equals(indexFieldData.getFieldNames().indexName());
+        assert indexFieldData == null || fieldname.equals(indexFieldData.getFieldNames().indexName());
 
-        double dMissingValue;
-        if (missingValue == null || "_last".equals(missingValue)) {
-            dMissingValue = reversed ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY;
-        } else if ("_first".equals(missingValue)) {
-            dMissingValue = reversed ? Double.POSITIVE_INFINITY : Double.NEGATIVE_INFINITY;
-        } else {
-            dMissingValue = missingValue instanceof Number ? ((Number) missingValue).doubleValue() : Double.parseDouble(missingValue.toString());
-        }
-
-        return new DoubleValuesComparator(indexFieldData, dMissingValue, numHits, sortMode);
+        final double dMissingValue = (Double) missingObject(missingValue, reversed);
+        // NOTE: it's important to pass null as a missing value in the constructor so that
+        // the comparator doesn't check docsWithField since we replace missing values in select()
+        return new FieldComparator.DoubleComparator(numHits, null, null) {
+            @Override
+            protected NumericDocValues getNumericDocValues(LeafReaderContext context, String field) throws IOException {
+                final SortedNumericDoubleValues values = getValues(context);
+                final NumericDoubleValues selectedValues;
+                if (nested == null) {
+                    selectedValues = sortMode.select(values, dMissingValue);
+                } else {
+                    final BitSet rootDocs = nested.rootDocs(context).bits();
+                    final DocIdSet innerDocs = nested.innerDocs(context);
+                    selectedValues = sortMode.select(values, dMissingValue, rootDocs, innerDocs, context.reader().maxDoc());
+                }
+                return selectedValues.getRawDoubleValues();
+            }
+            @Override
+            public void setScorer(Scorer scorer) {
+                DoubleValuesComparatorSource.this.setScorer(scorer);
+            }
+        };
     }
 }

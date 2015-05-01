@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,15 +19,19 @@
 
 package org.elasticsearch.index.cache.filter;
 
-import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.Filter;
-import org.elasticsearch.common.component.CloseableComponent;
+import org.apache.lucene.search.QueryCachingPolicy;
+import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.lucene.HashedBytesRef;
 import org.elasticsearch.index.IndexComponent;
+import org.elasticsearch.index.IndexService;
+
+import java.io.Closeable;
 
 /**
  *
  */
-public interface FilterCache extends IndexComponent, CloseableComponent {
+public interface FilterCache extends IndexComponent, Closeable {
 
     static class EntriesStats {
         public final long sizeInBytes;
@@ -39,17 +43,16 @@ public interface FilterCache extends IndexComponent, CloseableComponent {
         }
     }
 
+    // we need to "inject" the index service to not create cyclic dep
+    void setIndexService(IndexService indexService);
+
     String type();
 
-    Filter cache(Filter filterToCache);
+    Filter cache(Filter filterToCache, @Nullable HashedBytesRef cacheKey, QueryCachingPolicy policy);
 
-    void clear(IndexReader reader);
+    void clear(Object reader);
 
     void clear(String reason);
 
     void clear(String reason, String[] keys);
-
-    EntriesStats entriesStats();
-
-    long evictions();
 }

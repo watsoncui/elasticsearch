@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,8 @@
 
 package org.elasticsearch.common.unit;
 
-import org.elasticsearch.ElasticSearchParseException;
+import com.google.common.base.Preconditions;
+import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -46,6 +47,7 @@ public class SizeValue implements Serializable, Streamable {
     }
 
     public SizeValue(long size, SizeUnit sizeUnit) {
+        Preconditions.checkArgument(size >= 0, "size in SizeValue may not be negative");
         this.size = size;
         this.sizeUnit = sizeUnit;
     }
@@ -82,6 +84,22 @@ public class SizeValue implements Serializable, Streamable {
         return giga();
     }
 
+    public long tera() {
+        return sizeUnit.toTera(size);
+    }
+
+    public long getTera() {
+        return tera();
+    }
+
+    public long peta() {
+        return sizeUnit.toPeta(size);
+    }
+
+    public long getPeta() {
+        return peta();
+    }
+
     public double kiloFrac() {
         return ((double) singles()) / SizeUnit.C1;
     }
@@ -106,12 +124,34 @@ public class SizeValue implements Serializable, Streamable {
         return gigaFrac();
     }
 
+    public double teraFrac() {
+        return ((double) singles()) / SizeUnit.C4;
+    }
+
+    public double getTeraFrac() {
+        return teraFrac();
+    }
+
+    public double petaFrac() {
+        return ((double) singles()) / SizeUnit.C5;
+    }
+
+    public double getPetaFrac() {
+        return petaFrac();
+    }
+
     @Override
     public String toString() {
         long singles = singles();
         double value = singles;
         String suffix = "";
-        if (singles >= SizeUnit.C3) {
+        if (singles >= SizeUnit.C5) {
+            value = petaFrac();
+            suffix = "p";
+        } else if (singles >= SizeUnit.C4) {
+            value = teraFrac();
+            suffix = "t";
+        } else if (singles >= SizeUnit.C3) {
             value = gigaFrac();
             suffix = "g";
         } else if (singles >= SizeUnit.C2) {
@@ -121,14 +161,15 @@ public class SizeValue implements Serializable, Streamable {
             value = kiloFrac();
             suffix = "k";
         }
+
         return Strings.format1Decimals(value, suffix);
     }
 
-    public static SizeValue parseSizeValue(String sValue) throws ElasticSearchParseException {
+    public static SizeValue parseSizeValue(String sValue) throws ElasticsearchParseException {
         return parseSizeValue(sValue, null);
     }
 
-    public static SizeValue parseSizeValue(String sValue, SizeValue defaultValue) throws ElasticSearchParseException {
+    public static SizeValue parseSizeValue(String sValue, SizeValue defaultValue) throws ElasticsearchParseException {
         if (sValue == null) {
             return defaultValue;
         }
@@ -142,11 +183,15 @@ public class SizeValue implements Serializable, Streamable {
                 singles = (long) (Double.parseDouble(sValue.substring(0, sValue.length() - 1)) * SizeUnit.C2);
             } else if (sValue.endsWith("g") || sValue.endsWith("G")) {
                 singles = (long) (Double.parseDouble(sValue.substring(0, sValue.length() - 1)) * SizeUnit.C3);
+            } else if (sValue.endsWith("t") || sValue.endsWith("T")) {
+                singles = (long) (Double.parseDouble(sValue.substring(0, sValue.length() - 1)) * SizeUnit.C4);
+            } else if (sValue.endsWith("p") || sValue.endsWith("P")) {
+                singles = (long) (Double.parseDouble(sValue.substring(0, sValue.length() - 1)) * SizeUnit.C5);
             } else {
                 singles = Long.parseLong(sValue);
             }
         } catch (NumberFormatException e) {
-            throw new ElasticSearchParseException("Failed to parse [" + sValue + "]", e);
+            throw new ElasticsearchParseException("Failed to parse [" + sValue + "]", e);
         }
         return new SizeValue(singles, SizeUnit.SINGLE);
     }

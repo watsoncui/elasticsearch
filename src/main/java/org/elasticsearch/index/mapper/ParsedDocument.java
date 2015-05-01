@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,10 +19,9 @@
 
 package org.elasticsearch.index.mapper;
 
-import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.document.Document;
+import org.apache.lucene.document.Field;
 import org.elasticsearch.common.bytes.BytesReference;
-import org.elasticsearch.common.lucene.uid.UidField;
+import org.elasticsearch.index.mapper.ParseContext.Document;
 
 import java.util.List;
 
@@ -31,7 +30,7 @@ import java.util.List;
  */
 public class ParsedDocument {
 
-    private final UidField uid;
+    private final Field uid, version;
 
     private final String id;
 
@@ -45,16 +44,15 @@ public class ParsedDocument {
 
     private final List<Document> documents;
 
-    private final Analyzer analyzer;
+    private BytesReference source;
 
-    private final BytesReference source;
-
-    private boolean mappingsModified;
+    private Mapping dynamicMappingsUpdate;
 
     private String parent;
 
-    public ParsedDocument(UidField uid, String id, String type, String routing, long timestamp, long ttl, List<Document> documents, Analyzer analyzer, BytesReference source, boolean mappingsModified) {
+    public ParsedDocument(Field uid, Field version, String id, String type, String routing, long timestamp, long ttl, List<Document> documents, BytesReference source, Mapping dynamicMappingsUpdate) {
         this.uid = uid;
+        this.version = version;
         this.id = id;
         this.type = type;
         this.routing = routing;
@@ -62,12 +60,15 @@ public class ParsedDocument {
         this.ttl = ttl;
         this.documents = documents;
         this.source = source;
-        this.analyzer = analyzer;
-        this.mappingsModified = mappingsModified;
+        this.dynamicMappingsUpdate = dynamicMappingsUpdate;
     }
 
-    public UidField uid() {
+    public Field uid() {
         return this.uid;
+    }
+
+    public Field version() {
+        return version;
     }
 
     public String id() {
@@ -98,12 +99,12 @@ public class ParsedDocument {
         return this.documents;
     }
 
-    public Analyzer analyzer() {
-        return this.analyzer;
-    }
-
     public BytesReference source() {
         return this.source;
+    }
+
+    public void setSource(BytesReference source) {
+        this.source = source;
     }
 
     public ParsedDocument parent(String parent) {
@@ -116,12 +117,22 @@ public class ParsedDocument {
     }
 
     /**
-     * Has the parsed document caused mappings to be modified?
+     * Return dynamic updates to mappings or {@code null} if there were no
+     * updates to the mappings.
      */
-    public boolean mappingsModified() {
-        return mappingsModified;
+    public Mapping dynamicMappingsUpdate() {
+        return dynamicMappingsUpdate;
     }
 
+    public void addDynamicMappingsUpdate(Mapping update) {
+        if (dynamicMappingsUpdate == null) {
+            dynamicMappingsUpdate = update;
+        } else {
+            MapperUtils.merge(dynamicMappingsUpdate, update);
+        }
+    }
+
+    @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
         sb.append("Document ").append("uid[").append(uid).append("] doc [").append(documents).append("]");

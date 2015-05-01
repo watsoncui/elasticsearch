@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,29 +19,24 @@
 
 package org.elasticsearch.rest.action.count;
 
-import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.count.CountRequest;
 import org.elasticsearch.action.count.CountResponse;
-import org.elasticsearch.action.support.IgnoreIndices;
-import org.elasticsearch.action.support.broadcast.BroadcastOperationThreading;
+import org.elasticsearch.action.support.IndicesOptions;
+import org.elasticsearch.action.support.QuerySourceBuilder;
 import org.elasticsearch.client.Client;
-import org.elasticsearch.common.bytes.BytesReference;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.rest.*;
 import org.elasticsearch.rest.action.support.RestActions;
-import org.elasticsearch.rest.action.support.RestXContentBuilder;
-
-import java.io.IOException;
+import org.elasticsearch.rest.action.support.RestBuilderListener;
 
 import static org.elasticsearch.action.count.CountRequest.DEFAULT_MIN_SCORE;
+import static org.elasticsearch.search.internal.SearchContext.DEFAULT_TERMINATE_AFTER;
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
-import static org.elasticsearch.rest.RestStatus.BAD_REQUEST;
-import static org.elasticsearch.rest.RestStatus.OK;
 import static org.elasticsearch.rest.action.support.RestActions.buildBroadcastShardsHeader;
-import static org.elasticsearch.rest.action.support.RestActions.splitTypes;
 
 /**
  *
@@ -49,8 +44,8 @@ import static org.elasticsearch.rest.action.support.RestActions.splitTypes;
 public class RestCountAction extends BaseRestHandler {
 
     @Inject
-    public RestCountAction(Settings settings, Client client, RestController controller) {
-        super(settings, client);
+    public RestCountAction(Settings settings, RestController controller, Client client) {
+        super(settings, controller, client);
         controller.registerHandler(POST, "/_count", this);
         controller.registerHandler(GET, "/_count", this);
         controller.registerHandler(POST, "/{index}/_count", this);
@@ -60,70 +55,41 @@ public class RestCountAction extends BaseRestHandler {
     }
 
     @Override
-    public void handleRequest(final RestRequest request, final RestChannel channel) {
-        CountRequest countRequest = new CountRequest(RestActions.splitIndices(request.param("index")));
-        if (request.hasParam("ignore_indices")) {
-            countRequest.ignoreIndices(IgnoreIndices.fromString(request.param("ignore_indices")));
-        }
+    public void handleRequest(final RestRequest request, final RestChannel channel, final Client client) {
+        CountRequest countRequest = new CountRequest(Strings.splitStringByCommaToArray(request.param("index")));
+        countRequest.indicesOptions(IndicesOptions.fromRequest(request, countRequest.indicesOptions()));
         countRequest.listenerThreaded(false);
-        try {
-            BroadcastOperationThreading operationThreading = BroadcastOperationThreading.fromString(request.param("operation_threading"), BroadcastOperationThreading.SINGLE_THREAD);
-            if (operationThreading == BroadcastOperationThreading.NO_THREADS) {
-                // since we don't spawn, don't allow no_threads, but change it to a single thread
-                operationThreading = BroadcastOperationThreading.SINGLE_THREAD;
+        if (RestActions.hasBodyContent(request)) {
+            countRequest.source(RestActions.getRestContent(request));
+        } else {
+            QuerySourceBuilder querySourceBuilder = RestActions.parseQuerySource(request);
+            if (querySourceBuilder != null) {
+                countRequest.source(querySourceBuilder);
             }
-            countRequest.operationThreading(operationThreading);
-            if (request.hasContent()) {
-                countRequest.query(request.content(), request.contentUnsafe());
-            } else {
-                String source = request.param("source");
-                if (source != null) {
-                    countRequest.query(source);
-                } else {
-                    BytesReference querySource = RestActions.parseQuerySource(request);
-                    if (querySource != null) {
-                        countRequest.query(querySource, false);
-                    }
-                }
-            }
-            countRequest.routing(request.param("routing"));
-            countRequest.minScore(request.paramAsFloat("min_score", DEFAULT_MIN_SCORE));
-            countRequest.types(splitTypes(request.param("type")));
-            countRequest.preference(request.param("preference"));
-        } catch (Exception e) {
-            try {
-                XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
-                channel.sendResponse(new XContentRestResponse(request, BAD_REQUEST, builder.startObject().field("error", e.getMessage()).endObject()));
-            } catch (IOException e1) {
-                logger.error("Failed to send failure response", e1);
-            }
-            return;
         }
+        countRequest.routing(request.param("routing"));
+        countRequest.minScore(request.paramAsFloat("min_score", DEFAULT_MIN_SCORE));
+        countRequest.types(Strings.splitStringByCommaToArray(request.param("type")));
+        countRequest.preference(request.param("preference"));
 
-        client.count(countRequest, new ActionListener<CountResponse>() {
+        final int terminateAfter = request.paramAsInt("terminate_after", DEFAULT_TERMINATE_AFTER);
+        if (terminateAfter < 0) {
+            throw new IllegalArgumentException("terminateAfter must be > 0");
+        } else if (terminateAfter > 0) {
+            countRequest.terminateAfter(terminateAfter);
+        }
+        client.count(countRequest, new RestBuilderListener<CountResponse>(channel) {
             @Override
-            public void onResponse(CountResponse response) {
-                try {
-                    XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
-                    builder.startObject();
-                    builder.field("count", response.getCount());
-
-                    buildBroadcastShardsHeader(builder, response);
-
-                    builder.endObject();
-                    channel.sendResponse(new XContentRestResponse(request, OK, builder));
-                } catch (Exception e) {
-                    onFailure(e);
+            public RestResponse buildResponse(CountResponse response, XContentBuilder builder) throws Exception {
+                builder.startObject();
+                if (terminateAfter != DEFAULT_TERMINATE_AFTER) {
+                    builder.field("terminated_early", response.terminatedEarly());
                 }
-            }
+                builder.field("count", response.getCount());
+                buildBroadcastShardsHeader(builder, response);
 
-            @Override
-            public void onFailure(Throwable e) {
-                try {
-                    channel.sendResponse(new XContentThrowableRestResponse(request, e));
-                } catch (IOException e1) {
-                    logger.error("Failed to send failure response", e1);
-                }
+                builder.endObject();
+                return new BytesRestResponse(response.status(), builder);
             }
         });
     }

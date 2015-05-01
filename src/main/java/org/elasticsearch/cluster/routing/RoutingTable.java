@@ -1,11 +1,11 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this 
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,13 +19,15 @@
 
 package org.elasticsearch.cluster.routing;
 
+import com.carrotsearch.hppc.IntSet;
 import com.google.common.collect.*;
-import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.*;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.index.Index;
+import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.indices.IndexMissingException;
 
 import java.io.IOException;
@@ -38,10 +40,13 @@ import static com.google.common.collect.Maps.newHashMap;
 
 /**
  * Represents a global cluster-wide routing table for all indices including the
- * version of the current routing state. 
+ * version of the current routing state.
+ *
  * @see IndexRoutingTable
  */
-public class RoutingTable implements Iterable<IndexRoutingTable> {
+public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<RoutingTable> {
+
+    public static RoutingTable PROTO = builder().build();
 
     public static final RoutingTable EMPTY_ROUTING_TABLE = builder().build();
 
@@ -57,6 +62,7 @@ public class RoutingTable implements Iterable<IndexRoutingTable> {
 
     /**
      * Returns the version of the {@link RoutingTable}.
+     *
      * @return version of the {@link RoutingTable}
      */
     public long version() {
@@ -104,89 +110,77 @@ public class RoutingTable implements Iterable<IndexRoutingTable> {
         return validation;
     }
 
-    public List<ShardRouting> shardsWithState(ShardRoutingState... states) {
+    public List<ShardRouting> shardsWithState(ShardRoutingState state) {
         List<ShardRouting> shards = newArrayList();
         for (IndexRoutingTable indexRoutingTable : this) {
-            shards.addAll(indexRoutingTable.shardsWithState(states));
+            shards.addAll(indexRoutingTable.shardsWithState(state));
         }
         return shards;
     }
 
     /**
-     * All the shards (replicas) for the provided indices.
+     * All the shards (replicas) for all indices in this routing table.
      *
-     * @param indices The indices to return all the shards (replicas), can be <tt>null</tt> or empty array to indicate all indices
-     * @return All the shards matching the specific index
-     * @throws IndexMissingException If an index passed does not exists
+     * @return All the shards
      */
-    public List<ShardRouting> allShards(String... indices) throws IndexMissingException {
+    public List<ShardRouting> allShards() throws IndexMissingException {
         List<ShardRouting> shards = Lists.newArrayList();
-        if (indices == null || indices.length == 0) {
-            indices = indicesRouting.keySet().toArray(new String[indicesRouting.keySet().size()]);
-        }
+        String[] indices = indicesRouting.keySet().toArray(new String[indicesRouting.keySet().size()]);
         for (String index : indices) {
-            IndexRoutingTable indexRoutingTable = index(index);
-            if (indexRoutingTable == null) {
-                throw new IndexMissingException(new Index(index));
-            }
-            for (IndexShardRoutingTable indexShardRoutingTable : indexRoutingTable) {
-                for (ShardRouting shardRouting : indexShardRoutingTable) {
-                    shards.add(shardRouting);
-                }
-            }
+            List<ShardRouting> allShardsIndex = allShards(index);
+            shards.addAll(allShardsIndex);
         }
         return shards;
     }
 
     /**
-     * All the shards (primary + replicas) for the provided indices grouped (each group is a single element, consisting
-     * of the shard). This is handy for components that expect to get group iterators, but still want in some
-     * cases to iterate over all the shards (and not just one shard in replication group).
+     * All the shards (replicas) for the provided index.
      *
-     * @param indices The indices to return all the shards (replicas), can be <tt>null</tt> or empty array to indicate all indices
-     * @return All the shards grouped into a single shard element group each
-     * @throws IndexMissingException If an index passed does not exists
-     * @see IndexRoutingTable#groupByAllIt()
+     * @param index The index to return all the shards (replicas).
+     * @return All the shards matching the specific index
+     * @throws IndexMissingException If the index passed does not exists
      */
-    public GroupShardsIterator allShardsGrouped(String... indices) throws IndexMissingException {
-        // use list here since we need to maintain identity across shards
-        ArrayList<ShardIterator> set = new ArrayList<ShardIterator>();
-        if (indices == null || indices.length == 0) {
-            indices = indicesRouting.keySet().toArray(new String[indicesRouting.keySet().size()]);
+    public List<ShardRouting> allShards(String index) throws IndexMissingException {
+        List<ShardRouting> shards = Lists.newArrayList();
+        IndexRoutingTable indexRoutingTable = index(index);
+        if (indexRoutingTable == null) {
+            throw new IndexMissingException(new Index(index));
         }
-        for (String index : indices) {
-            IndexRoutingTable indexRoutingTable = index(index);
-            if (indexRoutingTable == null) {
-                continue;
-                // we simply ignore indices that don't exists (make sense for operations that use it currently)
-//                throw new IndexMissingException(new Index(index));
-            }
-            for (IndexShardRoutingTable indexShardRoutingTable : indexRoutingTable) {
-                for (ShardRouting shardRouting : indexShardRoutingTable) {
-                    set.add(shardRouting.shardsIt());
-                }
+        for (IndexShardRoutingTable indexShardRoutingTable : indexRoutingTable) {
+            for (ShardRouting shardRouting : indexShardRoutingTable) {
+                shards.add(shardRouting);
             }
         }
-        return new GroupShardsIterator(set);
+        return shards;
     }
 
     public GroupShardsIterator allActiveShardsGrouped(String[] indices, boolean includeEmpty) throws IndexMissingException {
+        return allActiveShardsGrouped(indices, includeEmpty, false);
+    }
+
+    /**
+     * Return GroupShardsIterator where each active shard routing has it's own shard iterator.
+     *
+     * @param includeEmpty             if true, a shard iterator will be added for non-assigned shards as well
+     * @param includeRelocationTargets if true, an <b>extra</b> shard iterator will be added for relocating shards. The extra
+     *                                 iterator contains a single ShardRouting pointing at the relocating target
+     */
+    public GroupShardsIterator allActiveShardsGrouped(String[] indices, boolean includeEmpty, boolean includeRelocationTargets) throws IndexMissingException {
         // use list here since we need to maintain identity across shards
-        ArrayList<ShardIterator> set = new ArrayList<ShardIterator>();
-        if (indices == null || indices.length == 0) {
-            indices = indicesRouting.keySet().toArray(new String[indicesRouting.keySet().size()]);
-        }
+        ArrayList<ShardIterator> set = new ArrayList<>();
         for (String index : indices) {
             IndexRoutingTable indexRoutingTable = index(index);
             if (indexRoutingTable == null) {
                 continue;
                 // we simply ignore indices that don't exists (make sense for operations that use it currently)
-//                throw new IndexMissingException(new Index(index));
             }
             for (IndexShardRoutingTable indexShardRoutingTable : indexRoutingTable) {
                 for (ShardRouting shardRouting : indexShardRoutingTable) {
                     if (shardRouting.active()) {
                         set.add(shardRouting.shardsIt());
+                        if (includeRelocationTargets && shardRouting.relocating()) {
+                            set.add(new PlainShardIterator(shardRouting.shardId(), ImmutableList.of(shardRouting.targetRoutingIfRelocating())));
+                        }
                     } else if (includeEmpty) { // we need this for counting properly, just make it an empty one
                         set.add(new PlainShardIterator(shardRouting.shardId(), ImmutableList.<ShardRouting>of()));
                     }
@@ -197,22 +191,32 @@ public class RoutingTable implements Iterable<IndexRoutingTable> {
     }
 
     public GroupShardsIterator allAssignedShardsGrouped(String[] indices, boolean includeEmpty) throws IndexMissingException {
+        return allAssignedShardsGrouped(indices, includeEmpty, false);
+    }
+
+    /**
+     * Return GroupShardsIterator where each assigned shard routing has it's own shard iterator.
+     *
+     * @param includeEmpty if true, a shard iterator will be added for non-assigned shards as well
+     * @param includeRelocationTargets if true, an <b>extra</b> shard iterator will be added for relocating shards. The extra
+     *                                 iterator contains a single ShardRouting pointing at the relocating target
+     */
+    public GroupShardsIterator allAssignedShardsGrouped(String[] indices, boolean includeEmpty, boolean includeRelocationTargets) throws IndexMissingException {
         // use list here since we need to maintain identity across shards
-        ArrayList<ShardIterator> set = new ArrayList<ShardIterator>();
-        if (indices == null || indices.length == 0) {
-            indices = indicesRouting.keySet().toArray(new String[indicesRouting.keySet().size()]);
-        }
+        ArrayList<ShardIterator> set = new ArrayList<>();
         for (String index : indices) {
             IndexRoutingTable indexRoutingTable = index(index);
             if (indexRoutingTable == null) {
                 continue;
                 // we simply ignore indices that don't exists (make sense for operations that use it currently)
-//                throw new IndexMissingException(new Index(index));
             }
             for (IndexShardRoutingTable indexShardRoutingTable : indexRoutingTable) {
                 for (ShardRouting shardRouting : indexShardRoutingTable) {
                     if (shardRouting.assignedToNode()) {
                         set.add(shardRouting.shardsIt());
+                        if (includeRelocationTargets && shardRouting.relocating()) {
+                            set.add(new PlainShardIterator(shardRouting.shardId(), ImmutableList.of(shardRouting.targetRoutingIfRelocating())));
+                        }
                     } else if (includeEmpty) { // we need this for counting properly, just make it an empty one
                         set.add(new PlainShardIterator(shardRouting.shardId(), ImmutableList.<ShardRouting>of()));
                     }
@@ -227,17 +231,14 @@ public class RoutingTable implements Iterable<IndexRoutingTable> {
      * of the primary shard). This is handy for components that expect to get group iterators, but still want in some
      * cases to iterate over all primary shards (and not just one shard in replication group).
      *
-     * @param indices The indices to return all the shards (replicas), can be <tt>null</tt> or empty array to indicate all indices
+     * @param indices The indices to return all the shards (replicas)
      * @return All the primary shards grouped into a single shard element group each
      * @throws IndexMissingException If an index passed does not exists
      * @see IndexRoutingTable#groupByAllIt()
      */
     public GroupShardsIterator activePrimaryShardsGrouped(String[] indices, boolean includeEmpty) throws IndexMissingException {
         // use list here since we need to maintain identity across shards
-        ArrayList<ShardIterator> set = new ArrayList<ShardIterator>();
-        if (indices == null || indices.length == 0) {
-            indices = indicesRouting.keySet().toArray(new String[indicesRouting.keySet().size()]);
-        }
+        ArrayList<ShardIterator> set = new ArrayList<>();
         for (String index : indices) {
             IndexRoutingTable indexRoutingTable = index(index);
             if (indexRoutingTable == null) {
@@ -255,22 +256,88 @@ public class RoutingTable implements Iterable<IndexRoutingTable> {
         return new GroupShardsIterator(set);
     }
 
+    @Override
+    public Diff<RoutingTable> diff(RoutingTable previousState) {
+        return new RoutingTableDiff(previousState, this);
+    }
+
+    @Override
+    public Diff<RoutingTable> readDiffFrom(StreamInput in) throws IOException {
+        return new RoutingTableDiff(in);
+    }
+
+    @Override
+    public RoutingTable readFrom(StreamInput in) throws IOException {
+        Builder builder = new Builder();
+        builder.version = in.readLong();
+        int size = in.readVInt();
+        for (int i = 0; i < size; i++) {
+            IndexRoutingTable index = IndexRoutingTable.Builder.readFrom(in);
+            builder.add(index);
+        }
+
+        return builder.build();
+    }
+
+    @Override
+    public void writeTo(StreamOutput out) throws IOException {
+        out.writeLong(version);
+        out.writeVInt(indicesRouting.size());
+        for (IndexRoutingTable index : indicesRouting.values()) {
+            index.writeTo(out);
+        }
+    }
+
+    private static class RoutingTableDiff implements Diff<RoutingTable> {
+
+        private final long version;
+
+        private final Diff<ImmutableMap<String, IndexRoutingTable>> indicesRouting;
+
+        public RoutingTableDiff(RoutingTable before, RoutingTable after) {
+            version = after.version;
+            indicesRouting = DiffableUtils.diff(before.indicesRouting, after.indicesRouting);
+        }
+
+        public RoutingTableDiff(StreamInput in) throws IOException {
+            version = in.readLong();
+            indicesRouting = DiffableUtils.readImmutableMapDiff(in, IndexRoutingTable.PROTO);
+        }
+
+        @Override
+        public RoutingTable apply(RoutingTable part) {
+            return new RoutingTable(version, indicesRouting.apply(part.indicesRouting));
+        }
+
+        @Override
+        public void writeTo(StreamOutput out) throws IOException {
+            out.writeLong(version);
+            indicesRouting.writeTo(out);
+        }
+    }
+
     public static Builder builder() {
         return new Builder();
+    }
+
+    public static Builder builder(RoutingTable routingTable) {
+        return new Builder(routingTable);
     }
 
     public static class Builder {
 
         private long version;
-
         private final Map<String, IndexRoutingTable> indicesRouting = newHashMap();
 
-        public Builder routingTable(RoutingTable routingTable) {
+        public Builder() {
+
+        }
+
+        public Builder(RoutingTable routingTable) {
             version = routingTable.version;
             for (IndexRoutingTable indexRoutingTable : routingTable) {
                 indicesRouting.put(indexRoutingTable.index(), indexRoutingTable);
             }
-            return this;
         }
 
         public Builder updateNodes(RoutingNodes routingNodes) {
@@ -305,6 +372,14 @@ public class RoutingTable implements Iterable<IndexRoutingTable> {
                 IndexShardRoutingTable refData = routingNodes.routingTable().index(shardRoutingEntry.index()).shard(shardRoutingEntry.id());
                 indexBuilder.addShard(refData, shardRoutingEntry);
             }
+
+            for (ShardId shardId : routingNodes.getShardsToClearPostAllocationFlag()) {
+                IndexRoutingTable.Builder indexRoutingBuilder = indexRoutingTableBuilders.get(shardId.index().name());
+                if (indexRoutingBuilder != null) {
+                    indexRoutingBuilder.clearPostAllocationFlag(shardId);
+                }
+            }
+
             for (IndexRoutingTable.Builder indexBuilder : indexRoutingTableBuilders.values()) {
                 add(indexBuilder);
             }
@@ -365,6 +440,20 @@ public class RoutingTable implements Iterable<IndexRoutingTable> {
             return this;
         }
 
+        public Builder addAsRestore(IndexMetaData indexMetaData, RestoreSource restoreSource) {
+            IndexRoutingTable.Builder indexRoutingBuilder = new IndexRoutingTable.Builder(indexMetaData.index())
+                    .initializeAsRestore(indexMetaData, restoreSource);
+            add(indexRoutingBuilder);
+            return this;
+        }
+
+        public Builder addAsNewRestore(IndexMetaData indexMetaData, RestoreSource restoreSource, IntSet ignoreShards) {
+            IndexRoutingTable.Builder indexRoutingBuilder = new IndexRoutingTable.Builder(indexMetaData.index())
+                    .initializeAsNewRestore(indexMetaData, restoreSource, ignoreShards);
+            add(indexRoutingBuilder);
+            return this;
+        }
+
         public Builder add(IndexRoutingTable indexRoutingTable) {
             indexRoutingTable.validate();
             indicesRouting.put(indexRoutingTable.index(), indexRoutingTable);
@@ -373,6 +462,11 @@ public class RoutingTable implements Iterable<IndexRoutingTable> {
 
         public Builder add(IndexRoutingTable.Builder indexRoutingTableBuilder) {
             add(indexRoutingTableBuilder.build());
+            return this;
+        }
+
+        public Builder indicesRouting(ImmutableMap<String, IndexRoutingTable> indicesRouting) {
+            this.indicesRouting.putAll(indicesRouting);
             return this;
         }
 
@@ -395,33 +489,16 @@ public class RoutingTable implements Iterable<IndexRoutingTable> {
         }
 
         public static RoutingTable readFrom(StreamInput in) throws IOException {
-            Builder builder = new Builder();
-            builder.version = in.readLong();
-            int size = in.readVInt();
-            for (int i = 0; i < size; i++) {
-                IndexRoutingTable index = IndexRoutingTable.Builder.readFrom(in);
-                builder.add(index);
-            }
-
-            return builder.build();
-        }
-
-        public static void writeTo(RoutingTable table, StreamOutput out) throws IOException {
-            out.writeLong(table.version);
-            out.writeVInt(table.indicesRouting.size());
-            for (IndexRoutingTable index : table.indicesRouting.values()) {
-                IndexRoutingTable.Builder.writeTo(index, out);
-            }
+            return PROTO.readFrom(in);
         }
     }
 
     public String prettyPrint() {
-        StringBuilder sb = new StringBuilder("routing_table:\n");
+        StringBuilder sb = new StringBuilder("routing_table (version ").append(version).append("):\n");
         for (Map.Entry<String, IndexRoutingTable> entry : indicesRouting.entrySet()) {
             sb.append(entry.getValue().prettyPrint()).append('\n');
         }
         return sb.toString();
     }
-
 
 }

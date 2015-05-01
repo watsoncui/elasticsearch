@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,8 +19,9 @@
 
 package org.elasticsearch.action.admin.indices.optimize;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ShardOperationFailedException;
+import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.DefaultShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.BroadcastShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.TransportBroadcastOperationAction;
@@ -32,8 +33,7 @@ import org.elasticsearch.cluster.routing.GroupShardsIterator;
 import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.index.engine.Engine;
-import org.elasticsearch.index.shard.service.IndexShard;
+import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
@@ -50,33 +50,12 @@ public class TransportOptimizeAction extends TransportBroadcastOperationAction<O
 
     private final IndicesService indicesService;
 
-    private final Object optimizeMutex = new Object();
-
     @Inject
     public TransportOptimizeAction(Settings settings, ThreadPool threadPool, ClusterService clusterService,
-                                   TransportService transportService, IndicesService indicesService) {
-        super(settings, threadPool, clusterService, transportService);
+                                   TransportService transportService, IndicesService indicesService, ActionFilters actionFilters) {
+        super(settings, OptimizeAction.NAME, threadPool, clusterService, transportService, actionFilters,
+                OptimizeRequest.class, ShardOptimizeRequest.class, ThreadPool.Names.OPTIMIZE);
         this.indicesService = indicesService;
-    }
-
-    @Override
-    protected String executor() {
-        return ThreadPool.Names.MERGE;
-    }
-
-    @Override
-    protected String transportAction() {
-        return OptimizeAction.NAME;
-    }
-
-    @Override
-    protected OptimizeRequest newRequest() {
-        return new OptimizeRequest();
-    }
-
-    @Override
-    protected boolean ignoreNonActiveExceptions() {
-        return true;
     }
 
     @Override
@@ -102,13 +81,8 @@ public class TransportOptimizeAction extends TransportBroadcastOperationAction<O
     }
 
     @Override
-    protected ShardOptimizeRequest newShardRequest() {
-        return new ShardOptimizeRequest();
-    }
-
-    @Override
-    protected ShardOptimizeRequest newShardRequest(ShardRouting shard, OptimizeRequest request) {
-        return new ShardOptimizeRequest(shard.index(), shard.id(), request);
+    protected ShardOptimizeRequest newShardRequest(int numShards, ShardRouting shard, OptimizeRequest request) {
+        return new ShardOptimizeRequest(shard.shardId(), request);
     }
 
     @Override
@@ -117,18 +91,10 @@ public class TransportOptimizeAction extends TransportBroadcastOperationAction<O
     }
 
     @Override
-    protected ShardOptimizeResponse shardOperation(ShardOptimizeRequest request) throws ElasticSearchException {
-        synchronized (optimizeMutex) {
-            IndexShard indexShard = indicesService.indexServiceSafe(request.index()).shardSafe(request.shardId());
-            indexShard.optimize(new Engine.Optimize()
-                    .waitForMerge(request.waitForMerge())
-                    .maxNumSegments(request.maxNumSegments())
-                    .onlyExpungeDeletes(request.onlyExpungeDeletes())
-                    .flush(request.flush())
-                    .refresh(request.refresh())
-            );
-            return new ShardOptimizeResponse(request.index(), request.shardId());
-        }
+    protected ShardOptimizeResponse shardOperation(ShardOptimizeRequest request) {
+        IndexShard indexShard = indicesService.indexServiceSafe(request.shardId().getIndex()).shardSafe(request.shardId().id());
+        indexShard.optimize(request.optimizeRequest());
+        return new ShardOptimizeResponse(request.shardId());
     }
 
     /**
@@ -141,11 +107,11 @@ public class TransportOptimizeAction extends TransportBroadcastOperationAction<O
 
     @Override
     protected ClusterBlockException checkGlobalBlock(ClusterState state, OptimizeRequest request) {
-        return state.blocks().globalBlockedException(ClusterBlockLevel.METADATA);
+        return state.blocks().globalBlockedException(ClusterBlockLevel.METADATA_WRITE);
     }
 
     @Override
     protected ClusterBlockException checkRequestBlock(ClusterState state, OptimizeRequest request, String[] concreteIndices) {
-        return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA, concreteIndices);
+        return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA_WRITE, concreteIndices);
     }
 }

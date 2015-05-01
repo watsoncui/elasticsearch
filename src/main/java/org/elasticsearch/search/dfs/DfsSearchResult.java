@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,20 +19,19 @@
 
 package org.elasticsearch.search.dfs;
 
-import gnu.trove.map.TMap;
+import com.carrotsearch.hppc.ObjectObjectOpenHashMap;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.CollectionStatistics;
 import org.apache.lucene.search.TermStatistics;
 import org.apache.lucene.util.BytesRef;
+import org.elasticsearch.common.collect.HppcMaps;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.trove.ExtTHashMap;
 import org.elasticsearch.search.SearchPhaseResult;
 import org.elasticsearch.search.SearchShardTarget;
 import org.elasticsearch.transport.TransportResponse;
 
 import java.io.IOException;
-import java.util.Map;
 
 /**
  *
@@ -46,7 +45,7 @@ public class DfsSearchResult extends TransportResponse implements SearchPhaseRes
     private long id;
     private Term[] terms;
     private TermStatistics[] termStatistics;
-    private TMap<String, CollectionStatistics> fieldStatistics = new ExtTHashMap<String, CollectionStatistics>();
+    private ObjectObjectOpenHashMap<String, CollectionStatistics> fieldStatistics = HppcMaps.newNoNullKeysMap();
     private int maxDoc;
 
     public DfsSearchResult() {
@@ -58,10 +57,12 @@ public class DfsSearchResult extends TransportResponse implements SearchPhaseRes
         this.shardTarget = shardTarget;
     }
 
+    @Override
     public long id() {
         return this.id;
     }
 
+    @Override
     public SearchShardTarget shardTarget() {
         return shardTarget;
     }
@@ -86,7 +87,7 @@ public class DfsSearchResult extends TransportResponse implements SearchPhaseRes
         return this;
     }
 
-    public DfsSearchResult fieldStatistics(TMap<String, CollectionStatistics> fieldStatistics) {
+    public DfsSearchResult fieldStatistics(ObjectObjectOpenHashMap<String, CollectionStatistics> fieldStatistics) {
         this.fieldStatistics = fieldStatistics;
         return this;
     }
@@ -99,7 +100,7 @@ public class DfsSearchResult extends TransportResponse implements SearchPhaseRes
         return termStatistics;
     }
 
-    public TMap<String, CollectionStatistics> fieldStatistics() {
+    public ObjectObjectOpenHashMap<String, CollectionStatistics> fieldStatistics() {
         return fieldStatistics;
     }
 
@@ -113,7 +114,6 @@ public class DfsSearchResult extends TransportResponse implements SearchPhaseRes
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
         id = in.readLong();
-//        shardTarget = readSearchShardTarget(in);
         int termsSize = in.readVInt();
         if (termsSize == 0) {
             terms = EMPTY_TERMS;
@@ -123,52 +123,119 @@ public class DfsSearchResult extends TransportResponse implements SearchPhaseRes
                 terms[i] = new Term(in.readString(), in.readBytesRef());
             }
         }
-        int termsStatsSize = in.readVInt();
-        if (termsStatsSize == 0) {
-            termStatistics = EMPTY_TERM_STATS;
-        } else {
-            termStatistics = new TermStatistics[termsStatsSize];
-            for (int i = 0; i < termStatistics.length; i++) {
-                BytesRef term = terms[i].bytes();
-                long docFreq = in.readVLong();
-                long totalTermFreq = in.readVLong();
-                termStatistics[i] = new TermStatistics(term, docFreq, totalTermFreq);
-            }
-        }
-        int numFieldStatistics = in.readVInt();
-        for (int i = 0; i < numFieldStatistics; i++) {
-            String field = in.readString();
-            CollectionStatistics stats = new CollectionStatistics(field, in.readVLong(), in.readVLong(), in.readVLong(), in.readVLong());
-            fieldStatistics.put(field, stats);
-        }
+        this.termStatistics = readTermStats(in, terms);
+        readFieldStats(in, fieldStatistics);
+        
 
         maxDoc = in.readVInt();
     }
 
-    @Override
+ 
+  @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
         out.writeLong(id);
-//        shardTarget.writeTo(out);
         out.writeVInt(terms.length);
         for (Term term : terms) {
             out.writeString(term.field());
             out.writeBytesRef(term.bytes());
         }
+        writeTermStats(out, termStatistics);
+        writeFieldStats(out, fieldStatistics);
+        out.writeVInt(maxDoc);
+    }
+    
+    public static void writeFieldStats(StreamOutput out, ObjectObjectOpenHashMap<String, CollectionStatistics> fieldStatistics) throws IOException {
+        out.writeVInt(fieldStatistics.size());
+        final boolean[] states = fieldStatistics.allocated;
+        Object[] keys = fieldStatistics.keys;
+        Object[] values = fieldStatistics.values;
+        for (int i = 0; i < states.length; i++) {
+            if (states[i]) {
+                out.writeString((String) keys[i]);
+                CollectionStatistics statistics = (CollectionStatistics) values[i];
+                assert statistics.maxDoc() >= 0;
+                out.writeVLong(statistics.maxDoc());
+                out.writeVLong(addOne(statistics.docCount()));
+                out.writeVLong(addOne(statistics.sumTotalTermFreq()));
+                out.writeVLong(addOne(statistics.sumDocFreq()));
+            }
+        }
+    }
+    
+    public static void writeTermStats(StreamOutput out, TermStatistics[] termStatistics) throws IOException {
         out.writeVInt(termStatistics.length);
         for (TermStatistics termStatistic : termStatistics) {
-            out.writeVLong(termStatistic.docFreq());
-            out.writeVLong(termStatistic.totalTermFreq());
+            writeSingleTermStats(out, termStatistic);
         }
-        out.writeVInt(fieldStatistics.size());
-        for (Map.Entry<String, CollectionStatistics> entry : fieldStatistics.entrySet()) {
-            out.writeString(entry.getKey());
-            out.writeVLong(entry.getValue().maxDoc());
-            out.writeVLong(entry.getValue().docCount());
-            out.writeVLong(entry.getValue().sumTotalTermFreq());
-            out.writeVLong(entry.getValue().sumDocFreq());
+    }
+    
+    public  static void writeSingleTermStats(StreamOutput out, TermStatistics termStatistic) throws IOException {
+        assert termStatistic.docFreq() >= 0;
+        out.writeVLong(termStatistic.docFreq());
+        out.writeVLong(addOne(termStatistic.totalTermFreq()));        
+    }
+    
+    public static ObjectObjectOpenHashMap<String, CollectionStatistics> readFieldStats(StreamInput in) throws IOException {
+        return readFieldStats(in, null);
+    }
+
+    public static ObjectObjectOpenHashMap<String, CollectionStatistics> readFieldStats(StreamInput in, ObjectObjectOpenHashMap<String, CollectionStatistics> fieldStatistics) throws IOException {
+        final int numFieldStatistics = in.readVInt();
+        if (fieldStatistics == null) {
+            fieldStatistics = HppcMaps.newNoNullKeysMap(numFieldStatistics);
         }
-        out.writeVInt(maxDoc);
+        for (int i = 0; i < numFieldStatistics; i++) {
+            final String field = in.readString();
+            assert field != null;
+            final long maxDoc = in.readVLong();
+            final long docCount = subOne(in.readVLong());
+            final long sumTotalTermFreq = subOne(in.readVLong());
+            final long sumDocFreq = subOne(in.readVLong());
+            CollectionStatistics stats = new CollectionStatistics(field, maxDoc, docCount, sumTotalTermFreq, sumDocFreq);
+            fieldStatistics.put(field, stats);
+        }
+        return fieldStatistics;
+    }
+
+    public static TermStatistics[] readTermStats(StreamInput in, Term[] terms) throws IOException {
+        int termsStatsSize = in.readVInt();
+        final TermStatistics[] termStatistics;
+        if (termsStatsSize == 0) {
+            termStatistics = EMPTY_TERM_STATS;
+        } else {
+            termStatistics = new TermStatistics[termsStatsSize];
+            assert terms.length == termsStatsSize;
+            for (int i = 0; i < termStatistics.length; i++) {
+                BytesRef term = terms[i].bytes();
+                final long docFreq = in.readVLong();
+                assert docFreq >= 0;
+                final long totalTermFreq = subOne(in.readVLong());
+                termStatistics[i] = new TermStatistics(term, docFreq, totalTermFreq);
+            }
+        }
+        return termStatistics;
+    }
+
+    
+    /*
+     * optional statistics are set to -1 in lucene by default.
+     * Since we are using var longs to encode values we add one to each value
+     * to ensure we don't waste space and don't add negative values.
+     */
+    public static long addOne(long value) {
+        assert value + 1 >= 0;
+        return value + 1;
+    }
+    
+    
+    /*
+     * See #addOne this just subtracting one and asserts that the actual value
+     * is positive.
+     */
+    public static long subOne(long value) {
+        assert value >= 0;
+        return value - 1;
     }
 
 }

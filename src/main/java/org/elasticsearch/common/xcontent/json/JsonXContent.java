@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -46,6 +46,7 @@ public class JsonXContent implements XContent {
         jsonFactory.configure(JsonParser.Feature.ALLOW_UNQUOTED_FIELD_NAMES, true);
         jsonFactory.configure(JsonGenerator.Feature.QUOTE_FIELD_NAMES, true);
         jsonFactory.configure(JsonParser.Feature.ALLOW_COMMENTS, true);
+        jsonFactory.configure(JsonFactory.Feature.FAIL_ON_SYMBOL_HASH_OVERFLOW, false); // this trips on many mappings now...
         jsonXContent = new JsonXContent();
     }
 
@@ -64,32 +65,32 @@ public class JsonXContent implements XContent {
 
     @Override
     public XContentGenerator createGenerator(OutputStream os) throws IOException {
-        return new JsonXContentGenerator(jsonFactory.createJsonGenerator(os, JsonEncoding.UTF8));
+        return new JsonXContentGenerator(jsonFactory.createGenerator(os, JsonEncoding.UTF8));
     }
 
     @Override
     public XContentGenerator createGenerator(Writer writer) throws IOException {
-        return new JsonXContentGenerator(jsonFactory.createJsonGenerator(writer));
+        return new JsonXContentGenerator(jsonFactory.createGenerator(writer));
     }
 
     @Override
     public XContentParser createParser(String content) throws IOException {
-        return new JsonXContentParser(jsonFactory.createJsonParser(new FastStringReader(content)));
+        return new JsonXContentParser(jsonFactory.createParser(new FastStringReader(content)));
     }
 
     @Override
     public XContentParser createParser(InputStream is) throws IOException {
-        return new JsonXContentParser(jsonFactory.createJsonParser(is));
+        return new JsonXContentParser(jsonFactory.createParser(is));
     }
 
     @Override
     public XContentParser createParser(byte[] data) throws IOException {
-        return new JsonXContentParser(jsonFactory.createJsonParser(data));
+        return new JsonXContentParser(jsonFactory.createParser(data));
     }
 
     @Override
     public XContentParser createParser(byte[] data, int offset, int length) throws IOException {
-        return new JsonXContentParser(jsonFactory.createJsonParser(data, offset, length));
+        return new JsonXContentParser(jsonFactory.createParser(data, offset, length));
     }
 
     @Override
@@ -102,6 +103,6 @@ public class JsonXContent implements XContent {
 
     @Override
     public XContentParser createParser(Reader reader) throws IOException {
-        return new JsonXContentParser(jsonFactory.createJsonParser(reader));
+        return new JsonXContentParser(jsonFactory.createParser(reader));
     }
 }

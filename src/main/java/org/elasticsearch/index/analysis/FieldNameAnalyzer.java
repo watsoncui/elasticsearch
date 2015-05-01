@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,27 +19,32 @@
 
 package org.elasticsearch.index.analysis;
 
-import com.google.common.collect.ImmutableMap;
 import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.analysis.AnalyzerWrapper;
+import org.apache.lucene.analysis.DelegatingAnalyzerWrapper;
+import org.elasticsearch.common.collect.CopyOnWriteHashMap;
 
+import java.util.Collection;
 import java.util.Map;
 
 /**
  *
  */
-public final class FieldNameAnalyzer extends AnalyzerWrapper {
+public final class FieldNameAnalyzer extends DelegatingAnalyzerWrapper {
 
-    private final ImmutableMap<String, Analyzer> analyzers;
-
+    private final CopyOnWriteHashMap<String, Analyzer> analyzers;
     private final Analyzer defaultAnalyzer;
 
+    public FieldNameAnalyzer(Analyzer defaultAnalyzer) {
+        this(new CopyOnWriteHashMap<String, Analyzer>(), defaultAnalyzer);
+    }
+
     public FieldNameAnalyzer(Map<String, Analyzer> analyzers, Analyzer defaultAnalyzer) {
-        this.analyzers = ImmutableMap.copyOf(analyzers);
+        super(Analyzer.PER_FIELD_REUSE_STRATEGY);
+        this.analyzers = CopyOnWriteHashMap.copyOf(analyzers);
         this.defaultAnalyzer = defaultAnalyzer;
     }
 
-    public ImmutableMap<String, Analyzer> analyzers() {
+    public Map<String, Analyzer> analyzers() {
         return analyzers;
     }
 
@@ -47,14 +52,10 @@ public final class FieldNameAnalyzer extends AnalyzerWrapper {
         return defaultAnalyzer;
     }
 
+    /** NOTE: public so MapperAnalyzer can invoke: */
     @Override
-    protected Analyzer getWrappedAnalyzer(String fieldName) {
+    public Analyzer getWrappedAnalyzer(String fieldName) {
         return getAnalyzer(fieldName);
-    }
-
-    @Override
-    protected TokenStreamComponents wrapComponents(String fieldName, TokenStreamComponents components) {
-        return components;
     }
 
     private Analyzer getAnalyzer(String name) {
@@ -64,4 +65,18 @@ public final class FieldNameAnalyzer extends AnalyzerWrapper {
         }
         return defaultAnalyzer;
     }
+
+    /**
+     * Return a new instance that contains the union of this and of the provided analyzers.
+     */
+    public FieldNameAnalyzer copyAndAddAll(Collection<? extends Map.Entry<String, Analyzer>> mappers) {
+        CopyOnWriteHashMap<String, Analyzer> analyzers = this.analyzers;
+        for (Map.Entry<String, Analyzer> entry : mappers) {
+            if (entry.getValue() != null) {
+                analyzers = analyzers.copyAndPut(entry.getKey(), entry.getValue());
+            }
+        }
+        return new FieldNameAnalyzer(analyzers, defaultAnalyzer);
+    }
+
 }

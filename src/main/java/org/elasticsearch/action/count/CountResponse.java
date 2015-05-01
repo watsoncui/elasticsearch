@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,30 +19,30 @@
 
 package org.elasticsearch.action.count;
 
+import java.io.IOException;
+import java.util.List;
 import org.elasticsearch.action.ShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.BroadcastOperationResponse;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-
-import java.io.IOException;
-import java.util.List;
+import org.elasticsearch.rest.RestStatus;
 
 /**
  * The response of the count action.
- *
- *
  */
 public class CountResponse extends BroadcastOperationResponse {
 
+    private boolean terminatedEarly;
     private long count;
 
     CountResponse() {
 
     }
 
-    CountResponse(long count, int totalShards, int successfulShards, int failedShards, List<ShardOperationFailedException> shardFailures) {
+    CountResponse(long count, boolean hasTerminatedEarly, int totalShards, int successfulShards, int failedShards, List<ShardOperationFailedException> shardFailures) {
         super(totalShards, successfulShards, failedShards, shardFailures);
         this.count = count;
+        this.terminatedEarly = hasTerminatedEarly;
     }
 
     /**
@@ -52,15 +52,28 @@ public class CountResponse extends BroadcastOperationResponse {
         return count;
     }
 
+    /**
+     * True if the request has been terminated early due to enough count
+     */
+    public boolean terminatedEarly() {
+        return this.terminatedEarly;
+    }
+
+    public RestStatus status() {
+        return RestStatus.status(getSuccessfulShards(), getTotalShards(), getShardFailures());
+    }
+
     @Override
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
         count = in.readVLong();
+        terminatedEarly = in.readBoolean();
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
         out.writeVLong(count);
+        out.writeBoolean(terminatedEarly);
     }
 }

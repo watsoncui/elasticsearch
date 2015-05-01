@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,8 +19,9 @@
 
 package org.elasticsearch.action.admin.indices.cache.clear;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ShardOperationFailedException;
+import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.DefaultShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.BroadcastShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.TransportBroadcastOperationAction;
@@ -32,9 +33,11 @@ import org.elasticsearch.cluster.routing.GroupShardsIterator;
 import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.index.service.IndexService;
+import org.elasticsearch.index.IndexService;
+import org.elasticsearch.index.mapper.internal.ParentFieldMapper;
+import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.indices.IndicesService;
-import org.elasticsearch.indices.cache.filter.terms.IndicesTermsFilterCache;
+import org.elasticsearch.indices.cache.query.IndicesQueryCache;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
@@ -49,34 +52,16 @@ import static com.google.common.collect.Lists.newArrayList;
 public class TransportClearIndicesCacheAction extends TransportBroadcastOperationAction<ClearIndicesCacheRequest, ClearIndicesCacheResponse, ShardClearIndicesCacheRequest, ShardClearIndicesCacheResponse> {
 
     private final IndicesService indicesService;
-    private final IndicesTermsFilterCache termsFilterCache;
+    private final IndicesQueryCache indicesQueryCache;
 
     @Inject
     public TransportClearIndicesCacheAction(Settings settings, ThreadPool threadPool, ClusterService clusterService,
-                                            TransportService transportService, IndicesService indicesService, IndicesTermsFilterCache termsFilterCache) {
-        super(settings, threadPool, clusterService, transportService);
+                                            TransportService transportService, IndicesService indicesService,
+                                            IndicesQueryCache indicesQueryCache, ActionFilters actionFilters) {
+        super(settings, ClearIndicesCacheAction.NAME, threadPool, clusterService, transportService, actionFilters,
+                ClearIndicesCacheRequest.class, ShardClearIndicesCacheRequest.class, ThreadPool.Names.MANAGEMENT);
         this.indicesService = indicesService;
-        this.termsFilterCache = termsFilterCache;
-    }
-
-    @Override
-    protected String executor() {
-        return ThreadPool.Names.MANAGEMENT;
-    }
-
-    @Override
-    protected String transportAction() {
-        return ClearIndicesCacheAction.NAME;
-    }
-
-    @Override
-    protected ClearIndicesCacheRequest newRequest() {
-        return new ClearIndicesCacheRequest();
-    }
-
-    @Override
-    protected boolean ignoreNonActiveExceptions() {
-        return true;
+        this.indicesQueryCache = indicesQueryCache;
     }
 
     @Override
@@ -102,13 +87,8 @@ public class TransportClearIndicesCacheAction extends TransportBroadcastOperatio
     }
 
     @Override
-    protected ShardClearIndicesCacheRequest newShardRequest() {
-        return new ShardClearIndicesCacheRequest();
-    }
-
-    @Override
-    protected ShardClearIndicesCacheRequest newShardRequest(ShardRouting shard, ClearIndicesCacheRequest request) {
-        return new ShardClearIndicesCacheRequest(shard.index(), shard.id(), request);
+    protected ShardClearIndicesCacheRequest newShardRequest(int numShards, ShardRouting shard, ClearIndicesCacheRequest request) {
+        return new ShardClearIndicesCacheRequest(shard.shardId(), request);
     }
 
     @Override
@@ -117,21 +97,18 @@ public class TransportClearIndicesCacheAction extends TransportBroadcastOperatio
     }
 
     @Override
-    protected ShardClearIndicesCacheResponse shardOperation(ShardClearIndicesCacheRequest request) throws ElasticSearchException {
-        IndexService service = indicesService.indexService(request.index());
+    protected ShardClearIndicesCacheResponse shardOperation(ShardClearIndicesCacheRequest request) {
+        IndexService service = indicesService.indexService(request.shardId().getIndex());
         if (service != null) {
-            // we always clear the query cache
-            service.cache().queryParserCache().clear();
+            IndexShard shard = service.shard(request.shardId().id());
             boolean clearedAtLeastOne = false;
             if (request.filterCache()) {
                 clearedAtLeastOne = true;
                 service.cache().filter().clear("api");
-                termsFilterCache.clear("api");
             }
             if (request.filterKeys() != null && request.filterKeys().length > 0) {
                 clearedAtLeastOne = true;
                 service.cache().filter().clear("api", request.filterKeys());
-                termsFilterCache.clear("api", request.filterKeys());
             }
             if (request.fieldDataCache()) {
                 clearedAtLeastOne = true;
@@ -143,9 +120,18 @@ public class TransportClearIndicesCacheAction extends TransportBroadcastOperatio
                     }
                 }
             }
+            if (request.queryCache()) {
+                clearedAtLeastOne = true;
+                indicesQueryCache.clear(shard);
+            }
+            if (request.recycler()) {
+                logger.debug("Clear CacheRecycler on index [{}]", service.index());
+                clearedAtLeastOne = true;
+                // cacheRecycler.clear();
+            }
             if (request.idCache()) {
                 clearedAtLeastOne = true;
-                service.cache().idCache().clear();
+                service.fieldData().clearField(ParentFieldMapper.NAME);
             }
             if (!clearedAtLeastOne) {
                 if (request.fields() != null && request.fields().length > 0) {
@@ -155,12 +141,12 @@ public class TransportClearIndicesCacheAction extends TransportBroadcastOperatio
                     }
                 } else {
                     service.cache().clear("api");
-                    termsFilterCache.clear("api");
+                    service.fieldData().clear();
+                    indicesQueryCache.clear(shard);
                 }
             }
-            service.cache().invalidateStatsCache();
         }
-        return new ShardClearIndicesCacheResponse(request.index(), request.shardId());
+        return new ShardClearIndicesCacheResponse(request.shardId());
     }
 
     /**
@@ -173,12 +159,12 @@ public class TransportClearIndicesCacheAction extends TransportBroadcastOperatio
 
     @Override
     protected ClusterBlockException checkGlobalBlock(ClusterState state, ClearIndicesCacheRequest request) {
-        return state.blocks().globalBlockedException(ClusterBlockLevel.METADATA);
+        return state.blocks().globalBlockedException(ClusterBlockLevel.METADATA_WRITE);
     }
 
     @Override
     protected ClusterBlockException checkRequestBlock(ClusterState state, ClearIndicesCacheRequest request, String[] concreteIndices) {
-        return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA, concreteIndices);
+        return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA_WRITE, concreteIndices);
     }
 
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,9 +19,9 @@
 
 package org.elasticsearch.common.regex;
 
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
 import org.elasticsearch.common.Strings;
 
+import java.util.Locale;
 import java.util.regex.Pattern;
 
 /**
@@ -30,10 +30,20 @@ import java.util.regex.Pattern;
 public class Regex {
 
     /**
+     * This Regex / {@link Pattern} flag is supported from Java 7 on.
+     * If set on a Java6 JVM the flag will be ignored.
+     */
+    public static final int UNICODE_CHARACTER_CLASS = 0x100; // supported in JAVA7
+
+    /**
      * Is the str a simple match pattern.
      */
     public static boolean isSimpleMatchPattern(String str) {
         return str.indexOf('*') != -1;
+    }
+
+    public static boolean isMatchAllPattern(String str) {
+        return str.equals("*");
     }
 
     /**
@@ -60,6 +70,9 @@ public class Regex {
             int nextIndex = pattern.indexOf('*', firstIndex + 1);
             if (nextIndex == -1) {
                 return str.endsWith(pattern.substring(1));
+            } else if (nextIndex == 1) {
+                // Double wildcard "**" - skipping the first "*"
+                return simpleMatch(pattern.substring(1), str);
             }
             String part = pattern.substring(1, nextIndex);
             int partIndex = str.indexOf(part);
@@ -96,6 +109,19 @@ public class Regex {
         return false;
     }
 
+    public static boolean simpleMatch(String[] patterns, String[] types) {
+        if (patterns != null && types != null) {
+            for (String type : types) {
+                for (String pattern : patterns) {
+                    if (simpleMatch(pattern, type)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     public static Pattern compile(String regex, String flags) {
         int pFlags = flags == null ? 0 : flagsFromString(flags);
         return Pattern.compile(regex, pFlags);
@@ -107,24 +133,27 @@ public class Regex {
             if (s.isEmpty()) {
                 continue;
             }
-            if ("CASE_INSENSITIVE".equalsIgnoreCase(s)) {
+            s = s.toUpperCase(Locale.ROOT);
+            if ("CASE_INSENSITIVE".equals(s)) {
                 pFlags |= Pattern.CASE_INSENSITIVE;
-            } else if ("MULTILINE".equalsIgnoreCase(s)) {
+            } else if ("MULTILINE".equals(s)) {
                 pFlags |= Pattern.MULTILINE;
-            } else if ("DOTALL".equalsIgnoreCase(s)) {
+            } else if ("DOTALL".equals(s)) {
                 pFlags |= Pattern.DOTALL;
-            } else if ("UNICODE_CASE".equalsIgnoreCase(s)) {
+            } else if ("UNICODE_CASE".equals(s)) {
                 pFlags |= Pattern.UNICODE_CASE;
-            } else if ("CANON_EQ".equalsIgnoreCase(s)) {
+            } else if ("CANON_EQ".equals(s)) {
                 pFlags |= Pattern.CANON_EQ;
-            } else if ("UNIX_LINES".equalsIgnoreCase(s)) {
+            } else if ("UNIX_LINES".equals(s)) {
                 pFlags |= Pattern.UNIX_LINES;
-            } else if ("LITERAL".equalsIgnoreCase(s)) {
+            } else if ("LITERAL".equals(s)) {
                 pFlags |= Pattern.LITERAL;
-            } else if ("COMMENTS".equalsIgnoreCase(s)) {
+            } else if ("COMMENTS".equals(s)) {
                 pFlags |= Pattern.COMMENTS;
+            } else if ("UNICODE_CHAR_CLASS".equals(s)) {
+                pFlags |= UNICODE_CHARACTER_CLASS;
             } else {
-                throw new ElasticSearchIllegalArgumentException("Unknown regex flag [" + s + "]");
+                throw new IllegalArgumentException("Unknown regex flag [" + s + "]");
             }
         }
         return pFlags;
@@ -155,6 +184,9 @@ public class Regex {
         }
         if ((flags & Pattern.COMMENTS) != 0) {
             sb.append("COMMENTS|");
+        }
+        if ((flags & UNICODE_CHARACTER_CLASS) != 0) {
+            sb.append("UNICODE_CHAR_CLASS|");
         }
         return sb.toString();
     }

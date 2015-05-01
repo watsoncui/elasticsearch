@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -27,6 +27,7 @@ import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentBuilderString;
+import org.elasticsearch.common.xcontent.XContentFactory;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -57,6 +58,10 @@ public class SearchStats implements Streamable, ToXContent {
             this.fetchCount = fetchCount;
             this.fetchTimeInMillis = fetchTimeInMillis;
             this.fetchCurrent = fetchCurrent;
+        }
+
+        public Stats(Stats stats) {
+            this(stats.queryCount, stats.queryTimeInMillis, stats.queryCurrent, stats.fetchCount, stats.fetchTimeInMillis, stats.fetchCurrent);
         }
 
         public void add(Stats stats) {
@@ -133,20 +138,19 @@ public class SearchStats implements Streamable, ToXContent {
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
             builder.field(Fields.QUERY_TOTAL, queryCount);
-            builder.field(Fields.QUERY_TIME, getQueryTime().toString());
-            builder.field(Fields.QUERY_TIME_IN_MILLIS, queryTimeInMillis);
+            builder.timeValueField(Fields.QUERY_TIME_IN_MILLIS, Fields.QUERY_TIME, queryTimeInMillis);
             builder.field(Fields.QUERY_CURRENT, queryCurrent);
 
             builder.field(Fields.FETCH_TOTAL, fetchCount);
-            builder.field(Fields.FETCH_TIME, getFetchTime().toString());
-            builder.field(Fields.FETCH_TIME_IN_MILLIS, fetchTimeInMillis);
+            builder.timeValueField(Fields.FETCH_TIME_IN_MILLIS, Fields.FETCH_TIME, fetchTimeInMillis);
             builder.field(Fields.FETCH_CURRENT, fetchCurrent);
 
             return builder;
         }
     }
 
-    private Stats totalStats;
+    Stats totalStats;
+    long openContexts;
 
     @Nullable
     Map<String, Stats> groupStats;
@@ -155,8 +159,9 @@ public class SearchStats implements Streamable, ToXContent {
         totalStats = new Stats();
     }
 
-    public SearchStats(Stats totalStats, @Nullable Map<String, Stats> groupStats) {
+    public SearchStats(Stats totalStats, long openContexts, @Nullable Map<String, Stats> groupStats) {
         this.totalStats = totalStats;
+        this.openContexts = openContexts;
         this.groupStats = groupStats;
     }
 
@@ -169,14 +174,15 @@ public class SearchStats implements Streamable, ToXContent {
             return;
         }
         totalStats.add(searchStats.totalStats);
+        openContexts += searchStats.openContexts;
         if (includeTypes && searchStats.groupStats != null && !searchStats.groupStats.isEmpty()) {
             if (groupStats == null) {
-                groupStats = new HashMap<String, Stats>(searchStats.groupStats.size());
+                groupStats = new HashMap<>(searchStats.groupStats.size());
             }
             for (Map.Entry<String, Stats> entry : searchStats.groupStats.entrySet()) {
                 Stats stats = groupStats.get(entry.getKey());
                 if (stats == null) {
-                    groupStats.put(entry.getKey(), entry.getValue());
+                    groupStats.put(entry.getKey(), new Stats(entry.getValue()));
                 } else {
                     stats.add(entry.getValue());
                 }
@@ -188,6 +194,10 @@ public class SearchStats implements Streamable, ToXContent {
         return this.totalStats;
     }
 
+    public long getOpenContexts() {
+        return this.openContexts;
+    }
+
     @Nullable
     public Map<String, Stats> getGroupStats() {
         return this.groupStats;
@@ -196,6 +206,7 @@ public class SearchStats implements Streamable, ToXContent {
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, ToXContent.Params params) throws IOException {
         builder.startObject(Fields.SEARCH);
+        builder.field(Fields.OPEN_CONTEXTS, openContexts);
         totalStats.toXContent(builder, params);
         if (groupStats != null && !groupStats.isEmpty()) {
             builder.startObject(Fields.GROUPS);
@@ -212,6 +223,7 @@ public class SearchStats implements Streamable, ToXContent {
 
     static final class Fields {
         static final XContentBuilderString SEARCH = new XContentBuilderString("search");
+        static final XContentBuilderString OPEN_CONTEXTS = new XContentBuilderString("open_contexts");
         static final XContentBuilderString GROUPS = new XContentBuilderString("groups");
         static final XContentBuilderString QUERY_TOTAL = new XContentBuilderString("query_total");
         static final XContentBuilderString QUERY_TIME = new XContentBuilderString("query_time");
@@ -232,9 +244,10 @@ public class SearchStats implements Streamable, ToXContent {
     @Override
     public void readFrom(StreamInput in) throws IOException {
         totalStats = Stats.readStats(in);
+        openContexts = in.readVLong();
         if (in.readBoolean()) {
             int size = in.readVInt();
-            groupStats = new HashMap<String, Stats>(size);
+            groupStats = new HashMap<>(size);
             for (int i = 0; i < size; i++) {
                 groupStats.put(in.readString(), Stats.readStats(in));
             }
@@ -244,6 +257,7 @@ public class SearchStats implements Streamable, ToXContent {
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         totalStats.writeTo(out);
+        out.writeVLong(openContexts);
         if (groupStats == null || groupStats.isEmpty()) {
             out.writeBoolean(false);
         } else {
@@ -253,6 +267,19 @@ public class SearchStats implements Streamable, ToXContent {
                 out.writeString(entry.getKey());
                 entry.getValue().writeTo(out);
             }
+        }
+    }
+
+    @Override
+    public String toString() {
+        try {
+            XContentBuilder builder = XContentFactory.jsonBuilder().prettyPrint();
+            builder.startObject();
+            toXContent(builder, EMPTY_PARAMS);
+            builder.endObject();
+            return builder.string();
+        } catch (IOException e) {
+            return "{ \"error\" : \"" + e.getMessage() + "\"}";
         }
     }
 }

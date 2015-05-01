@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,6 +19,7 @@
 
 package org.elasticsearch.action.admin.indices.stats;
 
+import org.elasticsearch.action.admin.indices.stats.CommonStatsFlags.Flag;
 import org.elasticsearch.action.support.broadcast.BroadcastOperationRequest;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -28,41 +29,20 @@ import java.io.IOException;
 /**
  * A request to get indices level stats. Allow to enable different stats to be returned.
  * <p/>
- * <p>By default, the {@link #docs(boolean)}, {@link #store(boolean)}, {@link #indexing(boolean)}
- * are enabled. Other stats can be enabled as well.
+ * <p>By default, all statistics are enabled.
  * <p/>
  * <p>All the stats to be returned can be cleared using {@link #clear()}, at which point, specific
  * stats can be enabled.
  */
 public class IndicesStatsRequest extends BroadcastOperationRequest<IndicesStatsRequest> {
 
-    private boolean docs = true;
-    private boolean store = true;
-    private boolean indexing = true;
-    private boolean get = true;
-    private boolean search = true;
-    private boolean merge = false;
-    private boolean refresh = false;
-    private boolean flush = false;
-    private boolean warmer = false;
-    private String[] types = null;
-    private String[] groups = null;
+    private CommonStatsFlags flags = new CommonStatsFlags();
 
     /**
      * Sets all flags to return all stats.
      */
     public IndicesStatsRequest all() {
-        docs = true;
-        store = true;
-        get = true;
-        indexing = true;
-        search = true;
-        merge = true;
-        refresh = true;
-        flush = true;
-        warmer = true;
-        types = null;
-        groups = null;
+        flags.all();
         return this;
     }
 
@@ -70,17 +50,7 @@ public class IndicesStatsRequest extends BroadcastOperationRequest<IndicesStatsR
      * Clears all stats.
      */
     public IndicesStatsRequest clear() {
-        docs = false;
-        store = false;
-        get = false;
-        indexing = false;
-        search = false;
-        merge = false;
-        refresh = false;
-        flush = false;
-        warmer = false;
-        types = null;
-        groups = null;
+        flags.clear();
         return this;
     }
 
@@ -89,7 +59,7 @@ public class IndicesStatsRequest extends BroadcastOperationRequest<IndicesStatsR
      * enabled, returning specific indexing stats for those types.
      */
     public IndicesStatsRequest types(String... types) {
-        this.types = types;
+        flags.types(types);
         return this;
     }
 
@@ -98,7 +68,7 @@ public class IndicesStatsRequest extends BroadcastOperationRequest<IndicesStatsR
      * enabled, returning specific indexing stats for those types.
      */
     public String[] types() {
-        return this.types;
+        return this.flags.types();
     }
 
     /**
@@ -106,150 +76,213 @@ public class IndicesStatsRequest extends BroadcastOperationRequest<IndicesStatsR
      * when enabled.
      */
     public IndicesStatsRequest groups(String... groups) {
-        this.groups = groups;
+        flags.groups(groups);
         return this;
     }
 
     public String[] groups() {
-        return this.groups;
+        return this.flags.groups();
     }
 
     public IndicesStatsRequest docs(boolean docs) {
-        this.docs = docs;
+        flags.set(Flag.Docs, docs);
         return this;
     }
 
     public boolean docs() {
-        return this.docs;
+        return flags.isSet(Flag.Docs);
     }
 
     public IndicesStatsRequest store(boolean store) {
-        this.store = store;
+        flags.set(Flag.Store, store);
         return this;
     }
 
     public boolean store() {
-        return this.store;
+        return flags.isSet(Flag.Store);
     }
 
     public IndicesStatsRequest indexing(boolean indexing) {
-        this.indexing = indexing;
+        flags.set(Flag.Indexing, indexing);
+
         return this;
     }
 
     public boolean indexing() {
-        return this.indexing;
+        return flags.isSet(Flag.Indexing);
     }
 
     public IndicesStatsRequest get(boolean get) {
-        this.get = get;
+        flags.set(Flag.Get, get);
         return this;
     }
 
     public boolean get() {
-        return this.get;
+        return flags.isSet(Flag.Get);
     }
 
     public IndicesStatsRequest search(boolean search) {
-        this.search = search;
+        flags.set(Flag.Search, search);
         return this;
     }
 
     public boolean search() {
-        return this.search;
+        return flags.isSet(Flag.Search);
     }
 
     public IndicesStatsRequest merge(boolean merge) {
-        this.merge = merge;
+        flags.set(Flag.Merge, merge);
         return this;
     }
 
     public boolean merge() {
-        return this.merge;
+        return flags.isSet(Flag.Merge);
     }
 
     public IndicesStatsRequest refresh(boolean refresh) {
-        this.refresh = refresh;
+        flags.set(Flag.Refresh, refresh);
         return this;
     }
 
     public boolean refresh() {
-        return this.refresh;
+        return flags.isSet(Flag.Refresh);
     }
 
     public IndicesStatsRequest flush(boolean flush) {
-        this.flush = flush;
+        flags.set(Flag.Flush, flush);
         return this;
     }
 
     public boolean flush() {
-        return this.flush;
+        return flags.isSet(Flag.Flush);
     }
 
     public IndicesStatsRequest warmer(boolean warmer) {
-        this.warmer = warmer;
+        flags.set(Flag.Warmer, warmer);
         return this;
     }
 
     public boolean warmer() {
-        return this.warmer;
+        return flags.isSet(Flag.Warmer);
+    }
+
+    public IndicesStatsRequest filterCache(boolean filterCache) {
+        flags.set(Flag.FilterCache, filterCache);
+        return this;
+    }
+
+    public boolean filterCache() {
+        return flags.isSet(Flag.FilterCache);
+    }
+
+    public IndicesStatsRequest idCache(boolean idCache) {
+        flags.set(Flag.IdCache, idCache);
+        return this;
+    }
+
+    public boolean idCache() {
+        return flags.isSet(Flag.IdCache);
+    }
+
+    public IndicesStatsRequest fieldData(boolean fieldData) {
+        flags.set(Flag.FieldData, fieldData);
+        return this;
+    }
+
+    public boolean fieldData() {
+        return flags.isSet(Flag.FieldData);
+    }
+
+    public IndicesStatsRequest percolate(boolean percolate) {
+        flags.set(Flag.Percolate, percolate);
+        return this;
+    }
+
+    public boolean percolate() {
+        return flags.isSet(Flag.Percolate);
+    }
+
+    public IndicesStatsRequest segments(boolean segments) {
+        flags.set(Flag.Segments, segments);
+        return this;
+    }
+
+    public boolean segments() {
+        return flags.isSet(Flag.Segments);
+    }
+
+    public IndicesStatsRequest fieldDataFields(String... fieldDataFields) {
+        flags.fieldDataFields(fieldDataFields);
+        return this;
+    }
+
+    public String[] fieldDataFields() {
+        return flags.fieldDataFields();
+    }
+
+    public IndicesStatsRequest completion(boolean completion) {
+        flags.set(Flag.Completion, completion);
+        return this;
+    }
+
+    public boolean completion() {
+        return flags.isSet(Flag.Completion);
+    }
+
+    public IndicesStatsRequest completionFields(String... completionDataFields) {
+        flags.completionDataFields(completionDataFields);
+        return this;
+    }
+
+    public String[] completionFields() {
+        return flags.completionDataFields();
+    }
+
+    public IndicesStatsRequest translog(boolean translog) {
+        flags.set(Flag.Translog, translog);
+        return this;
+    }
+
+    public boolean translog() {
+        return flags.isSet(Flag.Translog);
+    }
+
+    public IndicesStatsRequest suggest(boolean suggest) {
+        flags.set(Flag.Suggest, suggest);
+        return this;
+    }
+
+    public boolean suggest() {
+        return flags.isSet(Flag.Suggest);
+    }
+
+    public IndicesStatsRequest queryCache(boolean queryCache) {
+        flags.set(Flag.QueryCache, queryCache);
+        return this;
+    }
+
+    public boolean queryCache() {
+        return flags.isSet(Flag.QueryCache);
+    }
+
+    public IndicesStatsRequest recovery(boolean recovery) {
+        flags.set(Flag.Recovery, recovery);
+        return this;
+    }
+
+    public boolean recovery() {
+        return flags.isSet(Flag.Recovery);
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
-        out.writeBoolean(docs);
-        out.writeBoolean(store);
-        out.writeBoolean(indexing);
-        out.writeBoolean(get);
-        out.writeBoolean(search);
-        out.writeBoolean(merge);
-        out.writeBoolean(flush);
-        out.writeBoolean(refresh);
-        out.writeBoolean(warmer);
-        if (types == null) {
-            out.writeVInt(0);
-        } else {
-            out.writeVInt(types.length);
-            for (String type : types) {
-                out.writeString(type);
-            }
-        }
-        if (groups == null) {
-            out.writeVInt(0);
-        } else {
-            out.writeVInt(groups.length);
-            for (String group : groups) {
-                out.writeString(group);
-            }
-        }
+        flags.writeTo(out);
     }
 
     @Override
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
-        docs = in.readBoolean();
-        store = in.readBoolean();
-        indexing = in.readBoolean();
-        get = in.readBoolean();
-        search = in.readBoolean();
-        merge = in.readBoolean();
-        flush = in.readBoolean();
-        refresh = in.readBoolean();
-        warmer = in.readBoolean();
-        int size = in.readVInt();
-        if (size > 0) {
-            types = new String[size];
-            for (int i = 0; i < size; i++) {
-                types[i] = in.readString();
-            }
-        }
-        size = in.readVInt();
-        if (size > 0) {
-            groups = new String[size];
-            for (int i = 0; i < size; i++) {
-                groups[i] = in.readString();
-            }
-        }
+        flags = CommonStatsFlags.readCommonStatsFlags(in);
     }
 }

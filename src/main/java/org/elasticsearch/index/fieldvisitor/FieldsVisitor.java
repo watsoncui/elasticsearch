@@ -1,34 +1,41 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing,
- *  software distributed under the License is distributed on an
- *  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- *  KIND, either express or implied.  See the License for the
- *  specific language governing permissions and limitations
- *  under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
-
 package org.elasticsearch.index.fieldvisitor;
+
+import com.google.common.collect.ImmutableMap;
 
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.StoredFieldVisitor;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
-import org.elasticsearch.index.mapper.*;
+import org.elasticsearch.index.mapper.DocumentMapper;
+import org.elasticsearch.index.mapper.FieldMapper;
+import org.elasticsearch.index.mapper.FieldMappers;
+import org.elasticsearch.index.mapper.MapperService;
+import org.elasticsearch.index.mapper.Uid;
 import org.elasticsearch.index.mapper.internal.SourceFieldMapper;
 import org.elasticsearch.index.mapper.internal.UidFieldMapper;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -44,9 +51,6 @@ public abstract class FieldsVisitor extends StoredFieldVisitor {
     protected Map<String, List<Object>> fieldsValues;
 
     public void postProcess(MapperService mapperService) {
-        if (fieldsValues == null || fieldsValues.isEmpty()) {
-            return;
-        }
         if (uid != null) {
             DocumentMapper documentMapper = mapperService.documentMapper(uid.type());
             if (documentMapper != null) {
@@ -56,7 +60,7 @@ public abstract class FieldsVisitor extends StoredFieldVisitor {
             }
         }
         // can't derive exact mapping type
-        for (Map.Entry<String, List<Object>> entry : fieldsValues.entrySet()) {
+        for (Map.Entry<String, List<Object>> entry : fields().entrySet()) {
             FieldMappers fieldMappers = mapperService.indexName(entry.getKey());
             if (fieldMappers == null) {
                 continue;
@@ -69,8 +73,8 @@ public abstract class FieldsVisitor extends StoredFieldVisitor {
     }
 
     public void postProcess(DocumentMapper documentMapper) {
-        for (Map.Entry<String, List<Object>> entry : fieldsValues.entrySet()) {
-            FieldMapper fieldMapper = documentMapper.mappers().indexName(entry.getKey()).mapper();
+        for (Map.Entry<String, List<Object>> entry : fields().entrySet()) {
+            FieldMapper<?> fieldMapper = documentMapper.mappers().indexName(entry.getKey()).mapper();
             if (fieldMapper == null) {
                 continue;
             }
@@ -91,7 +95,8 @@ public abstract class FieldsVisitor extends StoredFieldVisitor {
     }
 
     @Override
-    public void stringField(FieldInfo fieldInfo, String value) throws IOException {
+    public void stringField(FieldInfo fieldInfo, byte[] bytes) throws IOException {
+        final String value = new String(bytes, StandardCharsets.UTF_8);
         if (UidFieldMapper.NAME.equals(fieldInfo.name)) {
             uid = Uid.createUid(value);
         } else {
@@ -128,7 +133,9 @@ public abstract class FieldsVisitor extends StoredFieldVisitor {
     }
 
     public Map<String, List<Object>> fields() {
-        return fieldsValues;
+        return fieldsValues != null
+                ? fieldsValues
+                : ImmutableMap.<String, List<Object>>of();
     }
 
     public void reset() {
@@ -137,14 +144,14 @@ public abstract class FieldsVisitor extends StoredFieldVisitor {
         uid = null;
     }
 
-    private void addValue(String name, Object value) {
+    void addValue(String name, Object value) {
         if (fieldsValues == null) {
             fieldsValues = newHashMap();
         }
 
         List<Object> values = fieldsValues.get(name);
         if (values == null) {
-            values = new ArrayList<Object>(2);
+            values = new ArrayList<>(2);
             fieldsValues.put(name, values);
         }
         values.add(value);

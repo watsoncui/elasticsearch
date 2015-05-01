@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,19 +19,9 @@
 
 package org.elasticsearch.index.fielddata;
 
-import org.apache.lucene.index.AtomicReaderContext;
 
 /**
+ * Specialization of {@link IndexFieldData} for geo points.
  */
-public interface IndexGeoPointFieldData<FD extends AtomicGeoPointFieldData> extends IndexFieldData<FD> {
-
-    /**
-     * Loads the atomic field data for the reader, possibly cached.
-     */
-    FD load(AtomicReaderContext context);
-
-    /**
-     * Loads directly the atomic field data for the reader, ignoring any caching involved.
-     */
-    FD loadDirect(AtomicReaderContext context) throws Exception;
+public interface IndexGeoPointFieldData extends IndexFieldData<AtomicGeoPointFieldData> {
 }

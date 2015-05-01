@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,12 +19,15 @@
 
 package org.elasticsearch.index;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.common.xcontent.XContentBuilder;
+
+import java.io.IOException;
 
 /**
  *
  */
-public class IndexException extends ElasticSearchException {
+public class IndexException extends ElasticsearchException {
 
     private final Index index;
 
@@ -33,15 +36,24 @@ public class IndexException extends ElasticSearchException {
     }
 
     public IndexException(Index index, String msg, Throwable cause) {
-        this(index, true, msg, cause);
-    }
-
-    protected IndexException(Index index, boolean withSpace, String msg, Throwable cause) {
-        super("[" + (index == null ? "_na" : index.name()) + "]" + (withSpace ? " " : "") + msg, cause);
+        super(msg, cause);
         this.index = index;
     }
 
     public Index index() {
         return index;
+    }
+
+    @Override
+    protected void innerToXContent(XContentBuilder builder, Params params) throws IOException {
+        if (index != null) {
+            builder.field("index", index.getName());
+        }
+        super.innerToXContent(builder, params);
+    }
+
+    @Override
+    public String toString() {
+        return "[" + (index == null ? "_na" : index.name()) + "] " + getMessage();
     }
 }

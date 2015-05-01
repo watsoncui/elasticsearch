@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -28,6 +28,7 @@ import org.elasticsearch.common.inject.SpawnModules;
 import org.elasticsearch.common.settings.NoClassSettingsException;
 import org.elasticsearch.common.settings.Settings;
 
+import java.util.Locale;
 import java.util.Map;
 
 import static org.elasticsearch.common.Strings.toCamelCase;
@@ -79,7 +80,7 @@ public class RiverModule extends AbstractModule implements SpawnModules {
                 try {
                     return (Class<? extends Module>) globalSettings.getClassLoader().loadClass(fullClassName);
                 } catch (ClassNotFoundException e2) {
-                    fullClassName = prefixPackage + toCamelCase(type).toLowerCase() + "." + Strings.capitalize(toCamelCase(type)) + suffixClassName;
+                    fullClassName = prefixPackage + toCamelCase(type).toLowerCase(Locale.ROOT) + "." + Strings.capitalize(toCamelCase(type)) + suffixClassName;
                     try {
                         return (Class<? extends Module>) globalSettings.getClassLoader().loadClass(fullClassName);
                     } catch (ClassNotFoundException e3) {

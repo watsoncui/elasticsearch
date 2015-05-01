@@ -21,6 +21,7 @@ import org.elasticsearch.common.inject.internal.InternalFactory;
 import org.elasticsearch.common.inject.internal.Scoping;
 
 import java.lang.annotation.Annotation;
+import java.util.Locale;
 
 /**
  * Built-in scope implementations.
@@ -36,12 +37,14 @@ public class Scopes {
      * One instance per {@link Injector}. Also see {@code @}{@link Singleton}.
      */
     public static final Scope SINGLETON = new Scope() {
+        @Override
         public <T> Provider<T> scope(Key<T> key, final Provider<T> creator) {
             return new Provider<T>() {
 
                 private volatile T instance;
 
                 // DCL on a volatile is safe as of Java 5, which we obviously require.
+                @Override
                 @SuppressWarnings("DoubleCheckedLocking")
                 public T get() {
                     if (instance == null) {
@@ -60,8 +63,9 @@ public class Scopes {
                     return instance;
                 }
 
+                @Override
                 public String toString() {
-                    return String.format("%s[%s]", creator, SINGLETON);
+                    return String.format(Locale.ROOT, "%s[%s]", creator, SINGLETON);
                 }
             };
         }
@@ -85,6 +89,7 @@ public class Scopes {
      * @since 2.0
      */
     public static final Scope NO_SCOPE = new Scope() {
+        @Override
         public <T> Provider<T> scope(Key<T> key, Provider<T> unscoped) {
             return unscoped;
         }
@@ -107,9 +112,10 @@ public class Scopes {
 
         Scope scope = scoping.getScopeInstance();
 
+        // TODO: use diamond operator once JI-9019884 is fixed
         Provider<T> scoped
                 = scope.scope(key, new ProviderToInternalFactoryAdapter<T>(injector, creator));
-        return new InternalFactoryToProviderAdapter<T>(
+        return new InternalFactoryToProviderAdapter<>(
                 Initializables.<Provider<? extends T>>of(scoped));
     }
 

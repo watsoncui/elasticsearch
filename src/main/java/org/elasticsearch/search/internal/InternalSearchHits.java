@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,11 +19,10 @@
 
 package org.elasticsearch.search.internal;
 
+import com.carrotsearch.hppc.IntObjectOpenHashMap;
 import com.google.common.collect.Iterators;
-import gnu.trove.map.hash.TIntObjectHashMap;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.util.concurrent.ThreadLocals;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentBuilderString;
 import org.elasticsearch.search.SearchHit;
@@ -51,8 +50,8 @@ public class InternalSearchHits implements SearchHits {
             NO_STREAM
         }
 
-        private IdentityHashMap<SearchShardTarget, Integer> shardHandleLookup = new IdentityHashMap<SearchShardTarget, Integer>();
-        private TIntObjectHashMap<SearchShardTarget> handleShardLookup = new TIntObjectHashMap<SearchShardTarget>();
+        private IdentityHashMap<SearchShardTarget, Integer> shardHandleLookup = new IdentityHashMap<>();
+        private IntObjectOpenHashMap<SearchShardTarget> handleShardLookup = new IntObjectOpenHashMap<>();
         private ShardTargetType streamShardTarget = ShardTargetType.STREAM;
 
         public StreamContext reset() {
@@ -66,7 +65,7 @@ public class InternalSearchHits implements SearchHits {
             return shardHandleLookup;
         }
 
-        public TIntObjectHashMap<SearchShardTarget> handleShardLookup() {
+        public IntObjectOpenHashMap<SearchShardTarget> handleShardLookup() {
             return handleShardLookup;
         }
 
@@ -80,17 +79,21 @@ public class InternalSearchHits implements SearchHits {
         }
     }
 
-    private static final ThreadLocal<ThreadLocals.CleanableValue<StreamContext>> cache = new ThreadLocal<ThreadLocals.CleanableValue<StreamContext>>() {
+    private static final ThreadLocal<StreamContext> cache = new ThreadLocal<StreamContext>() {
         @Override
-        protected ThreadLocals.CleanableValue<StreamContext> initialValue() {
-            return new ThreadLocals.CleanableValue<StreamContext>(new StreamContext());
+        protected StreamContext initialValue() {
+            return new StreamContext();
         }
     };
 
     public static StreamContext streamContext() {
-        return cache.get().get().reset();
+        return cache.get().reset();
     }
 
+    public static InternalSearchHits empty() {
+        // We shouldn't use static final instance, since that could directly be returned by native transport clients
+        return new InternalSearchHits(EMPTY, 0, 0);
+    }
 
     public static final InternalSearchHit[] EMPTY = new InternalSearchHit[0];
 
@@ -112,10 +115,11 @@ public class InternalSearchHits implements SearchHits {
 
     public void shardTarget(SearchShardTarget shardTarget) {
         for (InternalSearchHit hit : hits) {
-            hit.shardTarget(shardTarget);
+            hit.shard(shardTarget);
         }
     }
 
+    @Override
     public long totalHits() {
         return totalHits;
     }
@@ -135,6 +139,7 @@ public class InternalSearchHits implements SearchHits {
         return maxScore();
     }
 
+    @Override
     public SearchHit[] hits() {
         return this.hits;
     }

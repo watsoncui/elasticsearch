@@ -1,11 +1,11 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this 
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,14 +19,21 @@
 
 package org.elasticsearch.cluster.metadata;
 
+import com.carrotsearch.hppc.cursors.ObjectCursor;
+import com.carrotsearch.hppc.cursors.ObjectObjectCursor;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
-import org.elasticsearch.ElasticSearchIllegalStateException;
+import org.elasticsearch.Version;
+import org.elasticsearch.cluster.Diff;
+import org.elasticsearch.cluster.Diffable;
+import org.elasticsearch.cluster.DiffableUtils;
 import org.elasticsearch.cluster.block.ClusterBlock;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.node.DiscoveryNodeFilters;
+import org.elasticsearch.cluster.routing.HashFunction;
+import org.elasticsearch.cluster.routing.Murmur3HashFunction;
 import org.elasticsearch.common.Nullable;
-import org.elasticsearch.common.Preconditions;
+import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.common.compress.CompressedString;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -43,6 +50,7 @@ import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.search.warmer.IndexWarmersMetaData;
 
 import java.io.IOException;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -54,65 +62,60 @@ import static org.elasticsearch.common.settings.ImmutableSettings.*;
 /**
  *
  */
-public class IndexMetaData {
+public class IndexMetaData implements Diffable<IndexMetaData> {
 
-    public interface Custom {
+    public static final IndexMetaData PROTO = IndexMetaData.builder("")
+            .settings(ImmutableSettings.builder().put(IndexMetaData.SETTING_VERSION_CREATED, Version.CURRENT))
+            .numberOfShards(1).numberOfReplicas(0).build();
+
+    public interface Custom extends Diffable<Custom>, ToXContent {
 
         String type();
 
-        interface Factory<T extends Custom> {
+        Custom fromMap(Map<String, Object> map) throws IOException;
 
-            String type();
+        Custom fromXContent(XContentParser parser) throws IOException;
 
-            T readFrom(StreamInput in) throws IOException;
-
-            void writeTo(T customIndexMetaData, StreamOutput out) throws IOException;
-
-            T fromMap(Map<String, Object> map) throws IOException;
-
-            T fromXContent(XContentParser parser) throws IOException;
-
-            void toXContent(T customIndexMetaData, XContentBuilder builder, ToXContent.Params params) throws IOException;
-
-            /**
-             * Merges from first to second, with first being more important, i.e., if something exists in first and second,
-             * first will prevail.
-             */
-            T merge(T first, T second);
-        }
+        /**
+         * Merges from this to another, with this being more important, i.e., if something exists in this and another,
+         * this will prevail.
+         */
+        Custom mergeWith(Custom another);
     }
 
-    public static Map<String, Custom.Factory> customFactories = new HashMap<String, Custom.Factory>();
+    public static Map<String, Custom> customPrototypes = new HashMap<>();
 
     static {
         // register non plugin custom metadata
-        registerFactory(IndexWarmersMetaData.TYPE, IndexWarmersMetaData.FACTORY);
+        registerPrototype(IndexWarmersMetaData.TYPE, IndexWarmersMetaData.PROTO);
     }
 
     /**
      * Register a custom index meta data factory. Make sure to call it from a static block.
      */
-    public static void registerFactory(String type, Custom.Factory factory) {
-        customFactories.put(type, factory);
+    public static void registerPrototype(String type, Custom proto) {
+        customPrototypes.put(type, proto);
     }
 
     @Nullable
-    public static <T extends Custom> Custom.Factory<T> lookupFactory(String type) {
-        return customFactories.get(type);
+    public static <T extends Custom> T lookupPrototype(String type) {
+        //noinspection unchecked
+        return (T) customPrototypes.get(type);
     }
 
-    public static <T extends Custom> Custom.Factory<T> lookupFactorySafe(String type) throws ElasticSearchIllegalArgumentException {
-        Custom.Factory<T> factory = customFactories.get(type);
-        if (factory == null) {
-            throw new ElasticSearchIllegalArgumentException("No custom index metadata factoy registered for type [" + type + "]");
+    public static <T extends Custom> T lookupPrototypeSafe(String type) {
+        //noinspection unchecked
+        T proto = (T) customPrototypes.get(type);
+        if (proto == null) {
+            throw new IllegalArgumentException("No custom metadata prototype registered for type [" + type + "]");
         }
-        return factory;
+        return proto;
     }
 
-    public static final ClusterBlock INDEX_READ_ONLY_BLOCK = new ClusterBlock(5, "index read-only (api)", false, false, RestStatus.FORBIDDEN, ClusterBlockLevel.WRITE, ClusterBlockLevel.METADATA);
-    public static final ClusterBlock INDEX_READ_BLOCK = new ClusterBlock(7, "index read (api)", false, false, RestStatus.FORBIDDEN, ClusterBlockLevel.READ);
-    public static final ClusterBlock INDEX_WRITE_BLOCK = new ClusterBlock(8, "index write (api)", false, false, RestStatus.FORBIDDEN, ClusterBlockLevel.WRITE);
-    public static final ClusterBlock INDEX_METADATA_BLOCK = new ClusterBlock(9, "index metadata (api)", false, false, RestStatus.FORBIDDEN, ClusterBlockLevel.METADATA);
+    public static final ClusterBlock INDEX_READ_ONLY_BLOCK = new ClusterBlock(5, "index read-only (api)", false, false, RestStatus.FORBIDDEN, EnumSet.of(ClusterBlockLevel.WRITE, ClusterBlockLevel.METADATA_WRITE));
+    public static final ClusterBlock INDEX_READ_BLOCK = new ClusterBlock(7, "index read (api)", false, false, RestStatus.FORBIDDEN, EnumSet.of(ClusterBlockLevel.READ));
+    public static final ClusterBlock INDEX_WRITE_BLOCK = new ClusterBlock(8, "index write (api)", false, false, RestStatus.FORBIDDEN, EnumSet.of(ClusterBlockLevel.WRITE));
+    public static final ClusterBlock INDEX_METADATA_BLOCK = new ClusterBlock(9, "index metadata (api)", false, false, RestStatus.FORBIDDEN, EnumSet.of(ClusterBlockLevel.METADATA_WRITE, ClusterBlockLevel.METADATA_READ));
 
     public static enum State {
         OPEN((byte) 0),
@@ -134,7 +137,7 @@ public class IndexMetaData {
             } else if (id == 1) {
                 return CLOSE;
             }
-            throw new ElasticSearchIllegalStateException("No state match for id [" + id + "]");
+            throw new IllegalStateException("No state match for id [" + id + "]");
         }
 
         public static State fromString(String state) {
@@ -143,31 +146,43 @@ public class IndexMetaData {
             } else if ("close".equals(state)) {
                 return CLOSE;
             }
-            throw new ElasticSearchIllegalStateException("No state match for [" + state + "]");
+            throw new IllegalStateException("No state match for [" + state + "]");
         }
     }
-
+    public static final String INDEX_SETTING_PREFIX = "index.";
     public static final String SETTING_NUMBER_OF_SHARDS = "index.number_of_shards";
     public static final String SETTING_NUMBER_OF_REPLICAS = "index.number_of_replicas";
+    public static final String SETTING_SHADOW_REPLICAS = "index.shadow_replicas";
+    public static final String SETTING_SHARED_FILESYSTEM = "index.shared_filesystem";
     public static final String SETTING_AUTO_EXPAND_REPLICAS = "index.auto_expand_replicas";
     public static final String SETTING_READ_ONLY = "index.blocks.read_only";
     public static final String SETTING_BLOCKS_READ = "index.blocks.read";
     public static final String SETTING_BLOCKS_WRITE = "index.blocks.write";
     public static final String SETTING_BLOCKS_METADATA = "index.blocks.metadata";
     public static final String SETTING_VERSION_CREATED = "index.version.created";
+    public static final String SETTING_CREATION_DATE = "index.creation_date";
+    public static final String SETTING_UUID = "index.uuid";
+    public static final String SETTING_LEGACY_ROUTING_HASH_FUNCTION = "index.legacy.routing.hash.type";
+    public static final String SETTING_LEGACY_ROUTING_USE_TYPE = "index.legacy.routing.use_type";
+    public static final String SETTING_DATA_PATH = "index.data_path";
+    public static final String INDEX_UUID_NA_VALUE = "_na_";
+
+    // hard-coded hash function as of 2.0
+    // older indices will read which hash function to use in their index settings
+    private static final HashFunction MURMUR3_HASH_FUNCTION = new Murmur3HashFunction();
 
     private final String index;
     private final long version;
 
     private final State state;
 
-    private final ImmutableMap<String, AliasMetaData> aliases;
+    private final ImmutableOpenMap<String, AliasMetaData> aliases;
 
     private final Settings settings;
 
-    private final ImmutableMap<String, MappingMetaData> mappings;
+    private final ImmutableOpenMap<String, MappingMetaData> mappings;
 
-    private final ImmutableMap<String, Custom> customs;
+    private final ImmutableOpenMap<String, Custom> customs;
 
     private transient final int totalNumberOfShards;
 
@@ -175,9 +190,13 @@ public class IndexMetaData {
     private final DiscoveryNodeFilters includeFilters;
     private final DiscoveryNodeFilters excludeFilters;
 
-    private IndexMetaData(String index, long version, State state, Settings settings, ImmutableMap<String, MappingMetaData> mappings, ImmutableMap<String, AliasMetaData> aliases, ImmutableMap<String, Custom> customs) {
-        Preconditions.checkArgument(settings.getAsInt(SETTING_NUMBER_OF_SHARDS, -1) != -1, "must specify numberOfShards for index [" + index + "]");
-        Preconditions.checkArgument(settings.getAsInt(SETTING_NUMBER_OF_REPLICAS, -1) != -1, "must specify numberOfReplicas for index [" + index + "]");
+    private final Version indexCreatedVersion;
+    private final HashFunction routingHashFunction;
+    private final boolean useTypeForRouting;
+
+    private IndexMetaData(String index, long version, State state, Settings settings, ImmutableOpenMap<String, MappingMetaData> mappings, ImmutableOpenMap<String, AliasMetaData> aliases, ImmutableOpenMap<String, Custom> customs) {
+        Preconditions.checkArgument(settings.getAsInt(SETTING_NUMBER_OF_SHARDS, null) != null, "must specify numberOfShards for index [" + index + "]");
+        Preconditions.checkArgument(settings.getAsInt(SETTING_NUMBER_OF_REPLICAS, null) != null, "must specify numberOfReplicas for index [" + index + "]");
         this.index = index;
         this.version = version;
         this.state = state;
@@ -185,7 +204,6 @@ public class IndexMetaData {
         this.mappings = mappings;
         this.customs = customs;
         this.totalNumberOfShards = numberOfShards() * (numberOfReplicas() + 1);
-
         this.aliases = aliases;
 
         ImmutableMap<String, String> requireMap = settings.getByPrefix("index.routing.allocation.require.").getAsMap();
@@ -206,6 +224,18 @@ public class IndexMetaData {
         } else {
             excludeFilters = DiscoveryNodeFilters.buildFromKeyValue(OR, excludeMap);
         }
+        indexCreatedVersion = Version.indexCreated(settings);
+        final Class<? extends HashFunction> hashFunctionClass = settings.getAsClass(SETTING_LEGACY_ROUTING_HASH_FUNCTION, null);
+        if (hashFunctionClass == null) {
+            routingHashFunction = MURMUR3_HASH_FUNCTION;
+        } else {
+            try {
+                routingHashFunction = hashFunctionClass.newInstance();
+            } catch (InstantiationException | IllegalAccessException e) {
+                throw new IllegalStateException("Cannot instantiate hash function", e);
+            }
+        }
+        useTypeForRouting = settings.getAsBoolean(SETTING_LEGACY_ROUTING_USE_TYPE, false);
     }
 
     public String index() {
@@ -216,12 +246,75 @@ public class IndexMetaData {
         return index();
     }
 
+    public String uuid() {
+        return settings.get(SETTING_UUID, INDEX_UUID_NA_VALUE);
+    }
+
+    public String getUUID() {
+        return uuid();
+    }
+
+    /**
+     * Test whether the current index UUID is the same as the given one. Returns true if either are _na_
+     */
+    public boolean isSameUUID(String otherUUID) {
+        assert otherUUID != null;
+        assert uuid() != null;
+        if (INDEX_UUID_NA_VALUE.equals(otherUUID) || INDEX_UUID_NA_VALUE.equals(uuid())) {
+            return true;
+        }
+        return otherUUID.equals(getUUID());
+    }
+
     public long version() {
         return this.version;
     }
 
     public long getVersion() {
         return this.version;
+    }
+
+    /**
+     * Return the {@link Version} on which this index has been created. This
+     * information is typically useful for backward compatibility.
+     */
+    public Version creationVersion() {
+        return indexCreatedVersion;
+    }
+
+    public Version getCreationVersion() {
+        return creationVersion();
+    }
+
+    /**
+     * Return the {@link HashFunction} that should be used for routing.
+     */
+    public HashFunction routingHashFunction() {
+        return routingHashFunction;
+    }
+
+    public HashFunction getRoutingHashFunction() {
+        return routingHashFunction();
+    }
+
+    /**
+     * Return whether routing should use the _type in addition to the _id in
+     * order to decide which shard a document should go to.
+     */
+    public boolean routingUseType() {
+        return useTypeForRouting;
+    }
+
+    public boolean getRoutingUseType() {
+        return routingUseType();
+    }
+
+    public long creationDate() {
+        return settings.getAsLong(SETTING_CREATION_DATE, -1l);
+    }
+
+    public long getCreationDate() {
+        return creationDate();
     }
 
     public State state() {
@@ -264,19 +357,19 @@ public class IndexMetaData {
         return settings();
     }
 
-    public ImmutableMap<String, AliasMetaData> aliases() {
+    public ImmutableOpenMap<String, AliasMetaData> aliases() {
         return this.aliases;
     }
 
-    public ImmutableMap<String, AliasMetaData> getAliases() {
+    public ImmutableOpenMap<String, AliasMetaData> getAliases() {
         return aliases();
     }
 
-    public ImmutableMap<String, MappingMetaData> mappings() {
+    public ImmutableOpenMap<String, MappingMetaData> mappings() {
         return mappings;
     }
 
-    public ImmutableMap<String, MappingMetaData> getMappings() {
+    public ImmutableOpenMap<String, MappingMetaData> getMappings() {
         return mappings();
     }
 
@@ -301,14 +394,15 @@ public class IndexMetaData {
         return mappings.get(MapperService.DEFAULT_MAPPING);
     }
 
-    public ImmutableMap<String, Custom> customs() {
+    public ImmutableOpenMap<String, Custom> customs() {
         return this.customs;
     }
 
-    public ImmutableMap<String, Custom> getCustoms() {
+    public ImmutableOpenMap<String, Custom> getCustoms() {
         return this.customs;
     }
 
+    @SuppressWarnings("unchecked")
     public <T extends Custom> T custom(String type) {
         return (T) customs.get(type);
     }
@@ -330,17 +424,33 @@ public class IndexMetaData {
 
     @Override
     public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
 
         IndexMetaData that = (IndexMetaData) o;
 
-        if (!aliases.equals(that.aliases)) return false;
-        if (!index.equals(that.index)) return false;
-        if (!mappings.equals(that.mappings)) return false;
-        if (!settings.equals(that.settings)) return false;
-        if (state != that.state) return false;
-
+        if (!aliases.equals(that.aliases)) {
+            return false;
+        }
+        if (!index.equals(that.index)) {
+            return false;
+        }
+        if (!mappings.equals(that.mappings)) {
+            return false;
+        }
+        if (!settings.equals(that.settings)) {
+            return false;
+        }
+        if (state != that.state) {
+            return false;
+        }
+        if (!customs.equals(that.customs)) {
+            return false;
+        }
         return true;
     }
 
@@ -354,46 +464,159 @@ public class IndexMetaData {
         return result;
     }
 
+    @Override
+    public Diff<IndexMetaData> diff(IndexMetaData previousState) {
+        return new IndexMetaDataDiff(previousState, this);
+    }
+
+    @Override
+    public Diff<IndexMetaData> readDiffFrom(StreamInput in) throws IOException {
+        return new IndexMetaDataDiff(in);
+    }
+
+    private static class IndexMetaDataDiff implements Diff<IndexMetaData> {
+
+        private final String index;
+        private final long version;
+        private final State state;
+        private final Settings settings;
+        private final Diff<ImmutableOpenMap<String, MappingMetaData>> mappings;
+        private final Diff<ImmutableOpenMap<String, AliasMetaData>> aliases;
+        private Diff<ImmutableOpenMap<String, Custom>> customs;
+
+        public IndexMetaDataDiff(IndexMetaData before, IndexMetaData after) {
+            index = after.index;
+            version = after.version;
+            state = after.state;
+            settings = after.settings;
+            mappings = DiffableUtils.diff(before.mappings, after.mappings);
+            aliases = DiffableUtils.diff(before.aliases, after.aliases);
+            customs = DiffableUtils.diff(before.customs, after.customs);
+        }
+
+        public IndexMetaDataDiff(StreamInput in) throws IOException {
+            index = in.readString();
+            version = in.readLong();
+            state = State.fromId(in.readByte());
+            settings = ImmutableSettings.readSettingsFromStream(in);
+            mappings = DiffableUtils.readImmutableOpenMapDiff(in, MappingMetaData.PROTO);
+            aliases = DiffableUtils.readImmutableOpenMapDiff(in, AliasMetaData.PROTO);
+            customs = DiffableUtils.readImmutableOpenMapDiff(in, new DiffableUtils.KeyedReader<Custom>() {
+                @Override
+                public Custom readFrom(StreamInput in, String key) throws IOException {
+                    return lookupPrototypeSafe(key).readFrom(in);
+                }
+
+                @Override
+                public Diff<Custom> readDiffFrom(StreamInput in, String key) throws IOException {
+                    return lookupPrototypeSafe(key).readDiffFrom(in);
+                }
+            });
+        }
+
+        @Override
+        public void writeTo(StreamOutput out) throws IOException {
+            out.writeString(index);
+            out.writeLong(version);
+            out.writeByte(state.id);
+            ImmutableSettings.writeSettingsToStream(settings, out);
+            mappings.writeTo(out);
+            aliases.writeTo(out);
+            customs.writeTo(out);
+        }
+
+        @Override
+        public IndexMetaData apply(IndexMetaData part) {
+            Builder builder = builder(index);
+            builder.version(version);
+            builder.state(state);
+            builder.settings(settings);
+            builder.mappings.putAll(mappings.apply(part.mappings));
+            builder.aliases.putAll(aliases.apply(part.aliases));
+            builder.customs.putAll(customs.apply(part.customs));
+            return builder.build();
+        }
+    }
+
+    @Override
+    public IndexMetaData readFrom(StreamInput in) throws IOException {
+        Builder builder = new Builder(in.readString());
+        builder.version(in.readLong());
+        builder.state(State.fromId(in.readByte()));
+        builder.settings(readSettingsFromStream(in));
+        int mappingsSize = in.readVInt();
+        for (int i = 0; i < mappingsSize; i++) {
+            MappingMetaData mappingMd = MappingMetaData.PROTO.readFrom(in);
+            builder.putMapping(mappingMd);
+        }
+        int aliasesSize = in.readVInt();
+        for (int i = 0; i < aliasesSize; i++) {
+            AliasMetaData aliasMd = AliasMetaData.Builder.readFrom(in);
+            builder.putAlias(aliasMd);
+        }
+        int customSize = in.readVInt();
+        for (int i = 0; i < customSize; i++) {
+            String type = in.readString();
+            Custom customIndexMetaData = lookupPrototypeSafe(type).readFrom(in);
+            builder.putCustom(type, customIndexMetaData);
+        }
+        return builder.build();
+    }
+
+    @Override
+    public void writeTo(StreamOutput out) throws IOException {
+        out.writeString(index);
+        out.writeLong(version);
+        out.writeByte(state.id());
+        writeSettingsToStream(settings, out);
+        out.writeVInt(mappings.size());
+        for (ObjectCursor<MappingMetaData> cursor : mappings.values()) {
+            cursor.value.writeTo(out);
+        }
+        out.writeVInt(aliases.size());
+        for (ObjectCursor<AliasMetaData> cursor : aliases.values()) {
+            cursor.value.writeTo(out);
+        }
+        out.writeVInt(customs.size());
+        for (ObjectObjectCursor<String, Custom> cursor : customs) {
+            out.writeString(cursor.key);
+            cursor.value.writeTo(out);
+        }
+    }
+
     public static Builder builder(String index) {
         return new Builder(index);
     }
 
-    public static Builder newIndexMetaDataBuilder(String index) {
-        return new Builder(index);
-    }
-
-    public static Builder newIndexMetaDataBuilder(IndexMetaData indexMetaData) {
+    public static Builder builder(IndexMetaData indexMetaData) {
         return new Builder(indexMetaData);
     }
 
     public static class Builder {
 
         private String index;
-
         private State state = State.OPEN;
-
         private long version = 1;
-
         private Settings settings = ImmutableSettings.Builder.EMPTY_SETTINGS;
-
-        private MapBuilder<String, MappingMetaData> mappings = MapBuilder.newMapBuilder();
-
-        private MapBuilder<String, AliasMetaData> aliases = MapBuilder.newMapBuilder();
-
-        private MapBuilder<String, Custom> customs = MapBuilder.newMapBuilder();
+        private final ImmutableOpenMap.Builder<String, MappingMetaData> mappings;
+        private final ImmutableOpenMap.Builder<String, AliasMetaData> aliases;
+        private final ImmutableOpenMap.Builder<String, Custom> customs;
 
         public Builder(String index) {
             this.index = index;
+            this.mappings = ImmutableOpenMap.builder();
+            this.aliases = ImmutableOpenMap.builder();
+            this.customs = ImmutableOpenMap.builder();
         }
 
         public Builder(IndexMetaData indexMetaData) {
-            this(indexMetaData.index());
-            settings(indexMetaData.settings());
-            mappings.putAll(indexMetaData.mappings);
-            aliases.putAll(indexMetaData.aliases);
-            customs.putAll(indexMetaData.customs);
+            this.index = indexMetaData.index();
             this.state = indexMetaData.state;
             this.version = indexMetaData.version;
+            this.settings = indexMetaData.settings();
+            this.mappings = ImmutableOpenMap.builder(indexMetaData.mappings);
+            this.aliases = ImmutableOpenMap.builder(indexMetaData.aliases);
+            this.customs = ImmutableOpenMap.builder(indexMetaData.customs);
         }
 
         public String index() {
@@ -422,6 +645,15 @@ public class IndexMetaData {
         public int numberOfReplicas() {
             return settings.getAsInt(SETTING_NUMBER_OF_REPLICAS, -1);
         }
+        
+        public Builder creationDate(long creationDate) {
+            settings = settingsBuilder().put(settings).put(SETTING_CREATION_DATE, creationDate).build();
+            return this;
+        }
+
+        public long creationDate() {
+            return settings.getAsLong(SETTING_CREATION_DATE, -1l);
+        }
 
         public Builder settings(Settings.Builder settings) {
             this.settings = settings.build();
@@ -433,17 +665,18 @@ public class IndexMetaData {
             return this;
         }
 
+        public MappingMetaData mapping(String type) {
+            return mappings.get(type);
+        }
+
         public Builder removeMapping(String mappingType) {
             mappings.remove(mappingType);
             return this;
         }
 
         public Builder putMapping(String type, String source) throws IOException {
-            XContentParser parser = XContentFactory.xContent(source).createParser(source);
-            try {
+            try (XContentParser parser = XContentFactory.xContent(source).createParser(source)) {
                 putMapping(new MappingMetaData(type, parser.mapOrdered()));
-            } finally {
-                parser.close();
             }
             return this;
         }
@@ -468,8 +701,13 @@ public class IndexMetaData {
             return this;
         }
 
-        public Builder removerAlias(String alias) {
+        public Builder removeAlias(String alias) {
             aliases.remove(alias);
+            return this;
+        }
+
+        public Builder removeAllAliases() {
+            aliases.clear();
             return this;
         }
 
@@ -497,31 +735,18 @@ public class IndexMetaData {
         }
 
         public IndexMetaData build() {
-            MapBuilder<String, AliasMetaData> tmpAliases = aliases;
+            ImmutableOpenMap.Builder<String, AliasMetaData> tmpAliases = aliases;
             Settings tmpSettings = settings;
-
-            // For backward compatibility
-            String[] legacyAliases = settings.getAsArray("index.aliases");
-            if (legacyAliases.length > 0) {
-                tmpAliases = MapBuilder.newMapBuilder();
-                for (String alias : legacyAliases) {
-                    AliasMetaData aliasMd = AliasMetaData.newAliasMetaDataBuilder(alias).build();
-                    tmpAliases.put(alias, aliasMd);
-                }
-                tmpAliases.putAll(aliases.immutableMap());
-                // Remove index.aliases from settings once they are migrated to the new data structure
-                tmpSettings = ImmutableSettings.settingsBuilder().put(settings).putArray("index.aliases").build();
-            }
 
             // update default mapping on the MappingMetaData
             if (mappings.containsKey(MapperService.DEFAULT_MAPPING)) {
                 MappingMetaData defaultMapping = mappings.get(MapperService.DEFAULT_MAPPING);
-                for (MappingMetaData mappingMetaData : mappings.map().values()) {
-                    mappingMetaData.updateDefaultMapping(defaultMapping);
+                for (ObjectCursor<MappingMetaData> cursor : mappings.values()) {
+                    cursor.value.updateDefaultMapping(defaultMapping);
                 }
             }
 
-            return new IndexMetaData(index, version, state, tmpSettings, mappings.immutableMap(), tmpAliases.immutableMap(), customs.immutableMap());
+            return new IndexMetaData(index, version, state, tmpSettings, mappings.build(), tmpAliases.build(), customs.build());
         }
 
         public static void toXContent(IndexMetaData indexMetaData, XContentBuilder builder, ToXContent.Params params) throws IOException {
@@ -539,11 +764,11 @@ public class IndexMetaData {
             builder.endObject();
 
             builder.startArray("mappings");
-            for (Map.Entry<String, MappingMetaData> entry : indexMetaData.mappings().entrySet()) {
+            for (ObjectObjectCursor<String, MappingMetaData> cursor : indexMetaData.mappings()) {
                 if (binary) {
-                    builder.value(entry.getValue().source().compressed());
+                    builder.value(cursor.value.source().compressed());
                 } else {
-                    byte[] data = entry.getValue().source().uncompressed();
+                    byte[] data = cursor.value.source().uncompressed();
                     XContentParser parser = XContentFactory.xContent(data).createParser(data);
                     Map<String, Object> mapping = parser.mapOrdered();
                     parser.close();
@@ -552,15 +777,15 @@ public class IndexMetaData {
             }
             builder.endArray();
 
-            for (Map.Entry<String, Custom> entry : indexMetaData.customs().entrySet()) {
-                builder.startObject(entry.getKey(), XContentBuilder.FieldCaseConversion.NONE);
-                lookupFactorySafe(entry.getKey()).toXContent(entry.getValue(), builder, params);
+            for (ObjectObjectCursor<String, Custom> cursor : indexMetaData.customs()) {
+                builder.startObject(cursor.key, XContentBuilder.FieldCaseConversion.NONE);
+                cursor.value.toXContent(builder, params);
                 builder.endObject();
             }
 
             builder.startObject("aliases");
-            for (AliasMetaData alias : indexMetaData.aliases().values()) {
-                AliasMetaData.Builder.toXContent(alias, builder, params);
+            for (ObjectCursor<AliasMetaData> cursor : indexMetaData.aliases().values()) {
+                AliasMetaData.Builder.toXContent(cursor.value, builder, params);
             }
             builder.endObject();
 
@@ -569,7 +794,10 @@ public class IndexMetaData {
         }
 
         public static IndexMetaData fromXContent(XContentParser parser) throws IOException {
-            if (parser.currentToken() == XContentParser.Token.START_OBJECT) {
+            if (parser.currentToken() == null) { // fresh parser? move to the first token
+                parser.nextToken();
+            }
+            if (parser.currentToken() == XContentParser.Token.START_OBJECT) {  // on a start object move to next token
                 parser.nextToken();
             }
             Builder builder = new Builder(parser.currentName());
@@ -593,17 +821,18 @@ public class IndexMetaData {
                             }
                         }
                     } else if ("aliases".equals(currentFieldName)) {
-                        while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
+                        while (parser.nextToken() != XContentParser.Token.END_OBJECT) {
                             builder.putAlias(AliasMetaData.Builder.fromXContent(parser));
                         }
                     } else {
                         // check if its a custom index metadata
-                        Custom.Factory<Custom> factory = lookupFactory(currentFieldName);
-                        if (factory == null) {
+                        Custom proto = lookupPrototype(currentFieldName);
+                        if (proto == null) {
                             //TODO warn
                             parser.skipChildren();
                         } else {
-                            builder.putCustom(factory.type(), factory.fromXContent(parser));
+                            Custom custom = proto.fromXContent(parser);
+                            builder.putCustom(custom.type(), custom);
                         }
                     }
                 } else if (token == XContentParser.Token.START_ARRAY) {
@@ -632,47 +861,28 @@ public class IndexMetaData {
         }
 
         public static IndexMetaData readFrom(StreamInput in) throws IOException {
-            Builder builder = new Builder(in.readString());
-            builder.version(in.readLong());
-            builder.state(State.fromId(in.readByte()));
-            builder.settings(readSettingsFromStream(in));
-            int mappingsSize = in.readVInt();
-            for (int i = 0; i < mappingsSize; i++) {
-                MappingMetaData mappingMd = MappingMetaData.readFrom(in);
-                builder.putMapping(mappingMd);
-            }
-            int aliasesSize = in.readVInt();
-            for (int i = 0; i < aliasesSize; i++) {
-                AliasMetaData aliasMd = AliasMetaData.Builder.readFrom(in);
-                builder.putAlias(aliasMd);
-            }
-            int customSize = in.readVInt();
-            for (int i = 0; i < customSize; i++) {
-                String type = in.readString();
-                Custom customIndexMetaData = lookupFactorySafe(type).readFrom(in);
-                builder.putCustom(type, customIndexMetaData);
-            }
-            return builder.build();
-        }
-
-        public static void writeTo(IndexMetaData indexMetaData, StreamOutput out) throws IOException {
-            out.writeString(indexMetaData.index());
-            out.writeLong(indexMetaData.version());
-            out.writeByte(indexMetaData.state().id());
-            writeSettingsToStream(indexMetaData.settings(), out);
-            out.writeVInt(indexMetaData.mappings().size());
-            for (MappingMetaData mappingMd : indexMetaData.mappings().values()) {
-                MappingMetaData.writeTo(mappingMd, out);
-            }
-            out.writeVInt(indexMetaData.aliases().size());
-            for (AliasMetaData aliasMd : indexMetaData.aliases().values()) {
-                AliasMetaData.Builder.writeTo(aliasMd, out);
-            }
-            out.writeVInt(indexMetaData.customs().size());
-            for (Map.Entry<String, Custom> entry : indexMetaData.customs().entrySet()) {
-                out.writeString(entry.getKey());
-                lookupFactorySafe(entry.getKey()).writeTo(entry.getValue(), out);
-            }
+            return PROTO.readFrom(in);
         }
     }
+
+    /**
+     * Returns <code>true</code> iff the given settings indicate that the index
+     * associated with these settings allocates it's shards on a shared
+     * filesystem. Otherwise <code>false</code>. The default setting for this
+     * is the returned value from
+     * {@link #isIndexUsingShadowReplicas(org.elasticsearch.common.settings.Settings)}.
+     */
+    public static boolean isOnSharedFilesystem(Settings settings) {
+        return settings.getAsBoolean(SETTING_SHARED_FILESYSTEM, isIndexUsingShadowReplicas(settings));
+    }
+
+    /**
+     * Returns <code>true</code> iff the given settings indicate that the index associated
+     * with these settings uses shadow replicas. Otherwise <code>false</code>. The default
+     * setting for this is <code>false</code>.
+     */
+    public static boolean isIndexUsingShadowReplicas(Settings settings) {
+        return settings.getAsBoolean(SETTING_SHADOW_REPLICAS, false);
+    }
+
 }

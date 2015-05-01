@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,17 +19,20 @@
 
 package org.elasticsearch.index.translog.fs;
 
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.common.io.FileChannelInputStream;
+import org.apache.lucene.util.BytesRef;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.common.bytes.BytesArray;
+import org.elasticsearch.common.io.Channels;
 import org.elasticsearch.common.io.stream.BytesStreamInput;
-import org.elasticsearch.index.translog.Translog;
 import org.elasticsearch.index.translog.TranslogStreams;
+import org.elasticsearch.index.translog.Translog;
 
+import java.io.EOFException;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  *
@@ -40,7 +43,7 @@ public class FsChannelSnapshot implements Translog.Snapshot {
 
     private final int totalOperations;
 
-    private final RafReference raf;
+    private final ChannelReference channelReference;
 
     private final FileChannel channel;
 
@@ -48,14 +51,20 @@ public class FsChannelSnapshot implements Translog.Snapshot {
 
     private Translog.Operation lastOperationRead = null;
 
-    private int position = 0;
+    private long position = 0;
 
     private ByteBuffer cacheBuffer;
 
-    public FsChannelSnapshot(long id, RafReference raf, long length, int totalOperations) throws FileNotFoundException {
+    private AtomicBoolean closed = new AtomicBoolean(false);
+
+    /**
+     * Create a snapshot of translog file channel. The length parameter should be consistent with totalOperations and point
+     * at the end of the last operation in this snapshot.
+     */
+    public FsChannelSnapshot(long id, ChannelReference channelReference, long length, int totalOperations) throws FileNotFoundException {
         this.id = id;
-        this.raf = raf;
-        this.channel = raf.raf().getChannel();
+        this.channelReference = channelReference;
+        this.channel = channelReference.channel();
         this.length = length;
         this.totalOperations = totalOperations;
     }
@@ -81,65 +90,64 @@ public class FsChannelSnapshot implements Translog.Snapshot {
     }
 
     @Override
-    public InputStream stream() throws IOException {
-        return new FileChannelInputStream(channel, position, lengthInBytes());
-    }
-
-    @Override
     public long lengthInBytes() {
         return length - position;
     }
 
     @Override
-    public boolean hasNext() {
+    public Translog.Operation next() {
         try {
-            if (position > length) {
-                return false;
+            if (position >= length) {
+                return null;
             }
             if (cacheBuffer == null) {
                 cacheBuffer = ByteBuffer.allocate(1024);
             }
             cacheBuffer.limit(4);
-            int bytesRead = channel.read(cacheBuffer, position);
-            if (bytesRead < 4) {
-                return false;
+            int bytesRead = Channels.readFromFileChannel(channel, position, cacheBuffer);
+            if (bytesRead < 0) {
+                // the snapshot is acquired under a write lock. we should never
+                // read beyond the EOF, must be an abrupt EOF
+                throw new EOFException("read past EOF. pos [" + position + "] length: [" + cacheBuffer.limit() + "] end: [" + channel.size() + "]");
             }
+            assert bytesRead == 4;
             cacheBuffer.flip();
-            int opSize = cacheBuffer.getInt();
-            position += 4;
+            // Add an extra 4 to account for the operation size integer itself
+            int opSize = cacheBuffer.getInt() + 4;
             if ((position + opSize) > length) {
-                // restore the position to before we read the opSize
-                position -= 4;
-                return false;
+                // the snapshot is acquired under a write lock. we should never
+                // read beyond the EOF, must be an abrupt EOF
+                throw new EOFException("opSize of [" + opSize + "] pointed beyond EOF. position [" + position + "] length [" + length + "]");
             }
             if (cacheBuffer.capacity() < opSize) {
                 cacheBuffer = ByteBuffer.allocate(opSize);
             }
             cacheBuffer.clear();
             cacheBuffer.limit(opSize);
-            channel.read(cacheBuffer, position);
+            bytesRead = Channels.readFromFileChannel(channel, position, cacheBuffer);
+            if (bytesRead < 0) {
+                // the snapshot is acquired under a write lock. we should never
+                // read beyond the EOF, must be an abrupt EOF
+                throw new EOFException("tried to read past EOF. opSize [" + opSize + "] position [" + position + "] length [" + length + "]");
+            }
             cacheBuffer.flip();
             position += opSize;
-            lastOperationRead = TranslogStreams.readTranslogOperation(new BytesStreamInput(cacheBuffer.array(), 0, opSize, true));
-            return true;
-        } catch (Exception e) {
-            return false;
+            BytesArray bytesArray = new BytesArray(cacheBuffer.array(), 0, opSize);
+            return TranslogStreams.readTranslogOperation(new BytesStreamInput(bytesArray.copyBytesArray()));
+        } catch (IOException e) {
+            throw new ElasticsearchException("unexpected exception reading from translog snapshot of " + this.channelReference.file(), e);
         }
     }
 
     @Override
-    public Translog.Operation next() {
-        return this.lastOperationRead;
+    public void seekTo(long position) {
+        this.position = position;
     }
 
     @Override
-    public void seekForward(long length) {
-        this.position += length;
-    }
-
-    @Override
-    public boolean release() throws ElasticSearchException {
-        raf.decreaseRefCount(true);
-        return true;
+    public void close() {
+        if (closed.compareAndSet(false, true)) {
+            channelReference.decRef();
+        }
     }
 }

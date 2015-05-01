@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,7 @@
 
 package org.elasticsearch.common.component;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.common.settings.Settings;
 
 import java.util.List;
@@ -32,7 +32,7 @@ public abstract class AbstractLifecycleComponent<T> extends AbstractComponent im
 
     protected final Lifecycle lifecycle = new Lifecycle();
 
-    private final List<LifecycleListener> listeners = new CopyOnWriteArrayList<LifecycleListener>();
+    private final List<LifecycleListener> listeners = new CopyOnWriteArrayList<>();
 
     protected AbstractLifecycleComponent(Settings settings) {
         super(settings);
@@ -40,22 +40,6 @@ public abstract class AbstractLifecycleComponent<T> extends AbstractComponent im
 
     protected AbstractLifecycleComponent(Settings settings, Class customClass) {
         super(settings, customClass);
-    }
-
-    protected AbstractLifecycleComponent(Settings settings, Class loggerClass, Class componentClass) {
-        super(settings, loggerClass, componentClass);
-    }
-
-    protected AbstractLifecycleComponent(Settings settings, String prefixSettings) {
-        super(settings, prefixSettings);
-    }
-
-    protected AbstractLifecycleComponent(Settings settings, String prefixSettings, Class customClass) {
-        super(settings, prefixSettings, customClass);
-    }
-
-    protected AbstractLifecycleComponent(Settings settings, String prefixSettings, Class loggerClass, Class componentClass) {
-        super(settings, prefixSettings, loggerClass, componentClass);
     }
 
     @Override
@@ -75,7 +59,7 @@ public abstract class AbstractLifecycleComponent<T> extends AbstractComponent im
 
     @SuppressWarnings({"unchecked"})
     @Override
-    public T start() throws ElasticSearchException {
+    public T start() {
         if (!lifecycle.canMoveToStarted()) {
             return (T) this;
         }
@@ -90,11 +74,11 @@ public abstract class AbstractLifecycleComponent<T> extends AbstractComponent im
         return (T) this;
     }
 
-    protected abstract void doStart() throws ElasticSearchException;
+    protected abstract void doStart();
 
     @SuppressWarnings({"unchecked"})
     @Override
-    public T stop() throws ElasticSearchException {
+    public T stop() {
         if (!lifecycle.canMoveToStopped()) {
             return (T) this;
         }
@@ -109,10 +93,10 @@ public abstract class AbstractLifecycleComponent<T> extends AbstractComponent im
         return (T) this;
     }
 
-    protected abstract void doStop() throws ElasticSearchException;
+    protected abstract void doStop();
 
     @Override
-    public void close() throws ElasticSearchException {
+    public void close() {
         if (lifecycle.started()) {
             stop();
         }
@@ -129,5 +113,5 @@ public abstract class AbstractLifecycleComponent<T> extends AbstractComponent im
         }
     }
 
-    protected abstract void doClose() throws ElasticSearchException;
+    protected abstract void doClose();
 }

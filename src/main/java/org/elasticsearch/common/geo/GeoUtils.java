@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,24 +21,49 @@ package org.elasticsearch.common.geo;
 
 import org.apache.lucene.spatial.prefix.tree.GeohashPrefixTree;
 import org.apache.lucene.spatial.prefix.tree.QuadPrefixTree;
+import org.apache.lucene.util.SloppyMath;
+import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.unit.DistanceUnit;
+import org.elasticsearch.common.xcontent.XContentParser;
+import org.elasticsearch.common.xcontent.XContentParser.Token;
+import org.elasticsearch.index.mapper.geo.GeoPointFieldMapper;
+
+import java.io.IOException;
 
 /**
  */
 public class GeoUtils {
 
+    public static final String LATITUDE = GeoPointFieldMapper.Names.LAT;
+    public static final String LONGITUDE = GeoPointFieldMapper.Names.LON;
+    public static final String GEOHASH = GeoPointFieldMapper.Names.GEOHASH;
+    
     /** Earth ellipsoid major axis defined by WGS 84 in meters */
     public static final double EARTH_SEMI_MAJOR_AXIS = 6378137.0;      // meters (WGS 84)
 
     /** Earth ellipsoid minor axis defined by WGS 84 in meters */
     public static final double EARTH_SEMI_MINOR_AXIS = 6356752.314245; // meters (WGS 84)
-    
+
+    /** Earth mean radius defined by WGS 84 in meters */
+    public static final double EARTH_MEAN_RADIUS = 6371008.7714D;      // meters (WGS 84)
+
+    /** Earth axis ratio defined by WGS 84 (0.996647189335) */
+    public static final double EARTH_AXIS_RATIO = EARTH_SEMI_MINOR_AXIS / EARTH_SEMI_MAJOR_AXIS;
+
     /** Earth ellipsoid equator length in meters */
     public static final double EARTH_EQUATOR = 2*Math.PI * EARTH_SEMI_MAJOR_AXIS;
 
     /** Earth ellipsoid polar distance in meters */
     public static final double EARTH_POLAR_DISTANCE = Math.PI * EARTH_SEMI_MINOR_AXIS;
-    
+
+    /**
+     * Return an approximate value of the diameter of the earth (in meters) at the given latitude (in radians).
+     */
+    public static double earthDiameter(double latitude) {
+        // SloppyMath impl returns a result in kilometers
+        return SloppyMath.earthDiameter(latitude) * 1000;
+    }
+
     /**
      * Calculate the width (in meters) of geohash cells at a specific level 
      * @param level geohash level must be greater or equal to zero 
@@ -131,7 +156,7 @@ public class GeoUtils {
      * @return levels need to achieve precision  
      */
     public static int quadTreeLevelsForPrecision(String distance) {
-        return quadTreeLevelsForPrecision(DistanceUnit.parse(distance, DistanceUnit.METERS, DistanceUnit.METERS));
+        return quadTreeLevelsForPrecision(DistanceUnit.METERS.parse(distance, DistanceUnit.DEFAULT));
     }
 
     /**
@@ -167,7 +192,7 @@ public class GeoUtils {
      * @return levels need to achieve precision  
      */
     public static int geoHashLevelsForPrecision(String distance) {
-        return geoHashLevelsForPrecision(DistanceUnit.parse(distance, DistanceUnit.METERS, DistanceUnit.METERS));
+        return geoHashLevelsForPrecision(DistanceUnit.METERS.parse(distance, DistanceUnit.DEFAULT));
     }
 
     /**
@@ -278,5 +303,125 @@ public class GeoUtils {
         }
         return rtn;
     }
+    /**
+     * Parse a {@link GeoPoint} with a {@link XContentParser}:
+     * 
+     * @param parser {@link XContentParser} to parse the value from
+     * @return new {@link GeoPoint} parsed from the parse
+     * 
+     * @throws IOException
+     * @throws org.elasticsearch.ElasticsearchParseException
+     */
+    public static GeoPoint parseGeoPoint(XContentParser parser) throws IOException, ElasticsearchParseException {
+        return parseGeoPoint(parser, new GeoPoint());
+    }
 
+    /**
+     * Parse a {@link GeoPoint} with a {@link XContentParser}. A geopoint has one of the following forms:
+     * 
+     * <ul>
+     *     <li>Object: <pre>{&quot;lat&quot;: <i>&lt;latitude&gt;</i>, &quot;lon&quot;: <i>&lt;longitude&gt;</i>}</pre></li>
+     *     <li>String: <pre>&quot;<i>&lt;latitude&gt;</i>,<i>&lt;longitude&gt;</i>&quot;</pre></li>
+     *     <li>Geohash: <pre>&quot;<i>&lt;geohash&gt;</i>&quot;</pre></li>
+     *     <li>Array: <pre>[<i>&lt;longitude&gt;</i>,<i>&lt;latitude&gt;</i>]</pre></li>
+     * </ul>
+     * 
+     * @param parser {@link XContentParser} to parse the value from
+     * @param point A {@link GeoPoint} that will be reset by the values parsed
+     * @return new {@link GeoPoint} parsed from the parse
+     * 
+     * @throws IOException
+     * @throws org.elasticsearch.ElasticsearchParseException
+     */
+    public static GeoPoint parseGeoPoint(XContentParser parser, GeoPoint point) throws IOException, ElasticsearchParseException {
+        double lat = Double.NaN;
+        double lon = Double.NaN;
+        String geohash = null;
+        
+        if(parser.currentToken() == Token.START_OBJECT) {
+            while(parser.nextToken() != Token.END_OBJECT) {
+                if(parser.currentToken() == Token.FIELD_NAME) {
+                    String field = parser.text();
+                    if(LATITUDE.equals(field)) {
+                        parser.nextToken();
+                        switch (parser.currentToken()) {
+                            case VALUE_NUMBER:
+                            case VALUE_STRING:
+                                lat = parser.doubleValue(true);
+                                break;
+                            default:
+                                throw new ElasticsearchParseException("latitude must be a number");
+                        }
+                    } else if (LONGITUDE.equals(field)) {
+                        parser.nextToken();
+                        switch (parser.currentToken()) {
+                            case VALUE_NUMBER:
+                            case VALUE_STRING:
+                                lon = parser.doubleValue(true);
+                                break;
+                            default:
+                                throw new ElasticsearchParseException("longitude must be a number");
+                        }
+                    } else if (GEOHASH.equals(field)) {
+                        if(parser.nextToken() == Token.VALUE_STRING) {
+                            geohash = parser.text();
+                        } else {
+                            throw new ElasticsearchParseException("geohash must be a string");
+                        }
+                    } else {
+                        throw new ElasticsearchParseException("field must be either '" + LATITUDE + "', '" + LONGITUDE + "' or '" + GEOHASH + "'");
+                    }
+                } else {
+                    throw new ElasticsearchParseException("Token '"+parser.currentToken()+"' not allowed");
+                }
+            }
+
+            if (geohash != null) {
+                if(!Double.isNaN(lat) || !Double.isNaN(lon)) {
+                    throw new ElasticsearchParseException("field must be either lat/lon or geohash");
+                } else {
+                    return point.resetFromGeoHash(geohash);
+                }
+            } else if (Double.isNaN(lat)) {
+                throw new ElasticsearchParseException("field [" + LATITUDE + "] missing");
+            } else if (Double.isNaN(lon)) {
+                throw new ElasticsearchParseException("field [" + LONGITUDE + "] missing");
+            } else {
+                return point.reset(lat, lon);
+            }
+            
+        } else if(parser.currentToken() == Token.START_ARRAY) {
+            int element = 0;
+            while(parser.nextToken() != Token.END_ARRAY) {
+                if(parser.currentToken() == Token.VALUE_NUMBER) {
+                    element++;
+                    if(element == 1) {
+                        lon = parser.doubleValue();
+                    } else if(element == 2) {
+                        lat = parser.doubleValue();
+                    } else {
+                        throw new ElasticsearchParseException("only two values allowed");
+                    }
+                } else {
+                    throw new ElasticsearchParseException("Numeric value expected");
+                }
+            }
+            return point.reset(lat, lon);
+        } else if(parser.currentToken() == Token.VALUE_STRING) {
+            String data = parser.text();
+            int comma = data.indexOf(',');
+            if(comma > 0) {
+                lat = Double.parseDouble(data.substring(0, comma).trim());
+                lon = Double.parseDouble(data.substring(comma + 1).trim());
+                return point.reset(lat, lon);
+            } else {
+                return point.resetFromGeoHash(data);
+            }
+        } else {
+            throw new ElasticsearchParseException("geo_point expected");
+        }
+    }
+
+    private GeoUtils() {
+    }
 }

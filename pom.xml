@@ -6,9 +6,9 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>org.elasticsearch</groupId>
     <artifactId>elasticsearch</artifactId>
-    <version>0.90.0.RC2-SNAPSHOT</version>
+    <version>2.0.0-SNAPSHOT</version>
     <packaging>jar</packaging>
-    <description>ElasticSearch - Open Source, Distributed, RESTful Search Engine</description>
+    <description>Elasticsearch - Open Source, Distributed, RESTful Search Engine</description>
     <inceptionYear>2009</inceptionYear>
     <licenses>
         <license>
@@ -17,6 +17,7 @@
             <distribution>repo</distribution>
         </license>
     </licenses>
+
     <scm>
         <connection>scm:git:git@github.com:elasticsearch/elasticsearch.git</connection>
         <developerConnection>scm:git:git@github.com:elasticsearch/elasticsearch.git</developerConnection>
@@ -30,41 +31,106 @@
     </parent>
 
     <properties>
-        <lucene.version>4.2.0</lucene.version>
+        <lucene.version>5.2.0</lucene.version>
+        <lucene.snapshot.revision>1677039</lucene.snapshot.revision>
+        <lucene.maven.version>5.2.0-snapshot-${lucene.snapshot.revision}</lucene.maven.version>
+        <testframework.version>2.1.14</testframework.version>
+        <tests.jvms>auto</tests.jvms>
+        <tests.shuffle>true</tests.shuffle>
+        <tests.output>onerror</tests.output>
+        <tests.client.ratio></tests.client.ratio>
+        <tests.bwc.path>${project.basedir}/backwards</tests.bwc.path>
+        <tests.locale>random</tests.locale>
+        <tests.timezone>random</tests.timezone>
+        <tests.slow>false</tests.slow>
+        <es.logger.level>ERROR</es.logger.level>
+        <tests.heap.size>512m</tests.heap.size>
+        <tests.heapdump.path>${basedir}/logs/</tests.heapdump.path>
+        <tests.topn>5</tests.topn>
+        <jvm.executable>${java.home}${file.separator}bin${file.separator}java</jvm.executable>
+        <execution.hint.file>.local-${project.version}-execution-hints.log</execution.hint.file>
+
+        <!-- Properties used for building RPM & DEB packages (see common/packaging.properties) -->
+        <packaging.elasticsearch.home.dir>/usr/share/elasticsearch</packaging.elasticsearch.home.dir>
+        <packaging.elasticsearch.bin.dir>/usr/share/elasticsearch/bin</packaging.elasticsearch.bin.dir>
+        <packaging.elasticsearch.conf.dir>/etc/elasticsearch</packaging.elasticsearch.conf.dir>
+        <packaging.elasticsearch.data.dir>/var/lib/elasticsearch</packaging.elasticsearch.data.dir>
+        <packaging.elasticsearch.user>elasticsearch</packaging.elasticsearch.user>
+        <packaging.elasticsearch.group>elasticsearch</packaging.elasticsearch.group>
+        <packaging.elasticsearch.log.dir>/var/log/elasticsearch</packaging.elasticsearch.log.dir>
+        <packaging.elasticsearch.plugins.dir>${packaging.elasticsearch.home.dir}/plugins</packaging.elasticsearch.plugins.dir>
+        <packaging.elasticsearch.pid.dir>/var/run/elasticsearch</packaging.elasticsearch.pid.dir>
+        <deb.sign>false</deb.sign>
+        <deb.sign.method>dpkg-sig</deb.sign.method>
     </properties>
 
     <repositories>
         <repository>
-            <id>elasticsearch</id>
-            <name>elasticsearch repo</name>
-            <url>http://elasticsearch.googlecode.com/svn/maven</url>
+            <id>codehaus-snapshots</id>
+            <name>Codehaus Snapshots</name>
+            <url>http://repository.codehaus.org/</url>
+        </repository>
+        <repository>
+            <id>lucene-snapshots</id>
+            <name>Lucene Snapshots</name>
+            <url>http://download.elastic.co/lucenesnapshots/${lucene.snapshot.revision}</url>
         </repository>
     </repositories>
 
     <dependencies>
+        <dependency>
+            <groupId>org.hamcrest</groupId>
+            <artifactId>hamcrest-all</artifactId>
+            <version>1.3</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.carrotsearch.randomizedtesting</groupId>
+            <artifactId>randomizedtesting-runner</artifactId>
+            <version>${testframework.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-test-framework</artifactId>
+            <version>${lucene.maven.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpclient</artifactId>
+            <version>4.3.5</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.google.jimfs</groupId>
+            <artifactId>jimfs</artifactId>
+            <version>1.0</version>
+            <scope>test</scope>
+        </dependency>
 
         <dependency>
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-core</artifactId>
-            <version>${lucene.version}</version>
+            <version>${lucene.maven.version}</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-backward-codecs</artifactId>
+            <version>${lucene.maven.version}</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-analyzers-common</artifactId>
-            <version>${lucene.version}</version>
-            <scope>compile</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.lucene</groupId>
-            <artifactId>lucene-codecs</artifactId>
-            <version>${lucene.version}</version>
+            <version>${lucene.maven.version}</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-queries</artifactId>
-            <version>${lucene.version}</version>
+            <version>${lucene.maven.version}</version>
             <scope>compile</scope>
             <exclusions>
                 <exclusion>
@@ -76,19 +142,19 @@
         <dependency>
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-memory</artifactId>
-            <version>${lucene.version}</version>
+            <version>${lucene.maven.version}</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-highlighter</artifactId>
-            <version>${lucene.version}</version>
+            <version>${lucene.maven.version}</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-queryparser</artifactId>
-            <version>${lucene.version}</version>
+            <version>${lucene.maven.version}</version>
             <scope>compile</scope>
             <exclusions>
                 <exclusion>
@@ -100,33 +166,40 @@
         <dependency>
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-suggest</artifactId>
-            <version>${lucene.version}</version>
+            <version>${lucene.maven.version}</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-join</artifactId>
-            <version>${lucene.version}</version>
+            <version>${lucene.maven.version}</version>
             <scope>compile</scope>
         </dependency>
         <!-- Lucene spatial, make sure when upgrading to work with latest version of jts/spatial4j dependencies -->
         <dependency>
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-spatial</artifactId>
-            <version>${lucene.version}</version>
+            <version>${lucene.maven.version}</version>
             <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-expressions</artifactId>
+            <version>${lucene.maven.version}</version>
+            <scope>compile</scope>
+            <optional>true</optional>
         </dependency>
         <dependency>
             <groupId>com.spatial4j</groupId>
             <artifactId>spatial4j</artifactId>
-            <version>0.3</version>
+            <version>0.4.1</version>
             <scope>compile</scope>
             <optional>true</optional>
         </dependency>
         <dependency>
             <groupId>com.vividsolutions</groupId>
             <artifactId>jts</artifactId>
-            <version>1.12</version>
+            <version>1.13</version>
             <scope>compile</scope>
             <optional>true</optional>
             <exclusions>
@@ -136,6 +209,13 @@
                 </exclusion>
             </exclusions>
         </dependency>
+        <!-- needed for templating -->
+        <dependency>
+            <groupId>com.github.spullara.mustache.java</groupId>
+            <artifactId>compiler</artifactId>
+            <version>0.8.13</version>
+            <optional>true</optional>
+        </dependency>
         <!-- Lucene spatial -->
 
 
@@ -143,20 +223,14 @@
         <dependency>
             <groupId>com.google.guava</groupId>
             <artifactId>guava</artifactId>
-            <version>14.0.1</version>
+            <version>18.0</version>
             <scope>compile</scope>
-            <exclusions>
-                <exclusion>
-                    <groupId>com.google.code.findbugs</groupId>
-                    <artifactId>jsr305</artifactId>
-                </exclusion>
-            </exclusions>
         </dependency>
 
         <dependency>
-            <groupId>net.sf.trove4j</groupId>
-            <artifactId>trove4j</artifactId>
-            <version>3.0.3</version>
+            <groupId>com.carrotsearch</groupId>
+            <artifactId>hppc</artifactId>
+            <version>0.6.0</version>
         </dependency>
 
         <dependency>
@@ -164,56 +238,99 @@
             <artifactId>joda-time</artifactId>
             <!-- joda 2.0 moved to using volatile fields for datetime -->
             <!-- When updating to a new version, make sure to update our copy of BaseDateTime -->
-            <version>2.1</version>
+            <version>2.7</version>
             <scope>compile</scope>
         </dependency>
-
         <dependency>
-            <groupId>org.mvel</groupId>
-            <artifactId>mvel2</artifactId>
-            <version>2.1.3.Final</version>
+            <groupId>org.joda</groupId>
+            <artifactId>joda-convert</artifactId>
+            <version>1.2</version>
             <scope>compile</scope>
         </dependency>
 
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-core</artifactId>
-            <version>2.1.4</version>
+            <version>2.5.1</version>
             <scope>compile</scope>
         </dependency>
 
         <dependency>
             <groupId>com.fasterxml.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-smile</artifactId>
-            <version>2.1.4</version>
+            <version>2.5.1</version>
             <scope>compile</scope>
         </dependency>
 
         <dependency>
             <groupId>com.fasterxml.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-yaml</artifactId>
-            <version>2.1.4</version>
+            <version>2.5.1</version>
+            <scope>compile</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.dataformat</groupId>
+            <artifactId>jackson-dataformat-cbor</artifactId>
+            <version>2.5.1</version>
             <scope>compile</scope>
         </dependency>
 
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty</artifactId>
-            <version>3.6.3.Final</version>
+            <version>3.10.0.Final</version>
             <scope>compile</scope>
         </dependency>
 
         <dependency>
             <groupId>com.ning</groupId>
             <artifactId>compress-lzf</artifactId>
-            <version>0.9.6</version>
+            <version>1.0.2</version>
             <scope>compile</scope>
         </dependency>
+
+        <dependency>
+            <groupId>com.tdunning</groupId>
+            <artifactId>t-digest</artifactId>
+            <version>3.0</version>
+            <scope>compile</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-lang3</artifactId>
+            <version>3.3.2</version>
+        </dependency>
+
+        <dependency>
+            <groupId>commons-cli</groupId>
+            <artifactId>commons-cli</artifactId>
+            <version>1.2</version>
+        </dependency>
+
         <!-- END: dependencies that are shaded -->
+
+        <dependency>
+            <groupId>org.codehaus.groovy</groupId>
+            <artifactId>groovy-all</artifactId>
+            <version>2.4.0</version>
+            <classifier>indy</classifier>
+            <scope>compile</scope>
+            <optional>true</optional>
+        </dependency>
 
         <dependency>
             <groupId>log4j</groupId>
             <artifactId>log4j</artifactId>
+            <version>1.2.17</version>
+            <scope>compile</scope>
+            <optional>true</optional>
+        </dependency>
+
+        <dependency>
+            <groupId>log4j</groupId>
+            <artifactId>apache-log4j-extras</artifactId>
             <version>1.2.17</version>
             <scope>compile</scope>
             <optional>true</optional>
@@ -230,7 +347,7 @@
         <dependency>
             <groupId>net.java.dev.jna</groupId>
             <artifactId>jna</artifactId>
-            <version>3.3.0</version>
+            <version>4.1.0</version>
             <scope>compile</scope>
             <optional>true</optional>
         </dependency>
@@ -254,33 +371,15 @@
             <optional>true</optional>
         </dependency>
         -->
-
-        <dependency>
-            <groupId>org.testng</groupId>
-            <artifactId>testng</artifactId>
-            <version>6.8</version>
-            <scope>test</scope>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.hamcrest</groupId>
-                    <artifactId>hamcrest-core</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>junit</groupId>
-                    <artifactId>junit</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
-        <dependency>
-            <groupId>org.hamcrest</groupId>
-            <artifactId>hamcrest-all</artifactId>
-            <version>1.3</version>
-            <scope>test</scope>
-        </dependency>
     </dependencies>
 
     <build>
+
+        <!-- This file contains all the common properties used to build
+            the different packages (tar.gz, deb, rpm) using Maven resources plugin -->
+        <filters>
+            <filter>src/packaging/common/packaging.properties</filter>
+        </filters>
 
         <resources>
             <resource>
@@ -295,6 +394,7 @@
                 <includes>
                     <include>**/*.*</include>
                 </includes>
+                <filtering>true</filtering>
             </resource>
         </resources>
 
@@ -305,6 +405,14 @@
                     <include>**/*.json</include>
                     <include>**/*.yml</include>
                     <include>**/*.txt</include>
+                    <include>**/*.properties</include>
+                </includes>
+                <filtering>true</filtering>
+            </testResource>
+            <testResource>
+                <directory>${basedir}/src/test/java</directory>
+                <includes>
+                    <include>**/*.gz</include>
                 </includes>
             </testResource>
             <testResource>
@@ -313,45 +421,341 @@
                     <include>**/*.*</include>
                 </includes>
             </testResource>
+            <testResource>
+                <directory>${basedir}/rest-api-spec</directory>
+                <targetPath>rest-api-spec</targetPath>
+                <includes>
+                    <include>api/*.json</include>
+                    <include>test/**/*.yaml</include>
+                </includes>
+            </testResource>
         </testResources>
 
         <plugins>
-            <plugin>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <version>1.4.0</version>
+            <executions>
+              <execution>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+              </execution>
+            </executions>
+            <configuration>
+              <executable>${jvm.executable}</executable>
+              <arguments>
+                <argument>-Des.security.manager.enabled=false</argument>
+                <argument>-classpath</argument>
+                <classpath/>
+                <argument>org.elasticsearch.bootstrap.Bootstrap</argument>
+                <argument>-Xms256m</argument>
+                <argument>-Xmx1g</argument>
+                <argument>-Djava.awt.headless=true</argument>
+                <argument>-XX:+UseParNewGC</argument>
+                <argument>-XX:+UseConcMarkSweepGC</argument>
+                <argument>-XX:CMSInitiatingOccupancyFraction=75</argument>
+                <argument>-XX:+UseCMSInitiatingOccupancyOnly</argument>
+                <argument>-XX:+HeapDumpOnOutOfMemoryError</argument>
+                <argument>-XX:+DisableExplicitGC</argument>
+                <argument>-Dfile.encoding=UTF-8</argument>
+                <argument>-Delasticsearch</argument>
+              </arguments>
+            </configuration>
+          </plugin>
+          <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>2.3.2</version>
-                <configuration>
-                    <source>1.6</source>
-                    <target>1.6</target>
-                </configuration>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>1.3.1</version>
+                <executions>
+                    <execution>
+                        <id>enforce-versions</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[1.7,)</version>
+                                </requireJavaVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <version>2.12.3</version>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.1</version>
                 <configuration>
-                    <includes>
-                        <include>**/*Tests.java</include>
-                    </includes>
-                    <properties>
-                        <property>
-                            <name>listener</name>
-                            <value>org.elasticsearch.test.TestNGLoggingListener</value>
-                        </property>
-                    </properties>
-                    <argLine>-Xmx512m -Des.logger.prefix=</argLine>
-                    <systemPropertyVariables>
-                        <es.node.local>${env.ES_TEST_LOCAL}</es.node.local>
-                        <es.transport.tcp.compress>${env.ES_TEST_COMPRESS}</es.transport.tcp.compress>
-                        <es.action.wait_on_mapping_change>${env.ES_WAIT_ON_MAPPING_CHANGE}
-                        </es.action.wait_on_mapping_change>
-                    </systemPropertyVariables>
+                    <source>1.7</source>
+                    <target>1.7</target>
+                    <fork>true</fork>
+                    <maxmem>512m</maxmem>
+                    <!-- REMOVE WHEN UPGRADE:
+                         see https://jira.codehaus.org/browse/MCOMPILER-209 it's a bug where
+                         incremental compilation doesn't work unless it's set to false causeing
+                         recompilation of the entire codebase each time without any changes. Should
+                         be fixed in version > 3.1
+                     -->
+                    <useIncrementalCompilation>false</useIncrementalCompilation>
+                    <compilerArgs>
+                        <arg>-XDignore.symbol.file</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>com.carrotsearch.randomizedtesting</groupId>
+                <artifactId>junit4-maven-plugin</artifactId>
+                <version>${testframework.version}</version>
+                <executions>
+                    <execution>
+                        <id>tests</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>junit4</goal>
+                        </goals>
+                        <configuration>
+                            <jvm>${jvm.executable}</jvm>
+                            <heartbeat>10</heartbeat>
+                            <jvmOutputAction>pipe,warn</jvmOutputAction>
+                            <leaveTemporary>true</leaveTemporary>
+                            <ifNoTests>fail</ifNoTests>
+                            <listeners>
+                                <report-ant-xml mavenExtensions="true"
+                                                dir="${project.build.directory}/surefire-reports"/>
+                                <report-text
+                                        showThrowable="true"
+                                        showStackTraces="true"
+                                        showOutput="${tests.output}"
+                                        showStatusOk="false"
+                                        showStatusError="true"
+                                        showStatusFailure="true"
+                                        showStatusIgnored="true"
+                                        showSuiteSummary="true"
+                                        timestamps="false">
+                                  <filtertrace>
+                                     <!-- custom filters: we carefully only omit test infra noise here -->
+                                     <containsstring contains=".SlaveMain." />
+                                     <containsregex pattern="^(\s+at )(org\.junit\.)" />
+                                     <!-- also includes anonymous classes inside these two: -->
+                                     <containsregex pattern="^(\s+at )(com\.carrotsearch\.randomizedtesting.RandomizedRunner)" />
+                                     <containsregex pattern="^(\s+at )(com\.carrotsearch\.randomizedtesting.ThreadLeakControl)" />
+                                     <containsregex pattern="^(\s+at )(com\.carrotsearch\.randomizedtesting.rules\.)" />
+                                     <containsregex pattern="^(\s+at )(org\.apache\.lucene.util\.TestRule)" />
+                                     <containsregex pattern="^(\s+at )(org\.apache\.lucene.util\.AbstractBeforeAfterRule)" />
+                                  </filtertrace>
+                                </report-text>
+                                <report-execution-times historyLength="20" file="${basedir}/${execution.hint.file}"/>
+                            </listeners>
+                            <assertions>
+                                <enable/>
+                                <disable package="${tests.assertion.disabled}"/>
+                                <!-- pass org.elasticsearch to run without assertions -->
+                            </assertions>
+                            <parallelism>${tests.jvms}</parallelism>
+                            <balancers>
+                                <execution-times>
+                                    <fileset dir="${basedir}" includes="${execution.hint.file}"/>
+                                </execution-times>
+                            </balancers>
+                            <includes>
+                                <include>**/*Tests.class</include>
+                                <include>**/*Test.class</include>
+                            </includes>
+                            <excludes>
+                                <exclude>**/Abstract*.class</exclude>
+                                <exclude>**/*StressTest.class</exclude>
+                            </excludes>
+                            <jvmArgs>
+                                <param>-Xmx${tests.heap.size}</param>
+                                <param>-Xms${tests.heap.size}</param>
+                                <param>${java.permGenSpace}</param>
+                                <param>-Djava.library.path=${project.basedir}/lib/sigar</param>
+                                <param>-XX:MaxDirectMemorySize=512m</param>
+                                <param>-Des.logger.prefix=</param>
+                                <param>-XX:+HeapDumpOnOutOfMemoryError</param>
+                                <param>-XX:HeapDumpPath=${tests.heapdump.path}</param>
+                            </jvmArgs>
+                            <shuffleOnSlave>${tests.shuffle}</shuffleOnSlave>
+                            <sysouts>${tests.verbose}</sysouts>
+                            <seed>${tests.seed}</seed>
+                            <haltOnFailure>${tests.failfast}</haltOnFailure>
+                            <!-- enforce unique suite names, or reporting stuff can be screwed up -->
+                            <uniqueSuiteNames>true</uniqueSuiteNames>
+                            <systemProperties>
+                                <!-- we use './temp' since this is per JVM and tests are forbidden from writing to CWD -->
+                                <java.io.tmpdir>./temp</java.io.tmpdir>
+                                <!-- RandomizedTesting library system properties -->
+                                <tests.bwc>${tests.bwc}</tests.bwc>
+                                <tests.bwc.path>${tests.bwc.path}</tests.bwc.path>
+                                <tests.bwc.version>${tests.bwc.version}</tests.bwc.version>
+                                <tests.jvm.argline>${tests.jvm.argline}</tests.jvm.argline>
+                                <tests.appendseed>${tests.appendseed}</tests.appendseed>
+                                <tests.iters>${tests.iters}</tests.iters>
+                                <tests.maxfailures>${tests.maxfailures}</tests.maxfailures>
+                                <tests.failfast>${tests.failfast}</tests.failfast>
+                                <tests.class>${tests.class}</tests.class>
+                                <tests.method>${tests.method}</tests.method>
+                                <tests.nightly>${tests.nightly}</tests.nightly>
+                                <tests.verbose>${tests.verbose}</tests.verbose>
+                                <tests.badapples>${tests.badapples}</tests.badapples>
+                                <tests.weekly>${tests.weekly}</tests.weekly>
+                                <tests.slow>${tests.slow}</tests.slow>
+                                <tests.awaitsfix>${tests.awaitsfix}</tests.awaitsfix>
+                                <tests.timeoutSuite>${tests.timeoutSuite}</tests.timeoutSuite>
+                                <tests.showSuccess>${tests.showSuccess}</tests.showSuccess>
+                                <tests.integration>${tests.integration}</tests.integration>
+                                <tests.client.ratio>${tests.client.ratio}</tests.client.ratio>
+                                <tests.enable_mock_modules>${tests.enable_mock_modules}</tests.enable_mock_modules>
+                                <tests.assertion.disabled>${tests.assertion.disabled}</tests.assertion.disabled>
+                                <tests.rest>${tests.rest}</tests.rest>
+                                <tests.rest.suite>${tests.rest.suite}</tests.rest.suite>
+                                <tests.rest.blacklist>${tests.rest.blacklist}</tests.rest.blacklist>
+                                <tests.rest.spec>${tests.rest.spec}</tests.rest.spec>
+                                <tests.network>${tests.network}</tests.network>
+                                <tests.cluster>${tests.cluster}</tests.cluster>
+                                <tests.heap.size>${tests.heap.size}</tests.heap.size>
+                                <tests.filter>${tests.filter}</tests.filter>
+                                <tests.version>${project.version}</tests.version>
+                                <tests.locale>${tests.locale}</tests.locale>
+                                <tests.timezone>${tests.timezone}</tests.timezone>
+                                <project.basedir>${project.basedir}</project.basedir>
+                                <m2.repository>${settings.localRepository}</m2.repository>
+                                <es.node.local>${env.ES_TEST_LOCAL}</es.node.local>
+                                <es.node.mode>${es.node.mode}</es.node.mode>
+                                <es.logger.level>${es.logger.level}</es.logger.level>
+                                <tests.security.manager>${tests.security.manager}</tests.security.manager>
+                                <tests.compatibility>${tests.compatibility}</tests.compatibility>
+                                <java.awt.headless>true</java.awt.headless>
+                                <!-- security manager / test.policy -->
+                                <java.security.policy>${basedir}/src/main/resources/org/elasticsearch/bootstrap/security.policy</java.security.policy>
+                            </systemProperties>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>1.7</version>
+                <executions>
+                    <execution>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <echo>Using ${java.runtime.name} ${java.runtime.version} ${java.vendor}</echo>
+                            </target>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>set-permGen</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <!-- if we are on java 1.7.* we set perm gen space since some tests need it otherwise we just inject a dummy value -->
+                                <condition property="java.permGenSpace" value="-XX:MaxPermSize=128m" else="-Dsome.dummy.value=" >
+                                    <matches pattern="1\.7\..+$" string="${java.runtime.version}" />
+                                </condition>
+                            </target>
+                            <exportAntProperties>true</exportAntProperties>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>invalid-patterns</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target unless="${validate.skip}">
+                                <pathconvert pathsep="${line.separator}" dirsep="/" property="validate.patternsFound" setonempty="false">
+                                    <fileset dir="${basedir}">
+                                        <include name="**/*.java"/>
+                                        <include name="**/*.py"/>
+                                        <include name="**/*.txt"/>
+                                        <include name="**/*.xml"/>
+                                        <include name="**/*.rb"/>
+                                        <include name="**/*.pl"/>
+                                        <exclude name="**/org/elasticsearch/cluster/routing/shard_routes.txt"/>
+                                        <exclude name="target/**/*"/>
+                                        <exclude name=".metadata/**/*"/>
+                                        <exclude name=".idea/**/*"/>
+                                        <or>
+                                            <containsregexp expression="\bno(n|)commit\b" casesensitive="no"/>
+                                            <containsregexp expression="\t" casesensitive="no"/>
+                                        </or>
+                                    </fileset>
+                                    <map from="${basedir}${file.separator}" to="* "/>
+                                </pathconvert>
+                                <fail if="validate.patternsFound">The following files contain tabs or
+                                    nocommits:${line.separator}${validate.patternsFound}
+                                </fail>
+                            </target>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <phase>generate-test-resources</phase>
+                        <id>create-heapdump-directory</id>
+                        <configuration>
+                            <target>
+                                <echo message="Creating heapdump directory"/>
+                                <mkdir dir="${tests.heapdump.path}"/>
+                            </target>
+                        </configuration>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>tests</id>
+                        <phase>test</phase>
+                        <configuration>
+                            <skip>${skipTests}</skip>
+                            <!-- don't run if we skip the tests -->
+                            <failOnError>false</failOnError>
+                            <target>
+                                <property name="runtime_classpath" refid="maven.runtime.classpath"/>
+                                <property name="test_classpath" refid="maven.test.classpath"/>
+                                <property name="plugin_classpath" refid="maven.plugin.classpath"/>
+                                <taskdef resource="com/carrotsearch/junit4/antlib.xml">
+                                    <classpath>
+                                        <pathelement path="${plugin_classpath}"/>
+                                        <pathelement path="${runtime_classpath}"/>
+                                        <pathelement path="${test_classpath}"/>
+                                    </classpath>
+                                </taskdef>
+                                <tophints max="${tests.topn}">
+                                    <file file="${basedir}/${execution.hint.file}"/>
+                                </tophints>
+                            </target>
+                        </configuration>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <!-- we skip surefire to work with randomized testing above -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>2.16</version>
+                <configuration>
+                    <skipTests>true</skipTests>
                 </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-source-plugin</artifactId>
-                <version>2.1.2</version>
+                <version>2.2.1</version>
                 <executions>
                     <execution>
                         <id>attach-sources</id>
@@ -359,12 +763,32 @@
                             <goal>jar</goal>
                         </goals>
                     </execution>
+                    <execution>
+                        <id>attach-test-sources</id>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                        <configuration>
+                            <includes>
+                                <include>org/elasticsearch/test/**/*</include>
+                                <include>org/apache/lucene/util/AbstractRandomizedTest.java</include>
+                            </includes>
+                            <excludes>
+                                <!-- unit tests for yaml suite parser & rest spec parser need to be excluded -->
+                                <exclude>org/elasticsearch/test/rest/test/**/*</exclude>
+                                <!-- unit tests for test framework classes-->
+                                <exclude>org/elasticsearch/test/test/**/*</exclude>
+                            </excludes>
+                            <!-- Resources are large and not really helpful as "test sources". -->
+                            <excludeResources>true</excludeResources>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
-                <version>1.5</version>
+                <version>2.3</version>
                 <executions>
                     <execution>
                         <phase>package</phase>
@@ -374,18 +798,25 @@
                     </execution>
                 </executions>
                 <configuration>
+                    <shadeTestJar>true</shadeTestJar>
                     <minimizeJar>true</minimizeJar>
+                    <promoteTransitiveDependencies>true</promoteTransitiveDependencies>
                     <artifactSet>
                         <includes>
                             <include>com.google.guava:guava</include>
-                            <include>net.sf.trove4j:trove4j</include>
-                            <include>org.mvel:mvel2</include>
+                            <include>com.carrotsearch:hppc</include>
                             <include>com.fasterxml.jackson.core:jackson-core</include>
                             <include>com.fasterxml.jackson.dataformat:jackson-dataformat-smile</include>
                             <include>com.fasterxml.jackson.dataformat:jackson-dataformat-yaml</include>
+                            <include>com.fasterxml.jackson.dataformat:jackson-dataformat-cbor</include>
                             <include>joda-time:joda-time</include>
+                            <include>org.joda:joda-convert</include>
                             <include>io.netty:netty</include>
                             <include>com.ning:compress-lzf</include>
+                            <include>com.github.spullara.mustache.java:compiler</include>
+                            <include>com.tdunning:t-digest</include>
+                            <include>org.apache.commons:commons-lang3</include>
+                            <include>commons-cli:commons-cli</include>
                         </includes>
                     </artifactSet>
                     <relocations>
@@ -394,28 +825,20 @@
                             <shadedPattern>org.elasticsearch.common</shadedPattern>
                         </relocation>
                         <relocation>
-                            <pattern>gnu.trove</pattern>
-                            <shadedPattern>org.elasticsearch.common.trove</shadedPattern>
-                        </relocation>
-                        <relocation>
-                            <pattern>jsr166y</pattern>
-                            <shadedPattern>org.elasticsearch.common.util.concurrent.jsr166y</shadedPattern>
+                            <pattern>com.carrotsearch.hppc</pattern>
+                            <shadedPattern>org.elasticsearch.common.hppc</shadedPattern>
                         </relocation>
                         <relocation>
                             <pattern>jsr166e</pattern>
                             <shadedPattern>org.elasticsearch.common.util.concurrent.jsr166e</shadedPattern>
                         </relocation>
                         <relocation>
-                            <pattern>org.mvel2</pattern>
-                            <shadedPattern>org.elasticsearch.common.mvel2</shadedPattern>
-                        </relocation>
-                        <relocation>
                             <pattern>com.fasterxml.jackson</pattern>
                             <shadedPattern>org.elasticsearch.common.jackson</shadedPattern>
                         </relocation>
                         <relocation>
-                            <pattern>org.joda</pattern>
-                            <shadedPattern>org.elasticsearch.common.joda</shadedPattern>
+                            <pattern>org.joda.time</pattern>
+                            <shadedPattern>org.elasticsearch.common.joda.time</shadedPattern>
                         </relocation>
                         <relocation>
                             <pattern>org.jboss.netty</pattern>
@@ -424,6 +847,22 @@
                         <relocation>
                             <pattern>com.ning.compress</pattern>
                             <shadedPattern>org.elasticsearch.common.compress</shadedPattern>
+                        </relocation>
+                        <relocation>
+                            <pattern>com.github.mustachejava</pattern>
+                            <shadedPattern>org.elasticsearch.common.mustache</shadedPattern>
+                        </relocation>
+                        <relocation>
+                            <pattern>com.tdunning.math.stats</pattern>
+                            <shadedPattern>org.elasticsearch.common.stats</shadedPattern>
+                        </relocation>
+                        <relocation>
+                            <pattern>org.apache.commons.lang</pattern>
+                            <shadedPattern>org.elasticsearch.common.lang</shadedPattern>
+                        </relocation>
+                        <relocation>
+                            <pattern>org.apache.commons.cli</pattern>
+                            <shadedPattern>org.elasticsearch.common.cli.commons</shadedPattern>
                         </relocation>
                     </relocations>
                     <filters>
@@ -439,12 +878,18 @@
                                 <exclude>build.properties</exclude>
                             </excludes>
                         </filter>
+                        <filter>
+                            <artifact>io.netty:netty</artifact>
+                            <includes>
+                                <include>org/jboss/netty/**</include>
+                            </includes>
+                        </filter>
                     </filters>
                 </configuration>
             </plugin>
             <plugin>
                 <artifactId>maven-resources-plugin</artifactId>
-                <version>2.5</version>
+                <version>2.6</version>
                 <executions>
                     <execution>
                         <id>copy-resources</id>
@@ -458,6 +903,108 @@
                                 <resource>
                                     <directory>${basedir}/bin</directory>
                                     <filtering>true</filtering>
+                                    <excludes>
+                                        <exclude>*.exe</exclude>
+                                    </excludes>
+                                </resource>
+                                <resource>
+                                    <directory>${basedir}/bin</directory>
+                                    <filtering>false</filtering>
+                                    <includes>
+                                        <include>*.exe</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                    <!-- Filters some files and uses packaging.properties when building the .deb package -->
+                    <execution>
+                        <id>copy-resources-deb</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/generated-packaging/deb/</outputDirectory>
+                            <filters>
+                                <filter>src/packaging/common/packaging.properties</filter>
+                                <filter>src/packaging/deb/packaging.properties</filter>
+                            </filters>
+                            <resources>
+                                <resource>
+                                    <directory>src/packaging/common/</directory>
+                                    <filtering>true</filtering>
+                                    <includes>
+                                        <include>**/*</include>
+                                    </includes>
+                                    <excludes>
+                                        <exclude>packaging.properties</exclude>
+                                    </excludes>
+                                </resource>
+                                <resource>
+                                    <directory>src/packaging/deb/</directory>
+                                    <filtering>true</filtering>
+                                    <includes>
+                                        <include>**/*</include>
+                                    </includes>
+                                    <excludes>
+                                        <exclude>packaging.properties</exclude>
+                                    </excludes>
+                                </resource>
+                                <resource>
+                                    <directory>${project.basedir}</directory>
+                                    <filtering>true</filtering>
+                                    <includes>
+                                        <include>bin/elasticsearch</include>
+                                        <include>bin/elasticsearch.in.sh</include>
+                                        <include>bin/plugin</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                    <!-- Filters some files and uses packaging.properties when building the .rpm package -->
+                    <execution>
+                        <id>copy-resources-rpm</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/generated-packaging/rpm/</outputDirectory>
+                            <filters>
+                                <filter>src/packaging/common/packaging.properties</filter>
+                                <filter>src/packaging/rpm/packaging.properties</filter>
+                            </filters>
+                            <resources>
+                                <resource>
+                                    <directory>src/packaging/common/</directory>
+                                    <filtering>true</filtering>
+                                    <includes>
+                                        <include>**/*</include>
+                                    </includes>
+                                    <excludes>
+                                        <exclude>packaging.properties</exclude>
+                                    </excludes>
+                                </resource>
+                                <resource>
+                                    <directory>src/packaging/rpm/</directory>
+                                    <filtering>true</filtering>
+                                    <includes>
+                                        <include>**/*</include>
+                                    </includes>
+                                    <excludes>
+                                        <exclude>packaging.properties</exclude>
+                                    </excludes>
+                                </resource>
+                                <resource>
+                                    <directory>${project.basedir}</directory>
+                                    <filtering>true</filtering>
+                                    <includes>
+                                        <include>bin/elasticsearch</include>
+                                        <include>bin/elasticsearch.in.sh</include>
+                                        <include>bin/plugin</include>
+                                    </includes>
                                 </resource>
                             </resources>
                         </configuration>
@@ -466,7 +1013,7 @@
             </plugin>
             <plugin>
                 <artifactId>maven-assembly-plugin</artifactId>
-                <version>2.3</version>
+                <version>2.4</version>
                 <configuration>
                     <appendAssemblyId>false</appendAssemblyId>
                     <outputDirectory>${project.build.directory}/releases/</outputDirectory>
@@ -485,7 +1032,25 @@
                 </executions>
             </plugin>
             <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>buildnumber-maven-plugin</artifactId>
+                <version>1.2</version>
+                <executions>
+                    <execution>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>create</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <doCheck>false</doCheck>
+                    <doUpdate>false</doUpdate>
+                </configuration>
+            </plugin>
+            <plugin>
                 <artifactId>maven-dependency-plugin</artifactId>
+                <version>2.8</version>
                 <executions>
                     <execution>
                         <phase>prepare-package</phase>
@@ -494,18 +1059,21 @@
                         </goals>
                         <configuration>
                             <outputDirectory>${project.build.directory}/lib</outputDirectory>
+                            <includeScope>runtime</includeScope>
                         </configuration>
                     </execution>
                 </executions>
             </plugin>
+
+            <!-- Deb Packaging -->
             <plugin>
-                <!-- some infos https://github.com/tcurdt/jdeb/blob/master/docs/maven.md
-                -->
+                <!-- some infos https://github.com/tcurdt/jdeb/blob/master/docs/maven.md -->
                 <artifactId>jdeb</artifactId>
                 <groupId>org.vafer</groupId>
-                <version>0.9</version>
+                <version>1.4</version>
                 <configuration>
                     <deb>${project.build.directory}/releases/${project.artifactId}-${project.version}.deb</deb>
+                    <controlDir>${project.build.directory}/generated-packaging/deb/scripts</controlDir>
                 </configuration>
                 <executions>
                     <execution>
@@ -514,38 +1082,57 @@
                             <goal>jdeb</goal>
                         </goals>
                         <configuration>
+                            <signPackage>${deb.sign}</signPackage>
+                            <keyring>${gpg.keyring}</keyring>
+                            <key>${gpg.key}</key>
+                            <passphrase>${gpg.passphrase}</passphrase>
+                            <signMethod>${deb.sign.method}</signMethod>
                             <dataSet>
+                                <!-- Add bin directory -->
                                 <data>
-                                    <src>${project.basedir}/</src>
-                                    <includes>*.txt, *.textile</includes>
+                                    <src>${project.build.directory}/generated-packaging/deb/bin</src>
                                     <type>directory</type>
+                                    <includes>elasticsearch,elasticsearch.in.sh,plugin</includes>
                                     <mapper>
                                         <type>perm</type>
-                                        <prefix>/usr/share/elasticsearch</prefix>
-                                        <user>root</user>
-                                        <group>root</group>
-                                    </mapper>
-                                </data>
-                                <data>
-                                    <!-- use the filtered one from the resources plugin -->
-                                    <src>${project.build.directory}/bin</src>
-                                    <type>directory</type>
-                                    <excludes>*.bat, .DS_Store</excludes>
-                                    <mapper>
-                                        <type>perm</type>
-                                        <prefix>/usr/share/elasticsearch/bin</prefix>
+                                        <prefix>${packaging.elasticsearch.bin.dir}</prefix>
                                         <filemode>755</filemode>
                                         <user>root</user>
                                         <group>root</group>
                                     </mapper>
                                 </data>
+                                <!-- Add configuration files -->
+                                <data>
+                                    <src>${project.basedir}/config</src>
+                                    <type>directory</type>
+                                    <excludes>.DS_Store</excludes>
+                                    <mapper>
+                                        <type>perm</type>
+                                        <prefix>${packaging.elasticsearch.conf.dir}</prefix>
+                                        <user>root</user>
+                                        <group>root</group>
+                                    </mapper>
+                                </data>
+                                <!-- Add environment vars file -->
+                                <data>
+                                    <src>${project.build.directory}/generated-packaging/deb/env/elasticsearch</src>
+                                    <type>file</type>
+                                    <mapper>
+                                        <type>perm</type>
+                                        <prefix>/etc/default</prefix>
+                                        <filemode>644</filemode>
+                                        <user>root</user>
+                                        <group>root</group>
+                                    </mapper>
+                                </data>
+                                <!-- Add libs -->
                                 <data>
                                     <src>${project.build.directory}/</src>
                                     <includes>${project.build.finalName}.jar</includes>
                                     <type>directory</type>
                                     <mapper>
                                         <type>perm</type>
-                                        <prefix>/usr/share/elasticsearch/lib</prefix>
+                                        <prefix>${packaging.elasticsearch.home.dir}/lib</prefix>
                                         <user>root</user>
                                         <group>root</group>
                                     </mapper>
@@ -556,35 +1143,25 @@
                                     <type>directory</type>
                                     <mapper>
                                         <type>perm</type>
-                                        <prefix>/usr/share/elasticsearch/lib/sigar</prefix>
+                                        <prefix>${packaging.elasticsearch.home.dir}/lib/sigar</prefix>
                                         <user>root</user>
                                         <group>root</group>
                                     </mapper>
                                 </data>
                                 <data>
                                     <src>${project.build.directory}/lib</src>
-                                    <includes>lucene*, log4j*, jna*, spatial4j*, jts*</includes>
+                                    <includes>lucene*, *log4j*, jna*, spatial4j*, jts*, groovy*, antlr-runtime*, asm*</includes>
                                     <type>directory</type>
                                     <mapper>
                                         <type>perm</type>
-                                        <prefix>/usr/share/elasticsearch/lib</prefix>
+                                        <prefix>${packaging.elasticsearch.home.dir}/lib</prefix>
                                         <user>root</user>
                                         <group>root</group>
                                     </mapper>
                                 </data>
+                                <!-- Add init.d files  -->
                                 <data>
-                                    <src>${project.basedir}/src/deb/default/</src>
-                                    <type>directory</type>
-                                    <excludes>.DS_Store</excludes>
-                                    <mapper>
-                                        <type>perm</type>
-                                        <prefix>/etc/default</prefix>
-                                        <user>root</user>
-                                        <group>root</group>
-                                    </mapper>
-                                </data>
-                                <data>
-                                    <src>${project.basedir}/src/deb/init.d/</src>
+                                    <src>${project.build.directory}/generated-packaging/deb/init.d/</src>
                                     <type>directory</type>
                                     <excludes>.DS_Store</excludes>
                                     <mapper>
@@ -595,19 +1172,378 @@
                                         <group>root</group>
                                     </mapper>
                                 </data>
+                                <!-- Adds systemd file -->
                                 <data>
-                                    <src>${project.basedir}/config</src>
+                                    <src>${project.build.directory}/generated-packaging/deb/systemd/elasticsearch.service</src>
+                                    <dst>/usr/lib/systemd/system/elasticsearch.service</dst>
+                                    <type>file</type>
+                                </data>
+                                <!-- Add lintian files  -->
+                                <data>
+                                    <src>${project.build.directory}/generated-packaging/deb/lintian</src>
                                     <type>directory</type>
                                     <excludes>.DS_Store</excludes>
                                     <mapper>
                                         <type>perm</type>
-                                        <prefix>/etc/elasticsearch</prefix>
+                                        <prefix>/usr/share/lintian/overrides</prefix>
                                         <user>root</user>
                                         <group>root</group>
                                     </mapper>
                                 </data>
+                                <!-- Add readme files  -->
+                                <data>
+                                    <src>${project.basedir}/</src>
+                                    <includes>*.txt, *.textile</includes>
+                                    <excludes>LICENSE.txt, .DS_Store</excludes>
+                                    <type>directory</type>
+                                    <mapper>
+                                        <type>perm</type>
+                                        <prefix>${packaging.elasticsearch.home.dir}</prefix>
+                                        <user>root</user>
+                                        <group>root</group>
+                                    </mapper>
+                                </data>
+                                <!-- Add license files  -->
+                                <data>
+                                    <src>${project.build.directory}/generated-packaging/deb/copyright</src>
+                                    <dst>/usr/share/doc/elasticsearch/copyright</dst>
+                                    <type>file</type>
+                                </data>
+                                <!-- Adds and sets permission on default directories -->
+                                <data>
+                                    <type>template</type>
+                                    <paths>
+                                        <path>${packaging.elasticsearch.data.dir}</path>
+                                        <path>${packaging.elasticsearch.log.dir}</path>
+                                        <path>${packaging.elasticsearch.plugins.dir}</path>
+                                        <path>${packaging.elasticsearch.pid.dir}</path>
+                                    </paths>
+                                    <mapper>
+                                        <type>perm</type>
+                                        <dirmode>755</dirmode>
+                                        <user>${packaging.elasticsearch.user}</user>
+                                        <group>${packaging.elasticsearch.group}</group>
+                                    </mapper>
+                                </data>
                             </dataSet>
 
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Rpm Packaging -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>rpm-maven-plugin</artifactId>
+                <version>2.1.2</version>
+                <configuration>
+                    <distribution>Elasticsearch</distribution>
+                    <group>Application/Internet</group>
+                    <packager>Elasticsearch</packager>
+                    <prefix>/usr</prefix>
+                    <changelogFile>src/changelog</changelogFile>
+                    <defineStatements>
+                        <defineStatement>_unpackaged_files_terminate_build 0</defineStatement>
+                        <defineStatement>_binaries_in_noarch_packages_terminate_build 0</defineStatement>
+                    </defineStatements>
+                    <defaultFilemode>644</defaultFilemode>
+                    <defaultDirmode>755</defaultDirmode>
+                    <defaultUsername>root</defaultUsername>
+                    <defaultGroupname>root</defaultGroupname>
+                    <keyname>${gpg.key}</keyname>
+                    <keypath>${gpg.keyring}</keypath>
+                    <keyPassphrase>
+                        <passphrase>${gpg.passphrase}</passphrase>
+                    </keyPassphrase>
+                    <mappings>
+                        <!-- Add bin directory -->
+                        <mapping>
+                            <directory>${packaging.elasticsearch.bin.dir}/</directory>
+                            <filemode>755</filemode>
+                            <sources>
+                                <source>
+                                    <location>${project.build.directory}/generated-packaging/rpm/bin</location>
+                                    <includes>
+                                        <include>elasticsearch</include>
+                                        <include>elasticsearch.in.sh</include>
+                                        <include>plugin</include>
+                                    </includes>
+                                </source>
+                            </sources>
+                        </mapping>
+                        <!-- Add configuration files -->
+                        <mapping>
+                            <directory>${packaging.elasticsearch.conf.dir}/</directory>
+                            <configuration>noreplace</configuration>
+                            <sources>
+                                <source>
+                                    <location>${project.basedir}/config/</location>
+                                    <includes>
+                                        <include>*.yml</include>
+                                    </includes>
+                                </source>
+                            </sources>
+                        </mapping>
+                        <!-- Add environment vars file -->
+                        <mapping>
+                            <directory>/etc/sysconfig/</directory>
+                            <directoryIncluded>false</directoryIncluded>
+                            <configuration>noreplace</configuration>
+                            <sources>
+                                <source>
+                                    <location>${project.build.directory}/generated-packaging/rpm/env/</location>
+                                    <includes>
+                                        <include>elasticsearch</include>
+                                    </includes>
+                                </source>
+                            </sources>
+                        </mapping>
+                        <!-- Add libs -->
+                        <mapping>
+                            <directory>${packaging.elasticsearch.home.dir}/lib</directory>
+                            <sources>
+                                <source>
+                                    <location>target/lib/</location>
+                                    <includes>
+                                        <include>lucene*</include>
+                                        <include>*log4j*</include>
+                                        <include>jna*</include>
+                                        <include>spatial4j*</include>
+                                        <include>jts*</include>
+                                        <include>groovy*</include>
+                                        <include>antlr-runtime*</include>
+                                        <include>asm*</include>
+                                    </includes>
+                                </source>
+                                <source>
+                                    <location>${project.build.directory}/</location>
+                                    <includes>
+                                        <include>${project.build.finalName}.jar</include>
+                                    </includes>
+                                </source>
+                            </sources>
+                        </mapping>
+                        <mapping>
+                            <directory>${packaging.elasticsearch.home.dir}/lib/sigar</directory>
+                            <sources>
+                                <source>
+                                    <location>lib/sigar</location>
+                                    <includes>
+                                        <include>sigar*.jar</include>
+                                        <include>libsigar-*-linux.*</include>
+                                    </includes>
+                                </source>
+                            </sources>
+                        </mapping>
+                        <!-- Add init.d files  -->
+                        <mapping>
+                            <directory>/etc/init.d</directory>
+                            <directoryIncluded>false</directoryIncluded>
+                            <filemode>755</filemode>
+                            <configuration>true</configuration>
+                            <sources>
+                                <source>
+                                    <location>${project.build.directory}/generated-packaging/rpm/init.d</location>
+                                    <includes>
+                                        <include>elasticsearch</include>
+                                    </includes>
+                                </source>
+                            </sources>
+                        </mapping>
+                        <!-- Adds systemd file -->
+                        <mapping>
+                            <directory>/usr/lib/systemd/system/</directory>
+                            <filemode>755</filemode>
+                            <configuration>true</configuration>
+                            <sources>
+                                <source>
+                                    <location>${project.build.directory}/generated-packaging/rpm/systemd</location>
+                                    <includes>
+                                        <include>elasticsearch.service</include>
+                                    </includes>
+                                </source>
+                            </sources>
+                        </mapping>
+                        <mapping>
+                            <directory>/usr/lib/sysctl.d/</directory>
+                            <filemode>755</filemode>
+                            <configuration>true</configuration>
+                            <sources>
+                                <source>
+                                    <location>${project.build.directory}/generated-packaging/rpm/systemd/sysctl.d</location>
+                                    <includes>
+                                        <include>elasticsearch.conf</include>
+                                    </includes>
+                                </source>
+                            </sources>
+                        </mapping>
+                        <mapping>
+                            <directory>/usr/lib/tmpfiles.d/</directory>
+                            <configuration>true</configuration>
+                            <sources>
+                                <source>
+                                    <location>${project.build.directory}/generated-packaging/rpm/systemd/</location>
+                                    <includes>
+                                        <include>elasticsearch.conf</include>
+                                    </includes>
+                                </source>
+                            </sources>
+                        </mapping>
+                        <!-- Add readme files  -->
+                        <mapping>
+                            <directory>${packaging.elasticsearch.home.dir}</directory>
+                            <sources>
+                                <source>
+                                    <location>.</location>
+                                    <includes>
+                                        <include>LICENSE.txt</include>
+                                        <include>NOTICE.txt</include>
+                                        <include>README.textile</include>
+                                    </includes>
+                                </source>
+                            </sources>
+                        </mapping>
+                        <!-- Add and sets permission on default directories -->
+                        <mapping>
+                            <directory>${packaging.elasticsearch.data.dir}</directory>
+                            <filemode>755</filemode>
+                            <username>${packaging.elasticsearch.user}</username>
+                            <groupname>${packaging.elasticsearch.group}</groupname>
+                        </mapping>
+                        <mapping>
+                            <directory>${packaging.elasticsearch.log.dir}</directory>
+                            <filemode>755</filemode>
+                            <username>${packaging.elasticsearch.user}</username>
+                            <groupname>${packaging.elasticsearch.group}</groupname>
+                        </mapping>
+                        <mapping>
+                            <directory>${packaging.elasticsearch.plugins.dir}</directory>
+                            <filemode>755</filemode>
+                            <username>${packaging.elasticsearch.user}</username>
+                            <groupname>${packaging.elasticsearch.group}</groupname>
+                        </mapping>
+                        <mapping>
+                            <directory>${packaging.elasticsearch.pid.dir}</directory>
+                            <filemode>755</filemode>
+                            <username>${packaging.elasticsearch.user}</username>
+                            <groupname>${packaging.elasticsearch.group}</groupname>
+                        </mapping>
+                    </mappings>
+                    <preinstallScriptlet>
+                        <scriptFile>${project.build.directory}/generated-packaging/rpm/scripts/preinst</scriptFile>
+                        <fileEncoding>utf-8</fileEncoding>
+                    </preinstallScriptlet>
+                    <postinstallScriptlet>
+                        <scriptFile>${project.build.directory}/generated-packaging/rpm/scripts/postinst</scriptFile>
+                        <fileEncoding>utf-8</fileEncoding>
+                    </postinstallScriptlet>
+                    <preremoveScriptlet>
+                        <scriptFile>${project.build.directory}/generated-packaging/rpm/scripts/prerm</scriptFile>
+                        <fileEncoding>utf-8</fileEncoding>
+                    </preremoveScriptlet>
+                    <postremoveScriptlet>
+                        <scriptFile>${project.build.directory}/generated-packaging/rpm/scripts/postrm</scriptFile>
+                        <fileEncoding>utf-8</fileEncoding>
+                    </postremoveScriptlet>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>de.thetaphi</groupId>
+                <artifactId>forbiddenapis</artifactId>
+                <version>1.8</version>
+
+                <executions>
+                    <execution>
+                        <id>check-forbidden-apis</id>
+                        <configuration>
+                            <targetVersion>1.7</targetVersion>
+                            <!-- disallow undocumented classes like sun.misc.Unsafe: -->
+                            <internalRuntimeForbidden>true</internalRuntimeForbidden>
+                            <!-- if the used Java version is too new, don't fail, just do nothing: -->
+                            <failOnUnsupportedJava>false</failOnUnsupportedJava>
+                            <excludes>
+                                <exclude>jsr166e/**</exclude>
+                            </excludes>
+                            <bundledSignatures>
+                                <!-- This will automatically choose the right signatures based on 'targetVersion': -->
+                                <bundledSignature>jdk-unsafe</bundledSignature>
+                                <bundledSignature>jdk-deprecated</bundledSignature>
+                                <bundledSignature>jdk-system-out</bundledSignature>
+                            </bundledSignatures>
+                            <signaturesFiles>
+                                <signaturesFile>dev-tools/forbidden/core-signatures.txt</signaturesFile>
+                                <signaturesFile>dev-tools/forbidden/all-signatures.txt</signaturesFile>
+                            </signaturesFiles>
+                            <signatures>${forbidden.signatures}</signatures>
+                            <suppressAnnotations><annotation>**.SuppressForbidden</annotation></suppressAnnotations>
+                        </configuration>
+                        <phase>compile</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>check-forbidden-test-apis</id>
+                        <configuration>
+                            <targetVersion>1.7</targetVersion>
+                            <!-- disallow undocumented classes like sun.misc.Unsafe: -->
+                            <internalRuntimeForbidden>true</internalRuntimeForbidden>
+                            <!-- if the used Java version is too new, don't fail, just do nothing: -->
+                            <failOnUnsupportedJava>false</failOnUnsupportedJava>
+                            <bundledSignatures>
+                                <!-- This will automatically choose the right signatures based on 'targetVersion': -->
+                                <bundledSignature>jdk-unsafe</bundledSignature>
+                                <bundledSignature>jdk-deprecated</bundledSignature>
+                            </bundledSignatures>
+                            <excludes>
+                                <!-- start exclude for test GC simulation using Thread.suspend -->
+                                <exclude>org/elasticsearch/test/disruption/LongGCDisruption.class</exclude>
+                                <!-- end exclude for GC simulation  -->
+                                <!-- start exclude for java.io.File bridging -->
+                                <exclude>org/elasticsearch/test/ExternalNode.class</exclude>
+                                <exclude>org/elasticsearch/test/ElasticsearchTestCase.class</exclude>
+                                <!-- end exclude for java.io.File bridging -->
+                            </excludes>
+                            <signaturesFiles>
+                                <signaturesFile>dev-tools/forbidden/test-signatures.txt</signaturesFile>
+                                <signaturesFile>dev-tools/forbidden/all-signatures.txt</signaturesFile>
+                            </signaturesFiles>
+                            <signatures>${forbidden.test.signatures}</signatures>
+                        </configuration>
+                        <phase>test-compile</phase>
+                        <goals>
+                            <goal>testCheck</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>2.4</version>
+                <executions>
+                    <execution>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                        <configuration>
+                            <includes>
+                                <include>org/elasticsearch/test/**/*</include>
+                                <include>org/elasticsearch/cache/recycler/MockPageCacheRecycler.class</include>
+                                <include>org/apache/lucene/util/AbstractRandomizedTest.class</include>
+                                <include>org/apache/lucene/util/AbstractRandomizedTest$*.class</include>
+                                <include>org/elasticsearch/common/cli/CliToolTestCase.class</include>
+                                <include>org/elasticsearch/common/cli/CliToolTestCase$*.class</include>
+                            </includes>
+                            <excludes>
+                                <!-- unit tests for yaml suite parser & rest spec parser need to be excluded -->
+                                <exclude>org/elasticsearch/test/rest/test/**/*</exclude>
+                                <!-- unit tests for test framework classes-->
+                                <exclude>org/elasticsearch/test/test/**/*</exclude>
+                            </excludes>
                         </configuration>
                     </execution>
                 </executions>
@@ -634,6 +1570,88 @@
                                         </goals>
                                     </pluginExecutionFilter>
                                     <action>
+                                        <execute/>
+                                    </action>
+                                </pluginExecution>
+                                <!-- forbidden-apis plugin -->
+                                <pluginExecution>
+                                    <pluginExecutionFilter>
+                                        <groupId>de.thetaphi</groupId>
+                                        <artifactId>forbiddenapis</artifactId>
+                                        <versionRange>[1.0.0,)</versionRange>
+                                        <goals>
+                                            <goal>testCheck</goal>
+                                            <goal>check</goal>
+                                        </goals>
+                                    </pluginExecutionFilter>
+                                    <action>
+                                        <execute/>
+                                    </action>
+                                </pluginExecution>
+                                <!-- exec-maven plugin -->
+                                <pluginExecution>
+                                    <pluginExecutionFilter>
+                                        <artifactId>exec-maven-plugin</artifactId>
+                                        <groupId>org.codehaus.mojo</groupId>
+                                        <versionRange>[1.0.0,)</versionRange>
+                                        <goals>
+                                            <goal>exec</goal>
+                                        </goals>
+                                    </pluginExecutionFilter>
+                                    <action>
+                                        <execute/>
+                                    </action>
+                                </pluginExecution>
+                                <!-- copy-dependency plugin -->
+                                <pluginExecution>
+                                    <pluginExecutionFilter>
+                                        <groupId>org.apache.maven.plugins</groupId>
+                                        <artifactId>maven-enforcer-plugin</artifactId>
+                                        <versionRange>[1.0.0,)</versionRange>
+                                        <goals>
+                                            <goal>enforce</goal>
+                                        </goals>
+                                    </pluginExecutionFilter>
+                                    <action>
+                                        <execute/>
+                                    </action>
+                                </pluginExecution>
+                                <pluginExecution>
+                                    <pluginExecutionFilter>
+                                        <groupId>org.apache.maven.plugins</groupId>
+                                        <artifactId>maven-antrun-plugin</artifactId>
+                                        <versionRange>[1.0.0,)</versionRange>
+                                        <goals>
+                                            <goal>run</goal>
+                                        </goals>
+                                    </pluginExecutionFilter>
+                                    <action>
+                                        <ignore/>
+                                    </action>
+                                </pluginExecution>
+                                <pluginExecution>
+                                    <pluginExecutionFilter>
+                                        <groupId>org.apache.maven.plugins</groupId>
+                                        <artifactId>maven-resources-plugin</artifactId>
+                                        <versionRange>[1.0.0,)</versionRange>
+                                        <goals>
+                                            <goal>copy-resources</goal>
+                                        </goals>
+                                    </pluginExecutionFilter>
+                                    <action>
+                                        <ignore/>
+                                    </action>
+                                </pluginExecution>
+                                <pluginExecution>
+                                    <pluginExecutionFilter>
+                                        <groupId>com.mycila</groupId>
+                                        <artifactId>license-maven-plugin</artifactId>
+                                        <versionRange>[1.0.0,)</versionRange>
+                                        <goals>
+                                            <goal>check</goal>
+                                        </goals>
+                                    </pluginExecutionFilter>
+                                    <action>
                                         <ignore/>
                                     </action>
                                 </pluginExecution>
@@ -641,7 +1659,234 @@
                         </lifecycleMappingMetadata>
                     </configuration>
                 </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-eclipse-plugin</artifactId>
+                    <version>2.9</version>
+                    <configuration>
+                        <buildOutputDirectory>eclipse-build</buildOutputDirectory>
+                        <downloadSources>true</downloadSources>
+                    </configuration>
+                </plugin>
             </plugins>
         </pluginManagement>
     </build>
+    <profiles>
+        <!-- default profile, with randomization setting kicks in -->
+        <profile>
+            <id>default</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>com.carrotsearch.randomizedtesting</groupId>
+                        <artifactId>junit4-maven-plugin</artifactId>
+                        <configuration>
+                            <argLine>${tests.jvm.argline}</argLine>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>com.mycila</groupId>
+                        <artifactId>license-maven-plugin</artifactId>
+                        <version>2.5</version>
+                        <configuration>
+                            <header>dev-tools/elasticsearch_license_header.txt</header>
+                            <headerDefinitions>
+                                <headerDefinition>dev-tools/license_header_definition.xml</headerDefinition>
+                            </headerDefinitions>
+                            <includes>
+                                <include>src/main/java/org/elasticsearch/**/*.java</include>
+                                <include>src/test/java/org/elasticsearch/**/*.java</include>
+                            </includes>
+                            <excludes>
+                                <!-- Guice -->
+                                <exclude>src/main/java/org/elasticsearch/common/inject/**</exclude>
+                                <exclude>src/main/java/org/elasticsearch/common/geo/GeoHashUtils.java</exclude>
+                                <exclude>src/main/java/org/elasticsearch/common/lucene/search/XBooleanFilter.java</exclude>
+                                <exclude>src/main/java/org/elasticsearch/common/lucene/search/XFilteredQuery.java</exclude>
+                                <exclude>src/main/java/org/apache/lucene/queryparser/XSimpleQueryParser.java</exclude>
+                                <exclude>src/main/java/org/apache/lucene/**/X*.java</exclude>
+                                <!-- t-digest -->
+                                <exclude>src/main/java/org/elasticsearch/search/aggregations/metrics/percentiles/tdigest/TDigestState.java</exclude>
+                                <exclude>src/test/java/org/elasticsearch/search/aggregations/metrics/GroupTree.java</exclude>
+                                <!-- netty pipelining -->
+                                <exclude>src/main/java/org/elasticsearch/http/netty/pipelining/**</exclude>
+                            </excludes>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <phase>compile</phase>
+                                <goals>
+                                    <goal>check</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <!-- profile for development that doesn't check forbidden-apis, no-commit validation or license headers run with mvn -Pdev -->
+        <profile>
+            <id>dev</id>
+            <properties>
+                <validate.skip>true</validate.skip>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>de.thetaphi</groupId>
+                        <artifactId>forbiddenapis</artifactId>
+                        <version>1.5.1</version>
+                        <executions>
+                            <execution>
+                                <id>check-forbidden-apis</id>
+                                <phase>none</phase>
+                            </execution>
+                            <execution>
+                                <id>check-forbidden-test-apis</id>
+                                <phase>none</phase>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <!-- license profile, to generate third party license file -->
+        <profile>
+            <id>license</id>
+            <activation>
+                <property>
+                    <name>license.generation</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <!-- not including license-maven-plugin is sufficent to expose default license -->
+        </profile>
+        <!-- jacoco coverage profile.  This will insert -jagent -->
+        <profile>
+            <id>coverage</id>
+            <activation>
+                <property>
+                    <name>tests.coverage</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <!--  must be on the classpath  -->
+                    <groupId>org.jacoco</groupId>
+                    <artifactId>org.jacoco.agent</artifactId>
+                    <classifier>runtime</classifier>
+                    <version>0.6.4.201312101107</version>
+                    <scope>test</scope>
+                </dependency>
+            </dependencies>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
+                        <version>0.6.4.201312101107</version>
+                        <executions>
+                            <execution>
+                                <id>default-prepare-agent</id>
+                                <goals>
+                                    <goal>prepare-agent</goal>
+                                </goals>
+                            </execution>
+                            <execution>
+                                <id>default-report</id>
+                                <phase>prepare-package</phase>
+                                <goals>
+                                    <goal>report</goal>
+                                </goals>
+                            </execution>
+                            <execution>
+                                <id>default-check</id>
+                                <goals>
+                                    <goal>check</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <excludes>
+                                <exclude>jsr166e/**</exclude>
+                                <exclude>org/apache/lucene/**</exclude>
+                            </excludes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>static</id>
+            <activation>
+                <property>
+                    <name>tests.static</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>findbugs-maven-plugin</artifactId>
+                        <version>2.5.3</version>
+                    </plugin>
+                </plugins>
+            </build>
+            <reporting>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-jxr-plugin</artifactId>
+                        <version>2.3</version>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-pmd-plugin</artifactId>
+                        <version>3.0.1</version>
+                        <configuration>
+                            <rulesets>
+                                <ruleset>${basedir}/dev-tools/pmd/custom.xml</ruleset>
+                            </rulesets>
+                            <targetJdk>1.7</targetJdk>
+                            <excludes>
+                                <exclude>**/jsr166e/**</exclude>
+                                <exclude>**/org/apache/lucene/**</exclude>
+                                <exclude>**/org/apache/elasticsearch/common/Base64.java</exclude>
+                            </excludes>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>findbugs-maven-plugin</artifactId>
+                        <version>2.5.3</version>
+                        <configuration>
+                            <xmlOutput>true</xmlOutput>
+                            <xmlOutputDirectory>target/site</xmlOutputDirectory>
+                            <fork>true</fork>
+                            <maxHeap>2048</maxHeap>
+                            <timeout>1800000</timeout>
+                            <onlyAnalyze>org.elasticsearch.-</onlyAnalyze>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-project-info-reports-plugin</artifactId>
+                        <version>2.7</version>
+                        <reportSets>
+                            <reportSet>
+                                <reports>
+                                    <report>index</report>
+                                </reports>
+                            </reportSet>
+                        </reportSets>
+                    </plugin>
+                </plugins>
+            </reporting>
+        </profile>
+    </profiles>
 </project>

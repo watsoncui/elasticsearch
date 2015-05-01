@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,15 +19,15 @@
 
 package org.elasticsearch.transport.netty;
 
-import org.elasticsearch.ElasticSearchIllegalStateException;
 import org.elasticsearch.Version;
 import org.elasticsearch.common.component.Lifecycle;
 import org.elasticsearch.common.compress.Compressor;
 import org.elasticsearch.common.compress.CompressorFactory;
 import org.elasticsearch.common.io.ThrowableObjectInputStream;
-import org.elasticsearch.common.io.stream.CachedStreamInput;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.logging.ESLogger;
+import org.elasticsearch.common.transport.InetSocketTransportAddress;
+import org.elasticsearch.common.util.concurrent.AbstractRunnable;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.*;
 import org.elasticsearch.transport.support.TransportStatus;
@@ -35,6 +35,7 @@ import org.jboss.netty.buffer.ChannelBuffer;
 import org.jboss.netty.channel.*;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 
 /**
  * A handler (must be the last one!) that does size based frame decoding and forwards the actual message
@@ -42,19 +43,18 @@ import java.io.IOException;
  */
 public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
 
-    private final ESLogger logger;
+    protected final ESLogger logger;
+    protected final ThreadPool threadPool;
+    protected final TransportServiceAdapter transportServiceAdapter;
+    protected final NettyTransport transport;
+    protected final String profileName;
 
-    private final ThreadPool threadPool;
-
-    private final TransportServiceAdapter transportServiceAdapter;
-
-    private final NettyTransport transport;
-
-    public MessageChannelHandler(NettyTransport transport, ESLogger logger) {
+    public MessageChannelHandler(NettyTransport transport, ESLogger logger, String profileName) {
         this.threadPool = transport.threadPool();
         this.transportServiceAdapter = transport.transportServiceAdapter();
         this.transport = transport;
         this.logger = logger;
+        this.profileName = profileName;
     }
 
     @Override
@@ -65,6 +65,7 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
 
     @Override
     public void messageReceived(ChannelHandlerContext ctx, MessageEvent e) throws Exception {
+        Transports.assertTransportThread();
         Object m = e.getMessage();
         if (!(m instanceof ChannelBuffer)) {
             ctx.sendUpstream(e);
@@ -99,11 +100,11 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
                     sb.append(buffer.getByte(offset + i)).append(",");
                 }
                 sb.append("]");
-                throw new ElasticSearchIllegalStateException(sb.toString());
+                throw new IllegalStateException(sb.toString());
             }
-            wrappedStream = CachedStreamInput.cachedHandlesCompressed(compressor, streamIn);
+            wrappedStream = compressor.streamInput(streamIn);
         } else {
-            wrappedStream = CachedStreamInput.cachedHandles(streamIn);
+            wrappedStream = streamIn;
         }
         wrappedStream.setVersion(version);
 
@@ -111,20 +112,22 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
             String action = handleRequest(ctx.getChannel(), wrappedStream, requestId, version);
             if (buffer.readerIndex() != expectedIndexReader) {
                 if (buffer.readerIndex() < expectedIndexReader) {
-                    logger.warn("Message not fully read (request) for [{}] and action [{}], resetting", requestId, action);
+                    logger.warn("Message not fully read (request) for requestId [{}], action [{}], readerIndex [{}] vs expected [{}]; resetting",
+                                requestId, action, buffer.readerIndex(), expectedIndexReader);
                 } else {
-                    logger.warn("Message read past expected size (request) for [{}] and action [{}], resetting", requestId, action);
+                    logger.warn("Message read past expected size (request) for requestId=[{}], action [{}], readerIndex [{}] vs expected [{}]; resetting",
+                                requestId, action, buffer.readerIndex(), expectedIndexReader);
                 }
                 buffer.readerIndex(expectedIndexReader);
             }
         } else {
-            TransportResponseHandler handler = transportServiceAdapter.remove(requestId);
+            TransportResponseHandler handler = transportServiceAdapter.onResponseReceived(requestId);
             // ignore if its null, the adapter logs it
             if (handler != null) {
                 if (TransportStatus.isError(status)) {
                     handlerResponseError(wrappedStream, handler);
                 } else {
-                    handleResponse(wrappedStream, handler);
+                    handleResponse(ctx.getChannel(), wrappedStream, handler);
                 }
             } else {
                 // if its null, skip those bytes
@@ -142,22 +145,24 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
         wrappedStream.close();
     }
 
-    private void handleResponse(StreamInput buffer, final TransportResponseHandler handler) {
+    protected void handleResponse(Channel channel, StreamInput buffer, final TransportResponseHandler handler) {
         final TransportResponse response = handler.newInstance();
+        response.remoteAddress(new InetSocketTransportAddress((InetSocketAddress) channel.getRemoteAddress()));
+        response.remoteAddress();
         try {
             response.readFrom(buffer);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             handleException(handler, new TransportSerializationException("Failed to deserialize response of type [" + response.getClass().getName() + "]", e));
             return;
         }
         try {
-            if (handler.executor() == ThreadPool.Names.SAME) {
+            if (ThreadPool.Names.SAME.equals(handler.executor())) {
                 //noinspection unchecked
                 handler.handleResponse(response);
             } else {
                 threadPool.executor(handler.executor()).execute(new ResponseHandler(handler, response));
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             handleException(handler, new ResponseHandlerFailureTransportException(e));
         }
     }
@@ -167,7 +172,7 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
         try {
             ThrowableObjectInputStream ois = new ThrowableObjectInputStream(buffer, transport.settings().getClassLoader());
             error = (Throwable) ois.readObject();
-        } catch (Exception e) {
+        } catch (Throwable e) {
             error = new TransportSerializationException("Failed to deserialize exception response from stream", e);
         }
         handleException(handler, error);
@@ -178,40 +183,45 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
             error = new RemoteTransportException(error.getMessage(), error);
         }
         final RemoteTransportException rtx = (RemoteTransportException) error;
-        if (handler.executor() == ThreadPool.Names.SAME) {
-            handler.handleException(rtx);
+        if (ThreadPool.Names.SAME.equals(handler.executor())) {
+            try {
+                handler.handleException(rtx);
+            } catch (Throwable e) {
+                logger.error("failed to handle exception response [{}]", e, handler);
+            }
         } else {
             threadPool.executor(handler.executor()).execute(new Runnable() {
                 @Override
                 public void run() {
                     try {
                         handler.handleException(rtx);
-                    } catch (Exception e) {
-                        logger.error("Failed to handle exception response", e);
+                    } catch (Throwable e) {
+                        logger.error("failed to handle exception response [{}]", e, handler);
                     }
                 }
             });
         }
     }
 
-    private String handleRequest(Channel channel, StreamInput buffer, long requestId, Version version) throws IOException {
+    protected String handleRequest(Channel channel, StreamInput buffer, long requestId, Version version) throws IOException {
         final String action = buffer.readString();
-
-        final NettyTransportChannel transportChannel = new NettyTransportChannel(transport, action, channel, requestId, version);
+        transportServiceAdapter.onRequestReceived(requestId, action);
+        final NettyTransportChannel transportChannel = new NettyTransportChannel(transport, transportServiceAdapter, action, channel, requestId, version, profileName);
         try {
-            final TransportRequestHandler handler = transportServiceAdapter.handler(action);
-            if (handler == null) {
+            final RequestHandlerRegistry reg = transportServiceAdapter.getRequestHandler(action);
+            if (reg == null) {
                 throw new ActionNotFoundTransportException(action);
             }
-            final TransportRequest request = handler.newInstance();
+            final TransportRequest request = reg.newRequest();
+            request.remoteAddress(new InetSocketTransportAddress((InetSocketAddress) channel.getRemoteAddress()));
             request.readFrom(buffer);
-            if (handler.executor() == ThreadPool.Names.SAME) {
+            if (ThreadPool.Names.SAME.equals(reg.getExecutor())) {
                 //noinspection unchecked
-                handler.messageReceived(request, transportChannel);
+                reg.getHandler().messageReceived(request, transportChannel);
             } else {
-                threadPool.executor(handler.executor()).execute(new RequestHandler(handler, request, transportChannel, action));
+                threadPool.executor(reg.getExecutor()).execute(new RequestHandler(reg, request, transportChannel));
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             try {
                 transportChannel.sendResponse(e);
             } catch (IOException e1) {
@@ -242,39 +252,43 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
         public void run() {
             try {
                 handler.handleResponse(response);
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 handleException(handler, new ResponseHandlerFailureTransportException(e));
             }
         }
     }
 
-    class RequestHandler implements Runnable {
-        private final TransportRequestHandler handler;
+    class RequestHandler extends AbstractRunnable {
+        private final RequestHandlerRegistry reg;
         private final TransportRequest request;
         private final NettyTransportChannel transportChannel;
-        private final String action;
 
-        public RequestHandler(TransportRequestHandler handler, TransportRequest request, NettyTransportChannel transportChannel, String action) {
-            this.handler = handler;
+        public RequestHandler(RequestHandlerRegistry reg, TransportRequest request, NettyTransportChannel transportChannel) {
+            this.reg = reg;
             this.request = request;
             this.transportChannel = transportChannel;
-            this.action = action;
         }
 
         @SuppressWarnings({"unchecked"})
         @Override
-        public void run() {
-            try {
-                handler.messageReceived(request, transportChannel);
-            } catch (Throwable e) {
-                if (transport.lifecycleState() == Lifecycle.State.STARTED) {
-                    // we can only send a response transport is started....
-                    try {
-                        transportChannel.sendResponse(e);
-                    } catch (IOException e1) {
-                        logger.warn("Failed to send error message back to client for action [" + action + "]", e1);
-                        logger.warn("Actual Exception", e);
-                    }
+        protected void doRun() throws Exception {
+            reg.getHandler().messageReceived(request, transportChannel);
+        }
+
+        @Override
+        public boolean isForceExecution() {
+            return reg.isForceExecution();
+        }
+
+        @Override
+        public void onFailure(Throwable e) {
+            if (transport.lifecycleState() == Lifecycle.State.STARTED) {
+                // we can only send a response transport is started....
+                try {
+                    transportChannel.sendResponse(e);
+                } catch (Throwable e1) {
+                    logger.warn("Failed to send error message back to client for action [" + reg.getAction() + "]", e1);
+                    logger.warn("Actual Exception", e);
                 }
             }
         }

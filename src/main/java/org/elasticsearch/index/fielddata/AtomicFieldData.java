@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,57 +19,22 @@
 
 package org.elasticsearch.index.fielddata;
 
+import org.apache.lucene.util.Accountable;
+import org.elasticsearch.common.lease.Releasable;
+
 /**
- * The thread safe {@link org.apache.lucene.index.AtomicReader} level cache of the data.
+ * The thread safe {@link org.apache.lucene.index.LeafReader} level cache of the data.
  */
-public interface AtomicFieldData<Script extends ScriptDocValues> {
-
-    /**
-     * Does *one* of the docs contain multi values?
-     */
-    boolean isMultiValued();
-
-    /**
-     * Are the values ordered? (in ascending manner).
-     */
-    boolean isValuesOrdered();
-
-    /**
-     * The number of docs in this field data.
-     */
-    int getNumDocs();
-
-    /**
-     * Size (in bytes) of memory used by this field data.
-     */
-    long getMemorySizeInBytes();
-
-    /**
-     * Use a non thread safe (lightweight) view of the values as bytes.
-     */
-    BytesValues getBytesValues();
-    
-    
-    BytesValues getHashedBytesValues();
+public interface AtomicFieldData extends Accountable, Releasable {
 
     /**
      * Returns a "scripting" based values.
      */
-    Script getScriptValues();
+    ScriptDocValues getScriptValues();
 
     /**
-     * Close the field data.
+     * Return a String representation of the values.
      */
-    void close();
+    SortedBinaryDocValues getBytesValues();
 
-    interface WithOrdinals<Script extends ScriptDocValues> extends AtomicFieldData<Script> {
-
-        /**
-         * Use a non thread safe (lightweight) view of the values as bytes.
-         */
-        BytesValues.WithOrdinals getBytesValues();
-        
-        
-        BytesValues.WithOrdinals getHashedBytesValues();
-    }
 }

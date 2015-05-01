@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,17 +19,17 @@
 
 package org.elasticsearch.index.search.geo;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import java.io.IOException;
+
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.DocIdSet;
+import org.apache.lucene.search.DocValuesDocIdSet;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.util.Bits;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.geo.GeoPoint;
-import org.elasticsearch.common.lucene.docset.MatchDocIdSet;
-import org.elasticsearch.index.fielddata.GeoPointValues;
 import org.elasticsearch.index.fielddata.IndexGeoPointFieldData;
-
-import java.io.IOException;
+import org.elasticsearch.index.fielddata.MultiGeoPointValues;
 
 /**
  *
@@ -60,8 +60,8 @@ public class InMemoryGeoBoundingBoxFilter extends Filter {
     }
 
     @Override
-    public DocIdSet getDocIdSet(AtomicReaderContext context, Bits acceptedDocs) throws IOException {
-        final GeoPointValues values = indexFieldData.load(context).getGeoPointValues();
+    public DocIdSet getDocIdSet(LeafReaderContext context, Bits acceptedDocs) throws IOException {
+        final MultiGeoPointValues values = indexFieldData.load(context).getGeoPointValues();
 
         //checks to see if bounding box crosses 180 degrees
         if (topLeft.lon() > bottomRight.lon()) {
@@ -72,16 +72,36 @@ public class InMemoryGeoBoundingBoxFilter extends Filter {
     }
 
     @Override
-    public String toString() {
+    public String toString(String field) {
         return "GeoBoundingBoxFilter(" + indexFieldData.getFieldNames().indexName() + ", " + topLeft + ", " + bottomRight + ")";
     }
 
-    public static class Meridian180GeoBoundingBoxDocSet extends MatchDocIdSet {
-        private final GeoPointValues values;
+    @Override
+    public boolean equals(Object obj) {
+        if (super.equals(obj) == false) {
+            return false;
+        }
+        InMemoryGeoBoundingBoxFilter other = (InMemoryGeoBoundingBoxFilter) obj;
+        return fieldName().equalsIgnoreCase(other.fieldName())
+                && topLeft.equals(other.topLeft)
+                && bottomRight.equals(other.bottomRight);
+    }
+
+    @Override
+    public int hashCode() {
+        int h = super.hashCode();
+        h = 31 * h + fieldName().hashCode();
+        h = 31 * h + topLeft.hashCode();
+        h = 31 * h + bottomRight.hashCode();
+        return h;
+    }
+
+    public static class Meridian180GeoBoundingBoxDocSet extends DocValuesDocIdSet {
+        private final MultiGeoPointValues values;
         private final GeoPoint topLeft;
         private final GeoPoint bottomRight;
 
-        public Meridian180GeoBoundingBoxDocSet(int maxDoc, @Nullable Bits acceptDocs, GeoPointValues values, GeoPoint topLeft, GeoPoint bottomRight) {
+        public Meridian180GeoBoundingBoxDocSet(int maxDoc, @Nullable Bits acceptDocs, MultiGeoPointValues values, GeoPoint topLeft, GeoPoint bottomRight) {
             super(maxDoc, acceptDocs);
             this.values = values;
             this.topLeft = topLeft;
@@ -89,28 +109,11 @@ public class InMemoryGeoBoundingBoxFilter extends Filter {
         }
 
         @Override
-        public boolean isCacheable() {
-            return true;
-        }
-
-        @Override
         protected boolean matchDoc(int doc) {
-            if (!values.hasValue(doc)) {
-                return false;
-            }
-
-            if (values.isMultiValued()) {
-                GeoPointValues.Iter iter = values.getIter(doc);
-                while (iter.hasNext()) {
-                    GeoPoint point = iter.next();
-                    if (((topLeft.lon() <= point.lon() || bottomRight.lon() >= point.lon())) &&
-                            (topLeft.lat() >= point.lat() && bottomRight.lat() <= point.lat())) {
-                        return true;
-                    }
-                }
-            } else {
-                GeoPoint point = values.getValue(doc);
-
+            values.setDocument(doc);
+            final int length = values.count();
+            for (int i = 0; i < length; i++) {
+                GeoPoint point = values.valueAt(i);
                 if (((topLeft.lon() <= point.lon() || bottomRight.lon() >= point.lon())) &&
                         (topLeft.lat() >= point.lat() && bottomRight.lat() <= point.lat())) {
                     return true;
@@ -120,12 +123,12 @@ public class InMemoryGeoBoundingBoxFilter extends Filter {
         }
     }
 
-    public static class GeoBoundingBoxDocSet extends MatchDocIdSet {
-        private final GeoPointValues values;
+    public static class GeoBoundingBoxDocSet extends DocValuesDocIdSet {
+        private final MultiGeoPointValues values;
         private final GeoPoint topLeft;
         private final GeoPoint bottomRight;
 
-        public GeoBoundingBoxDocSet(int maxDoc, @Nullable Bits acceptDocs, GeoPointValues values, GeoPoint topLeft, GeoPoint bottomRight) {
+        public GeoBoundingBoxDocSet(int maxDoc, @Nullable Bits acceptDocs, MultiGeoPointValues values, GeoPoint topLeft, GeoPoint bottomRight) {
             super(maxDoc, acceptDocs);
             this.values = values;
             this.topLeft = topLeft;
@@ -133,27 +136,11 @@ public class InMemoryGeoBoundingBoxFilter extends Filter {
         }
 
         @Override
-        public boolean isCacheable() {
-            return true;
-        }
-
-        @Override
         protected boolean matchDoc(int doc) {
-            if (!values.hasValue(doc)) {
-                return false;
-            }
-
-            if (values.isMultiValued()) {
-                GeoPointValues.Iter iter = values.getIter(doc);
-                while (iter.hasNext()) {
-                    GeoPoint point = iter.next();
-                    if (topLeft.lon() <= point.lon() && bottomRight.lon() >= point.lon()
-                            && topLeft.lat() >= point.lat() && bottomRight.lat() <= point.lat()) {
-                        return true;
-                    }
-                }
-            } else {
-                GeoPoint point = values.getValue(doc);
+            values.setDocument(doc);
+            final int length = values.count();
+            for (int i = 0; i < length; i++) {
+                GeoPoint point = values.valueAt(i);
                 if (topLeft.lon() <= point.lon() && bottomRight.lon() >= point.lon()
                         && topLeft.lat() >= point.lat() && bottomRight.lat() <= point.lat()) {
                     return true;

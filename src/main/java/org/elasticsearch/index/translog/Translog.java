@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,7 +20,9 @@
 package org.elasticsearch.index.translog;
 
 import org.apache.lucene.index.Term;
-import org.elasticsearch.ElasticSearchIllegalStateException;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.RamUsageEstimator;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.bytes.BytesArray;
@@ -29,21 +31,29 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
 import org.elasticsearch.common.lease.Releasable;
-import org.elasticsearch.index.CloseableIndexComponent;
+import org.elasticsearch.common.lucene.uid.Versions;
+import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.index.VersionType;
 import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.shard.IndexShardComponent;
 
+import java.io.Closeable;
 import java.io.IOException;
-import java.io.InputStream;
+import java.nio.file.Path;
+import java.util.Collection;
+import java.util.Collections;
+
 
 /**
  *
  */
-public interface Translog extends IndexShardComponent, CloseableIndexComponent {
+public interface Translog extends IndexShardComponent, Closeable, Accountable {
+
+    static ByteSizeValue INACTIVE_SHARD_TRANSLOG_BUFFER = ByteSizeValue.parseBytesSizeValue("1kb");
 
     public static final String TRANSLOG_ID_KEY = "translog_id";
 
-    void closeWithDelete();
+    void updateBuffer(ByteSizeValue bufferSize);
 
     /**
      * Returns the id of the current transaction log.
@@ -56,11 +66,6 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
     int estimatedNumberOfOperations();
 
     /**
-     * The estimated memory size this translog is taking.
-     */
-    long memorySizeInBytes();
-
-    /**
      * Returns the size in bytes of the translog.
      */
     long translogSizeInBytes();
@@ -69,8 +74,9 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
      * Creates a new transaction log internally.
      * <p/>
      * <p>Can only be called by one thread.
+     * @param id the translog id for the new translog
      */
-    void newTranslog(long id) throws TranslogException;
+    void newTranslog(long id) throws TranslogException, IOException;
 
     /**
      * Creates a new transient translog, where added ops will be added to the current one, and to
@@ -85,19 +91,19 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
      * <p/>
      * <p>Can only be called by one thread.
      */
-    void makeTransientCurrent();
+    void makeTransientCurrent() throws IOException;
 
     /**
      * Reverts back to not have a transient translog.
      */
-    void revertTransient();
+    void revertTransient() throws IOException;
 
     /**
      * Adds a create operation to the transaction log.
      */
     Location add(Operation operation) throws TranslogException;
 
-    byte[] read(Location location);
+    Translog.Operation read(Location location);
 
     /**
      * Snapshots the current transaction log allowing to safely iterate over the snapshot.
@@ -112,20 +118,61 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
     Snapshot snapshot(Snapshot snapshot);
 
     /**
-     * Clears unreferenced transaclogs.
+     * Clears unreferenced transaction logs.
+     *
+     * @return the number of clean up files
      */
-    void clearUnreferenced();
+    int clearUnreferenced();
 
     /**
      * Sync's the translog.
      */
-    void sync();
+    void sync() throws IOException;
 
     boolean syncNeeded();
 
     void syncOnEachOperation(boolean syncOnEachOperation);
 
-    static class Location {
+    /**
+     * Returns all translog locations as absolute paths.
+     * These paths don't contain actual translog files they are
+     * directories holding the transaction logs.
+     */
+    public Path location();
+
+    /**
+     * Returns the translog filename for the given id.
+     */
+    String getFilename(long translogId);
+
+    /**
+     * return stats
+     */
+    TranslogStats stats();
+
+    /**
+     * Returns the largest translog id present in all locations or <tt>-1</tt> if no translog is present.
+     */
+    long findLargestPresentTranslogId() throws IOException;
+
+    /**
+     * Returns an OperationIterator to iterate over all translog entries in the given translog ID.
+     * @throws java.io.FileNotFoundException if the file for the translog ID can not be found
+     */
+    OperationIterator openIterator(long translogId) throws IOException;
+
+    /**
+     * Iterator for translog operations.
+     */
+    public static interface OperationIterator extends Releasable {
+        /**
+         * Returns the next operation in the translog or <code>null</code> if we reached the end of the stream.
+         */
+        public Translog.Operation next() throws IOException;
+    }
+
+    static class Location implements Accountable {
+
         public final long translogId;
         public final long translogLocation;
         public final int size;
@@ -135,18 +182,36 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
             this.translogLocation = translogLocation;
             this.size = size;
         }
+
+        @Override
+        public long ramBytesUsed() {
+            return RamUsageEstimator.NUM_BYTES_OBJECT_HEADER + 2*RamUsageEstimator.NUM_BYTES_LONG + RamUsageEstimator.NUM_BYTES_INT;
+        }
+
+        @Override
+        public Collection<Accountable> getChildResources() {
+            return Collections.emptyList();
+        }
+
+        @Override
+        public String toString() {
+            return "[id: " + translogId + ", location: " + translogLocation + ", size: " + size + "]";
+        }
     }
 
     /**
      * A snapshot of the transaction log, allows to iterate over all the transaction log operations.
      */
-    static interface Snapshot extends Releasable {
+    static interface Snapshot extends OperationIterator {
 
         /**
          * The id of the translog the snapshot was taken with.
          */
         long translogId();
 
+        /**
+         * Returns the current position in the translog stream
+         */
         long position();
 
         /**
@@ -159,16 +224,10 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
          */
         int estimatedTotalOperations();
 
-        boolean hasNext();
-
-        Operation next();
-
-        void seekForward(long length);
-
         /**
-         * Returns a stream of this snapshot.
+         * Seek to the specified position in the translog stream
          */
-        InputStream stream() throws IOException;
+        void seekTo(long position);
 
         /**
          * The length in bytes of this stream.
@@ -217,7 +276,7 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
 
         long estimateSize();
 
-        Source readSource(StreamInput in) throws IOException;
+        Source getSource();
     }
 
     static class Source {
@@ -237,6 +296,8 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
     }
 
     static class Create implements Operation {
+        public static final int SERIALIZATION_FORMAT = 6;
+
         private String id;
         private String type;
         private BytesReference source;
@@ -244,7 +305,8 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
         private String parent;
         private long timestamp;
         private long ttl;
-        private long version;
+        private long version = Versions.MATCH_ANY;
+        private VersionType versionType = VersionType.INTERNAL;
 
         public Create() {
         }
@@ -258,6 +320,7 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
             this.timestamp = create.timestamp();
             this.ttl = create.ttl();
             this.version = create.version();
+            this.versionType = create.versionType();
         }
 
         public Create(String type, String id, byte[] source) {
@@ -308,9 +371,12 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
             return this.version;
         }
 
+        public VersionType versionType() {
+            return versionType;
+        }
+
         @Override
-        public Source readSource(StreamInput in) throws IOException {
-            readFrom(in);
+        public Source getSource() {
             return new Source(source, routing, parent, timestamp, ttl);
         }
 
@@ -339,11 +405,16 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
             if (version >= 5) {
                 this.ttl = in.readLong();
             }
+            if (version >= 6) {
+                this.versionType = VersionType.fromValue(in.readByte());
+            }
+
+            assert versionType.validateVersionForWrites(version);
         }
 
         @Override
         public void writeTo(StreamOutput out) throws IOException {
-            out.writeVInt(5); // version
+            out.writeVInt(SERIALIZATION_FORMAT);
             out.writeString(id);
             out.writeString(type);
             out.writeBytesReference(source);
@@ -362,13 +433,17 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
             out.writeLong(version);
             out.writeLong(timestamp);
             out.writeLong(ttl);
+            out.writeByte(versionType.getValue());
         }
     }
 
     static class Index implements Operation {
+        public static final int SERIALIZATION_FORMAT = 6;
+
         private String id;
         private String type;
-        private long version;
+        private long version = Versions.MATCH_ANY;
+        private VersionType versionType = VersionType.INTERNAL;
         private BytesReference source;
         private String routing;
         private String parent;
@@ -387,6 +462,7 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
             this.version = index.version();
             this.timestamp = index.timestamp();
             this.ttl = index.ttl();
+            this.versionType = index.versionType();
         }
 
         public Index(String type, String id, byte[] source) {
@@ -437,9 +513,12 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
             return this.version;
         }
 
+        public VersionType versionType() {
+            return versionType;
+        }
+
         @Override
-        public Source readSource(StreamInput in) throws IOException {
-            readFrom(in);
+        public Source getSource() {
             return new Source(source, routing, parent, timestamp, ttl);
         }
 
@@ -449,30 +528,39 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
             id = in.readString();
             type = in.readString();
             source = in.readBytesReference();
-            if (version >= 1) {
-                if (in.readBoolean()) {
-                    routing = in.readString();
+            try {
+                if (version >= 1) {
+                    if (in.readBoolean()) {
+                        routing = in.readString();
+                    }
                 }
-            }
-            if (version >= 2) {
-                if (in.readBoolean()) {
-                    parent = in.readString();
+                if (version >= 2) {
+                    if (in.readBoolean()) {
+                        parent = in.readString();
+                    }
                 }
+                if (version >= 3) {
+                    this.version = in.readLong();
+                }
+                if (version >= 4) {
+                    this.timestamp = in.readLong();
+                }
+                if (version >= 5) {
+                    this.ttl = in.readLong();
+                }
+                if (version >= 6) {
+                    this.versionType = VersionType.fromValue(in.readByte());
+                }
+            } catch (Exception e) {
+                throw new ElasticsearchException("failed to read [" + type + "][" + id + "]", e);
             }
-            if (version >= 3) {
-                this.version = in.readLong();
-            }
-            if (version >= 4) {
-                this.timestamp = in.readLong();
-            }
-            if (version >= 5) {
-                this.ttl = in.readLong();
-            }
+
+            assert versionType.validateVersionForWrites(version);
         }
 
         @Override
         public void writeTo(StreamOutput out) throws IOException {
-            out.writeVInt(5); // version
+            out.writeVInt(SERIALIZATION_FORMAT);
             out.writeString(id);
             out.writeString(type);
             out.writeBytesReference(source);
@@ -491,12 +579,16 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
             out.writeLong(version);
             out.writeLong(timestamp);
             out.writeLong(ttl);
+            out.writeByte(versionType.getValue());
         }
     }
 
     static class Delete implements Operation {
+        public static final int SERIALIZATION_FORMAT = 2;
+
         private Term uid;
-        private long version;
+        private long version = Versions.MATCH_ANY;
+        private VersionType versionType = VersionType.INTERNAL;
 
         public Delete() {
         }
@@ -504,10 +596,17 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
         public Delete(Engine.Delete delete) {
             this(delete.uid());
             this.version = delete.version();
+            this.versionType = delete.versionType();
         }
 
         public Delete(Term uid) {
             this.uid = uid;
+        }
+
+        public Delete(Term uid, long version, VersionType versionType) {
+            this.uid = uid;
+            this.version = version;
+            this.versionType = versionType;
         }
 
         @Override
@@ -528,9 +627,13 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
             return this.version;
         }
 
+        public VersionType versionType() {
+            return this.versionType;
+        }
+
         @Override
-        public Source readSource(StreamInput in) throws IOException {
-            throw new ElasticSearchIllegalStateException("trying to read doc source from delete operation");
+        public Source getSource(){
+            throw new IllegalStateException("trying to read doc source from delete operation");
         }
 
         @Override
@@ -540,18 +643,28 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
             if (version >= 1) {
                 this.version = in.readLong();
             }
+            if (version >= 2) {
+                this.versionType = VersionType.fromValue(in.readByte());
+            }
+            assert versionType.validateVersionForWrites(version);
+
         }
 
         @Override
         public void writeTo(StreamOutput out) throws IOException {
-            out.writeVInt(1); // version
+            out.writeVInt(SERIALIZATION_FORMAT);
             out.writeString(uid.field());
             out.writeString(uid.text());
             out.writeLong(version);
+            out.writeByte(versionType.getValue());
         }
     }
 
+    /** @deprecated Delete-by-query is removed in 2.0, but we keep this so translog can replay on upgrade. */
+    @Deprecated
     static class DeleteByQuery implements Operation {
+
+        public static final int SERIALIZATION_FORMAT = 2;
         private BytesReference source;
         @Nullable
         private String[] filteringAliases;
@@ -593,8 +706,8 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
         }
 
         @Override
-        public Source readSource(StreamInput in) throws IOException {
-            throw new ElasticSearchIllegalStateException("trying to read doc source from delete_by_query operation");
+        public Source getSource() {
+            throw new IllegalStateException("trying to read doc source from delete_by_query operation");
         }
 
         @Override
@@ -627,7 +740,7 @@ public interface Translog extends IndexShardComponent, CloseableIndexComponent {
 
         @Override
         public void writeTo(StreamOutput out) throws IOException {
-            out.writeVInt(2); // version
+            out.writeVInt(SERIALIZATION_FORMAT);
             out.writeBytesReference(source);
             out.writeVInt(types.length);
             for (String type : types) {

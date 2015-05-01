@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -28,6 +28,9 @@ import org.elasticsearch.rest.RestStatus;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.Locale;
 
 /**
  *
@@ -38,7 +41,7 @@ public class ClusterBlock implements Serializable, Streamable, ToXContent {
 
     private String description;
 
-    private ClusterBlockLevel[] levels;
+    private EnumSet<ClusterBlockLevel> levels;
 
     private boolean retryable;
 
@@ -49,7 +52,7 @@ public class ClusterBlock implements Serializable, Streamable, ToXContent {
     ClusterBlock() {
     }
 
-    public ClusterBlock(int id, String description, boolean retryable, boolean disableStatePersistence, RestStatus status, ClusterBlockLevel... levels) {
+    public ClusterBlock(int id, String description, boolean retryable, boolean disableStatePersistence, RestStatus status, EnumSet<ClusterBlockLevel> levels) {
         this.id = id;
         this.description = description;
         this.retryable = retryable;
@@ -70,7 +73,7 @@ public class ClusterBlock implements Serializable, Streamable, ToXContent {
         return this.status;
     }
 
-    public ClusterBlockLevel[] levels() {
+    public EnumSet<ClusterBlockLevel> levels() {
         return this.levels;
     }
 
@@ -108,7 +111,7 @@ public class ClusterBlock implements Serializable, Streamable, ToXContent {
         }
         builder.startArray("levels");
         for (ClusterBlockLevel level : levels) {
-            builder.value(level.name().toLowerCase());
+            builder.value(level.name().toLowerCase(Locale.ROOT));
         }
         builder.endArray();
         builder.endObject();
@@ -125,10 +128,12 @@ public class ClusterBlock implements Serializable, Streamable, ToXContent {
     public void readFrom(StreamInput in) throws IOException {
         id = in.readVInt();
         description = in.readString();
-        levels = new ClusterBlockLevel[in.readVInt()];
-        for (int i = 0; i < levels.length; i++) {
-            levels[i] = ClusterBlockLevel.fromId(in.readVInt());
+        final int len = in.readVInt();
+        ArrayList<ClusterBlockLevel> levels = new ArrayList<>();
+        for (int i = 0; i < len; i++) {
+            levels.add(ClusterBlockLevel.fromId(in.readVInt()));
         }
+        this.levels = EnumSet.copyOf(levels);
         retryable = in.readBoolean();
         disableStatePersistence = in.readBoolean();
         status = RestStatus.readFrom(in);
@@ -138,7 +143,7 @@ public class ClusterBlock implements Serializable, Streamable, ToXContent {
     public void writeTo(StreamOutput out) throws IOException {
         out.writeVInt(id);
         out.writeString(description);
-        out.writeVInt(levels.length);
+        out.writeVInt(levels.size());
         for (ClusterBlockLevel level : levels) {
             out.writeVInt(level.id());
         }
@@ -147,6 +152,7 @@ public class ClusterBlock implements Serializable, Streamable, ToXContent {
         RestStatus.writeTo(out, status);
     }
 
+    @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
         sb.append(id).append(",").append(description).append(", blocks ");

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -55,6 +55,7 @@ public class DisMaxQueryParser implements QueryParser {
 
         List<Query> queries = newArrayList();
         boolean queriesFound = false;
+        String queryName = null;
 
         String currentFieldName = null;
         XContentParser.Token token;
@@ -69,7 +70,7 @@ public class DisMaxQueryParser implements QueryParser {
                         queries.add(query);
                     }
                 } else {
-                    throw new QueryParsingException(parseContext.index(), "[dis_max] query does not support [" + currentFieldName + "]");
+                    throw new QueryParsingException(parseContext, "[dis_max] query does not support [" + currentFieldName + "]");
                 }
             } else if (token == XContentParser.Token.START_ARRAY) {
                 if ("queries".equals(currentFieldName)) {
@@ -82,21 +83,23 @@ public class DisMaxQueryParser implements QueryParser {
                         token = parser.nextToken();
                     }
                 } else {
-                    throw new QueryParsingException(parseContext.index(), "[dis_max] query does not support [" + currentFieldName + "]");
+                    throw new QueryParsingException(parseContext, "[dis_max] query does not support [" + currentFieldName + "]");
                 }
             } else {
                 if ("boost".equals(currentFieldName)) {
                     boost = parser.floatValue();
                 } else if ("tie_breaker".equals(currentFieldName) || "tieBreaker".equals(currentFieldName)) {
                     tieBreaker = parser.floatValue();
+                } else if ("_name".equals(currentFieldName)) {
+                    queryName = parser.text();
                 } else {
-                    throw new QueryParsingException(parseContext.index(), "[dis_max] query does not support [" + currentFieldName + "]");
+                    throw new QueryParsingException(parseContext, "[dis_max] query does not support [" + currentFieldName + "]");
                 }
             }
         }
 
         if (!queriesFound) {
-            throw new QueryParsingException(parseContext.index(), "[dis_max] requires 'queries' field");
+            throw new QueryParsingException(parseContext, "[dis_max] requires 'queries' field");
         }
 
         if (queries.isEmpty()) {
@@ -105,6 +108,9 @@ public class DisMaxQueryParser implements QueryParser {
 
         DisjunctionMaxQuery query = new DisjunctionMaxQuery(queries, tieBreaker);
         query.setBoost(boost);
+        if (queryName != null) {
+            parseContext.addNamedQuery(queryName, query);
+        }
         return query;
     }
 }

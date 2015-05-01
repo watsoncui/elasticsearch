@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,25 +20,47 @@
 package org.elasticsearch.index.store;
 
 import com.google.common.collect.ImmutableList;
-import org.apache.lucene.store.MMapDirectory;
-import org.apache.lucene.util.Constants;
-import org.elasticsearch.common.inject.AbstractModule;
-import org.elasticsearch.common.inject.Module;
-import org.elasticsearch.common.inject.Modules;
-import org.elasticsearch.common.inject.SpawnModules;
+import org.elasticsearch.common.inject.*;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.index.store.fs.MmapFsIndexStoreModule;
-import org.elasticsearch.index.store.fs.NioFsIndexStoreModule;
-import org.elasticsearch.index.store.fs.SimpleFsIndexStoreModule;
-import org.elasticsearch.index.store.memory.MemoryIndexStoreModule;
-import org.elasticsearch.index.store.ram.RamIndexStoreModule;
 
 /**
  *
  */
 public class IndexStoreModule extends AbstractModule implements SpawnModules {
 
+    public static final String STORE_TYPE = "index.store.type";
+
     private final Settings settings;
+
+    public static enum Type {
+        NIOFS {
+            @Override
+            public boolean match(String setting) {
+                return super.match(setting) || "nio_fs".equalsIgnoreCase(setting);
+            }
+        },
+        MMAPFS {
+            @Override
+            public boolean match(String setting) {
+                return super.match(setting) || "mmap_fs".equalsIgnoreCase(setting);
+            }
+        },
+
+        SIMPLEFS {
+            @Override
+            public boolean match(String setting) {
+                return super.match(setting) || "simple_fs".equalsIgnoreCase(setting);
+            }
+        },
+        FS,
+        DEFAULT,;
+        /**
+         * Returns true iff this settings matches the type.
+         */
+        public boolean match(String setting) {
+            return this.name().equalsIgnoreCase(setting);
+        }
+    }
 
     public IndexStoreModule(Settings settings) {
         this.settings = settings;
@@ -46,34 +68,23 @@ public class IndexStoreModule extends AbstractModule implements SpawnModules {
 
     @Override
     public Iterable<? extends Module> spawnModules() {
-        Class<? extends Module> indexStoreModule = NioFsIndexStoreModule.class;
-        // Same logic as FSDirectory#open ...
-        if ((Constants.WINDOWS || Constants.SUN_OS)
-                && Constants.JRE_IS_64BIT && MMapDirectory.UNMAP_SUPPORTED) {
-            indexStoreModule = MmapFsIndexStoreModule.class;
-        } else if (Constants.WINDOWS) {
-            indexStoreModule = SimpleFsIndexStoreModule.class;
+        final String storeType = settings.get(STORE_TYPE, Type.DEFAULT.name());
+        for (Type type : Type.values()) {
+            if (type.match(storeType)) {
+                return ImmutableList.of(new DefaultStoreModule());
+            }
         }
-        String storeType = settings.get("index.store.type");
-        if ("ram".equalsIgnoreCase(storeType)) {
-            indexStoreModule = RamIndexStoreModule.class;
-        } else if ("memory".equalsIgnoreCase(storeType)) {
-            indexStoreModule = MemoryIndexStoreModule.class;
-        } else if ("fs".equalsIgnoreCase(storeType)) {
-            // nothing to set here ... (we default to fs)
-        } else if ("simplefs".equalsIgnoreCase(storeType) || "simple_fs".equals(storeType)) {
-            indexStoreModule = SimpleFsIndexStoreModule.class;
-        } else if ("niofs".equalsIgnoreCase(storeType) || "nio_fs".equalsIgnoreCase(storeType)) {
-            indexStoreModule = NioFsIndexStoreModule.class;
-        } else if ("mmapfs".equalsIgnoreCase(storeType) || "mmap_fs".equalsIgnoreCase(storeType)) {
-            indexStoreModule = MmapFsIndexStoreModule.class;
-        } else if (storeType != null) {
-            indexStoreModule = settings.getAsClass("index.store.type", indexStoreModule, "org.elasticsearch.index.store.", "IndexStoreModule");
-        }
+        final Class<? extends Module> indexStoreModule = settings.getAsClass(STORE_TYPE, null, "org.elasticsearch.index.store.", "IndexStoreModule");
         return ImmutableList.of(Modules.createModule(indexStoreModule, settings));
     }
 
     @Override
-    protected void configure() {
+    protected void configure() {}
+
+    private static class DefaultStoreModule extends AbstractModule {
+        @Override
+        protected void configure() {
+            bind(IndexStore.class).asEagerSingleton();
+        }
     }
 }

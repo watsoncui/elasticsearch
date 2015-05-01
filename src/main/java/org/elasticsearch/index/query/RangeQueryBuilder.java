@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -28,19 +28,22 @@ import java.io.IOException;
  *
  *
  */
-public class RangeQueryBuilder extends BaseQueryBuilder implements BoostableQueryBuilder<RangeQueryBuilder> {
+public class RangeQueryBuilder extends BaseQueryBuilder implements MultiTermQueryBuilder, BoostableQueryBuilder<RangeQueryBuilder> {
 
     private final String name;
 
     private Object from;
 
     private Object to;
+    private String timeZone;
 
     private boolean includeLower = true;
 
     private boolean includeUpper = true;
 
     private float boost = -1;
+
+    private String queryName;
 
     /**
      * A Query that matches documents within an range of terms.
@@ -383,8 +386,25 @@ public class RangeQueryBuilder extends BaseQueryBuilder implements BoostableQuer
      * Sets the boost for this query.  Documents matching this query will (in addition to the normal
      * weightings) have their score multiplied by the boost provided.
      */
+    @Override
     public RangeQueryBuilder boost(float boost) {
         this.boost = boost;
+        return this;
+    }
+
+    /**
+     * Sets the query name for the filter that can be used when searching for matched_filters per hit.
+     */
+    public RangeQueryBuilder queryName(String queryName) {
+        this.queryName = queryName;
+        return this;
+    }
+
+    /**
+     * In case of date field, we can adjust the from/to fields using a timezone
+     */
+    public RangeQueryBuilder timeZone(String timezone) {
+        this.timeZone = timezone;
         return this;
     }
 
@@ -394,10 +414,16 @@ public class RangeQueryBuilder extends BaseQueryBuilder implements BoostableQuer
         builder.startObject(name);
         builder.field("from", from);
         builder.field("to", to);
+        if (timeZone != null) {
+            builder.field("time_zone", timeZone);
+        }
         builder.field("include_lower", includeLower);
         builder.field("include_upper", includeUpper);
         if (boost != -1) {
             builder.field("boost", boost);
+        }
+        if (queryName != null) {
+            builder.field("_name", queryName);
         }
         builder.endObject();
         builder.endObject();

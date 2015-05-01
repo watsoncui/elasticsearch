@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,42 +19,36 @@
 
 package org.elasticsearch.action.admin.indices.exists.indices;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.support.master.TransportMasterNodeOperationAction;
+import org.elasticsearch.action.support.ActionFilters;
+import org.elasticsearch.action.support.IndicesOptions;
+import org.elasticsearch.action.support.master.TransportMasterNodeReadOperationAction;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.indices.IndexMissingException;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
 /**
  * Indices exists action.
  */
-public class TransportIndicesExistsAction extends TransportMasterNodeOperationAction<IndicesExistsRequest, IndicesExistsResponse> {
+public class TransportIndicesExistsAction extends TransportMasterNodeReadOperationAction<IndicesExistsRequest, IndicesExistsResponse> {
 
     @Inject
     public TransportIndicesExistsAction(Settings settings, TransportService transportService, ClusterService clusterService,
-                                        ThreadPool threadPool) {
-        super(settings, transportService, clusterService, threadPool);
+                                        ThreadPool threadPool, ActionFilters actionFilters) {
+        super(settings, IndicesExistsAction.NAME, transportService, clusterService, threadPool, actionFilters, IndicesExistsRequest.class);
     }
 
     @Override
     protected String executor() {
-        return ThreadPool.Names.MANAGEMENT;
-    }
-
-    @Override
-    protected String transportAction() {
-        return IndicesExistsAction.NAME;
-    }
-
-    @Override
-    protected IndicesExistsRequest newRequest() {
-        return new IndicesExistsRequest();
+        // lightweight in memory check
+        return ThreadPool.Names.SAME;
     }
 
     @Override
@@ -63,25 +57,22 @@ public class TransportIndicesExistsAction extends TransportMasterNodeOperationAc
     }
 
     @Override
-    protected void doExecute(IndicesExistsRequest request, ActionListener<IndicesExistsResponse> listener) {
-        // don't call this since it will throw IndexMissingException
-        //request.indices(clusterService.state().metaData().concreteIndices(request.indices()));
-        super.doExecute(request, listener);
-    }
-
-    @Override
     protected ClusterBlockException checkBlock(IndicesExistsRequest request, ClusterState state) {
-        return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA, request.indices());
+        //make sure through indices options that the concrete indices call never throws IndexMissingException
+        IndicesOptions indicesOptions = IndicesOptions.fromOptions(true, true, request.indicesOptions().expandWildcardsOpen(), request.indicesOptions().expandWildcardsClosed());
+        return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA_READ, clusterService.state().metaData().concreteIndices(indicesOptions, request.indices()));
     }
 
     @Override
-    protected IndicesExistsResponse masterOperation(IndicesExistsRequest request, ClusterState state) throws ElasticSearchException {
-        boolean exists = true;
-        for (String index : request.indices()) {
-            if (!state.metaData().hasConcreteIndex(index)) {
-                exists = false;
-            }
+    protected void masterOperation(final IndicesExistsRequest request, final ClusterState state, final ActionListener<IndicesExistsResponse> listener) {
+        boolean exists;
+        try {
+            // Similar as the previous behaviour, but now also aliases and wildcards are supported.
+            clusterService.state().metaData().concreteIndices(request.indicesOptions(), request.indices());
+            exists = true;
+        } catch (IndexMissingException e) {
+            exists = false;
         }
-        return new IndicesExistsResponse(exists);
+        listener.onResponse(new IndicesExistsResponse(exists));
     }
 }

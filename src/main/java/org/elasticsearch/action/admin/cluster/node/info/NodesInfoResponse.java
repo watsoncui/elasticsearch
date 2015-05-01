@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -27,6 +27,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.settings.SettingsFilter;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.common.xcontent.XContentFactory;
 
 import java.io.IOException;
 import java.util.Map;
@@ -35,8 +36,6 @@ import java.util.Map;
  *
  */
 public class NodesInfoResponse extends NodesOperationResponse<NodeInfo> implements ToXContent {
-
-    private SettingsFilter settingsFilter;
 
     public NodesInfoResponse() {
     }
@@ -63,14 +62,9 @@ public class NodesInfoResponse extends NodesOperationResponse<NodeInfo> implemen
         }
     }
 
-    public NodesInfoResponse settingsFilter(SettingsFilter settingsFilter) {
-        this.settingsFilter = settingsFilter;
-        return this;
-    }
-
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
-        builder.field("cluster_name", getClusterName().value());
+        builder.field("cluster_name", getClusterName().value(), XContentBuilder.FieldCaseConversion.NONE);
 
         builder.startObject("nodes");
         for (NodeInfo nodeInfo : this) {
@@ -78,25 +72,22 @@ public class NodesInfoResponse extends NodesOperationResponse<NodeInfo> implemen
 
             builder.field("name", nodeInfo.getNode().name(), XContentBuilder.FieldCaseConversion.NONE);
             builder.field("transport_address", nodeInfo.getNode().address().toString());
+            builder.field("host", nodeInfo.getNode().getHostName(), XContentBuilder.FieldCaseConversion.NONE);
+            builder.field("ip", nodeInfo.getNode().getHostAddress(), XContentBuilder.FieldCaseConversion.NONE);
 
-            if (nodeInfo.getHostname() != null) {
-                builder.field("hostname", nodeInfo.getHostname(), XContentBuilder.FieldCaseConversion.NONE);
-            }
-
-            if (nodeInfo.getVersion() != null) {
-                builder.field("version", nodeInfo.getVersion());
-            }
+            builder.field("version", nodeInfo.getVersion());
+            builder.field("build", nodeInfo.getBuild().hashShort());
 
             if (nodeInfo.getServiceAttributes() != null) {
                 for (Map.Entry<String, String> nodeAttribute : nodeInfo.getServiceAttributes().entrySet()) {
-                    builder.field(nodeAttribute.getKey(), nodeAttribute.getValue());
+                    builder.field(nodeAttribute.getKey(), nodeAttribute.getValue(), XContentBuilder.FieldCaseConversion.NONE);
                 }
             }
 
             if (!nodeInfo.getNode().attributes().isEmpty()) {
                 builder.startObject("attributes");
                 for (Map.Entry<String, String> attr : nodeInfo.getNode().attributes().entrySet()) {
-                    builder.field(attr.getKey(), attr.getValue());
+                    builder.field(attr.getKey(), attr.getValue(), XContentBuilder.FieldCaseConversion.NONE);
                 }
                 builder.endObject();
             }
@@ -104,10 +95,8 @@ public class NodesInfoResponse extends NodesOperationResponse<NodeInfo> implemen
 
             if (nodeInfo.getSettings() != null) {
                 builder.startObject("settings");
-                Settings settings = settingsFilter.filterSettings(nodeInfo.getSettings());
-                for (Map.Entry<String, String> entry : settings.getAsMap().entrySet()) {
-                    builder.field(entry.getKey(), entry.getValue());
-                }
+                Settings settings = nodeInfo.getSettings();
+                settings.toXContent(builder, params);
                 builder.endObject();
             }
 
@@ -132,10 +121,26 @@ public class NodesInfoResponse extends NodesOperationResponse<NodeInfo> implemen
             if (nodeInfo.getHttp() != null) {
                 nodeInfo.getHttp().toXContent(builder, params);
             }
+            if (nodeInfo.getPlugins() != null) {
+                nodeInfo.getPlugins().toXContent(builder, params);
+            }
 
             builder.endObject();
         }
         builder.endObject();
         return builder;
+    }
+
+    @Override
+    public String toString() {
+        try {
+            XContentBuilder builder = XContentFactory.jsonBuilder().prettyPrint();
+            builder.startObject();
+            toXContent(builder, EMPTY_PARAMS);
+            builder.endObject();
+            return builder.string();
+        } catch (IOException e) {
+            return "{ \"error\" : \"" + e.getMessage() + "\"}";
+        }
     }
 }

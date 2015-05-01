@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -24,8 +24,8 @@ import org.elasticsearch.common.component.LifecycleComponent;
 import org.elasticsearch.common.inject.Module;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.index.CloseableIndexComponent;
 
+import java.io.Closeable;
 import java.util.Collection;
 
 /**
@@ -81,7 +81,7 @@ public abstract class AbstractPlugin implements Plugin {
      * Defaults to return an empty list.
      */
     @Override
-    public Collection<Class<? extends CloseableIndexComponent>> indexServices() {
+    public Collection<Class<? extends Closeable>> indexServices() {
         return ImmutableList.of();
     }
 
@@ -105,7 +105,7 @@ public abstract class AbstractPlugin implements Plugin {
      * Defaults to return an empty list.
      */
     @Override
-    public Collection<Class<? extends CloseableIndexComponent>> shardServices() {
+    public Collection<Class<? extends Closeable>> shardServices() {
         return ImmutableList.of();
     }
 

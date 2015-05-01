@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,11 +20,8 @@
 package org.elasticsearch.action.index;
 
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.WriteConsistencyLevel;
-import org.elasticsearch.action.support.replication.ReplicationType;
 import org.elasticsearch.action.support.replication.ShardReplicationOperationRequestBuilder;
 import org.elasticsearch.client.Client;
-import org.elasticsearch.client.internal.InternalClient;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -39,11 +36,11 @@ import java.util.Map;
 public class IndexRequestBuilder extends ShardReplicationOperationRequestBuilder<IndexRequest, IndexResponse, IndexRequestBuilder> {
 
     public IndexRequestBuilder(Client client) {
-        super((InternalClient) client, new IndexRequest());
+        super(client, new IndexRequest());
     }
 
     public IndexRequestBuilder(Client client, @Nullable String index) {
-        super((InternalClient) client, new IndexRequest(index));
+        super(client, new IndexRequest(index));
     }
 
     /**
@@ -84,16 +81,8 @@ public class IndexRequestBuilder extends ShardReplicationOperationRequestBuilder
     /**
      * Sets the source.
      */
-    public IndexRequestBuilder setSource(BytesReference source, boolean unsafe) {
-        request.source(source, unsafe);
-        return this;
-    }
-
-    /**
-     * Sets the source.
-     */
     public IndexRequestBuilder setSource(BytesReference source) {
-        request.source(source, false);
+        request.source(source);
         return this;
     }
 
@@ -158,19 +147,6 @@ public class IndexRequestBuilder extends ShardReplicationOperationRequestBuilder
     }
 
     /**
-     * Sets the document to index in bytes form.
-     *
-     * @param source The source to index
-     * @param offset The offset in the byte array
-     * @param length The length of the data
-     * @param unsafe Is the byte array safe to be used form a different thread
-     */
-    public IndexRequestBuilder setSource(byte[] source, int offset, int length, boolean unsafe) {
-        request.source(source, offset, length, unsafe);
-        return this;
-    }
-
-    /**
      * Constructs a simple document with a field and a value.
      */
     public IndexRequestBuilder setSource(String field1, Object value1) {
@@ -203,6 +179,15 @@ public class IndexRequestBuilder extends ShardReplicationOperationRequestBuilder
     }
 
     /**
+     * Constructs a simple document with a field name and value pairs.
+     * <b>Note: the number of objects passed to this method must be an even number.</b> 
+     */
+    public IndexRequestBuilder setSource(Object... source) {
+        request.source(source);
+        return this;
+    }
+
+    /**
      * The content type that will be used to generate a document from user provided objects (like Map).
      */
     public IndexRequestBuilder setContentType(XContentType contentType) {
@@ -223,7 +208,7 @@ public class IndexRequestBuilder extends ShardReplicationOperationRequestBuilder
      * be either "index" or "create".
      */
     public IndexRequestBuilder setOpType(String opType) {
-        request.opType(opType);
+        request.opType(IndexRequest.OpType.fromString(opType));
         return this;
     }
 
@@ -246,30 +231,6 @@ public class IndexRequestBuilder extends ShardReplicationOperationRequestBuilder
     }
 
     /**
-     * Set the replication type for this operation.
-     */
-    public IndexRequestBuilder setReplicationType(ReplicationType replicationType) {
-        request.replicationType(replicationType);
-        return this;
-    }
-
-    /**
-     * Sets the consistency level. Defaults to {@link org.elasticsearch.action.WriteConsistencyLevel#DEFAULT}.
-     */
-    public IndexRequestBuilder setConsistencyLevel(WriteConsistencyLevel consistencyLevel) {
-        request.consistencyLevel(consistencyLevel);
-        return this;
-    }
-
-    /**
-     * Set the replication type for this operation.
-     */
-    public IndexRequestBuilder setReplicationType(String replicationType) {
-        request.replicationType(replicationType);
-        return this;
-    }
-
-    /**
      * Sets the version, which will cause the index operation to only be performed if a matching
      * version exists and no changes happened on the doc since then.
      */
@@ -283,16 +244,6 @@ public class IndexRequestBuilder extends ShardReplicationOperationRequestBuilder
      */
     public IndexRequestBuilder setVersionType(VersionType versionType) {
         request.versionType(versionType);
-        return this;
-    }
-
-    /**
-     * Causes the index request document to be percolated. The parameter is the percolate query
-     * to use to reduce the percolated queries that are going to run against this doc. Can be
-     * set to <tt>*</tt> to indicate that all percolate queries should be run.
-     */
-    public IndexRequestBuilder setPercolate(String percolate) {
-        request.percolate(percolate);
         return this;
     }
 
@@ -312,6 +263,6 @@ public class IndexRequestBuilder extends ShardReplicationOperationRequestBuilder
 
     @Override
     protected void doExecute(ActionListener<IndexResponse> listener) {
-        ((Client) client).index(request, listener);
+        client.index(request, listener);
     }
 }

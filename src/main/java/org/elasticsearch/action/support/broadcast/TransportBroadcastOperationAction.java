@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,10 +19,12 @@
 
 package org.elasticsearch.action.support.broadcast;
 
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.ExceptionsHelper;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.support.TransportAction;
+import org.elasticsearch.action.NoShardAvailableActionException;
+import org.elasticsearch.action.support.ActionFilters;
+import org.elasticsearch.action.support.HandledTransportAction;
+import org.elasticsearch.action.support.TransportActions;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.block.ClusterBlockException;
@@ -33,9 +35,6 @@ import org.elasticsearch.cluster.routing.ShardIterator;
 import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.index.IndexShardMissingException;
-import org.elasticsearch.index.shard.IllegalIndexShardStateException;
-import org.elasticsearch.indices.IndexMissingException;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.*;
 
@@ -46,30 +45,23 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  *
  */
 public abstract class TransportBroadcastOperationAction<Request extends BroadcastOperationRequest, Response extends BroadcastOperationResponse, ShardRequest extends BroadcastShardOperationRequest, ShardResponse extends BroadcastShardOperationResponse>
-        extends TransportAction<Request, Response> {
-
-    protected final ClusterService clusterService;
-
-    protected final TransportService transportService;
+        extends HandledTransportAction<Request, Response> {
 
     protected final ThreadPool threadPool;
+    protected final ClusterService clusterService;
+    protected final TransportService transportService;
 
-    final String transportAction;
     final String transportShardAction;
-    final String executor;
 
-    protected TransportBroadcastOperationAction(Settings settings, ThreadPool threadPool, ClusterService clusterService, TransportService transportService) {
-        super(settings, threadPool);
+    protected TransportBroadcastOperationAction(Settings settings, String actionName, ThreadPool threadPool, ClusterService clusterService, TransportService transportService, ActionFilters actionFilters,
+                                                Class<Request> request, Class<ShardRequest> shardRequest, String shardExecutor) {
+        super(settings, actionName, threadPool, transportService, actionFilters, request);
         this.clusterService = clusterService;
         this.transportService = transportService;
         this.threadPool = threadPool;
+        this.transportShardAction = actionName + "[s]";
 
-        this.transportAction = transportAction();
-        this.transportShardAction = transportAction() + "/s";
-        this.executor = executor();
-
-        transportService.registerHandler(transportAction, new TransportHandler());
-        transportService.registerHandler(transportShardAction, new ShardTransportHandler());
+        transportService.registerRequestHandler(transportShardAction, shardRequest, shardExecutor, new ShardTransportHandler());
     }
 
     @Override
@@ -77,88 +69,36 @@ public abstract class TransportBroadcastOperationAction<Request extends Broadcas
         new AsyncBroadcastAction(request, listener).start();
     }
 
-    protected abstract String transportAction();
-
-    protected abstract String executor();
-
-    protected abstract Request newRequest();
-
     protected abstract Response newResponse(Request request, AtomicReferenceArray shardsResponses, ClusterState clusterState);
 
-    protected abstract ShardRequest newShardRequest();
-
-    protected abstract ShardRequest newShardRequest(ShardRouting shard, Request request);
+    protected abstract ShardRequest newShardRequest(int numShards, ShardRouting shard, Request request);
 
     protected abstract ShardResponse newShardResponse();
 
-    protected abstract ShardResponse shardOperation(ShardRequest request) throws ElasticSearchException;
+    protected abstract ShardResponse shardOperation(ShardRequest request);
 
+    /**
+     * Determines the shards this operation will be executed on. The operation is executed once per shard iterator, typically
+     * on the first shard in it. If the operation fails, it will be retried on the next shard in the iterator.
+     */
     protected abstract GroupShardsIterator shards(ClusterState clusterState, Request request, String[] concreteIndices);
-
-    protected boolean accumulateExceptions() {
-        return true;
-    }
-
-    /**
-     * Override this method to ignore specific exception, note, the result should be OR'ed with the call
-     * to super#ignoreException since there is additional logic here....
-     */
-    protected boolean ignoreException(Throwable t) {
-        if (ignoreIllegalShardState()) {
-            Throwable actual = ExceptionsHelper.unwrapCause(t);
-            if (actual instanceof IllegalIndexShardStateException) {
-                return true;
-            }
-            if (actual instanceof IndexMissingException) {
-                return true;
-            }
-            if (actual instanceof IndexShardMissingException) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Should non active routing shard state be ignore or node, defaults to false.
-     */
-    protected boolean ignoreNonActiveExceptions() {
-        return false;
-    }
-
-    /**
-     * Should the API ignore illegal shard state cases, for example, if the shard is actually missing on the
-     * target node (cause it hasn't been allocated there for example). Defaults to true.
-     */
-    protected boolean ignoreIllegalShardState() {
-        return true;
-    }
 
     protected abstract ClusterBlockException checkGlobalBlock(ClusterState state, Request request);
 
     protected abstract ClusterBlockException checkRequestBlock(ClusterState state, Request request, String[] concreteIndices);
 
-    class AsyncBroadcastAction {
+    protected class AsyncBroadcastAction {
 
         private final Request request;
-
         private final ActionListener<Response> listener;
-
         private final ClusterState clusterState;
-
         private final DiscoveryNodes nodes;
-
         private final GroupShardsIterator shardsIts;
-
         private final int expectedOps;
-
         private final AtomicInteger counterOps = new AtomicInteger();
-
-        private final AtomicInteger indexCounter = new AtomicInteger();
-
         private final AtomicReferenceArray shardsResponses;
 
-        AsyncBroadcastAction(Request request, ActionListener<Response> listener) {
+        protected AsyncBroadcastAction(Request request, ActionListener<Response> listener) {
             this.request = request;
             this.listener = listener;
 
@@ -169,109 +109,55 @@ public abstract class TransportBroadcastOperationAction<Request extends Broadcas
                 throw blockException;
             }
             // update to concrete indices
-            String[] concreteIndices = clusterState.metaData().concreteIndices(request.indices(), request.ignoreIndices(), true);
+            String[] concreteIndices = clusterState.metaData().concreteIndices(request.indicesOptions(), request.indices());
             blockException = checkRequestBlock(clusterState, request, concreteIndices);
             if (blockException != null) {
                 throw blockException;
             }
 
             nodes = clusterState.nodes();
+            logger.trace("resolving shards based on cluster state version [{}]", clusterState.version());
             shardsIts = shards(clusterState, request, concreteIndices);
             expectedOps = shardsIts.size();
 
-            shardsResponses = new AtomicReferenceArray<Object>(expectedOps);
+            shardsResponses = new AtomicReferenceArray<>(expectedOps);
         }
 
         public void start() {
             if (shardsIts.size() == 0) {
                 // no shards
-                listener.onResponse(newResponse(request, new AtomicReferenceArray(0), clusterState));
+                try {
+                    listener.onResponse(newResponse(request, new AtomicReferenceArray(0), clusterState));
+                } catch (Throwable e) {
+                    listener.onFailure(e);
+                }
+                return;
             }
-            request.beforeStart();
             // count the local operations, and perform the non local ones
-            int localOperations = 0;
+            int shardIndex = -1;
             for (final ShardIterator shardIt : shardsIts) {
-                final ShardRouting shard = shardIt.firstOrNull();
+                shardIndex++;
+                final ShardRouting shard = shardIt.nextOrNull();
                 if (shard != null) {
-                    if (shard.currentNodeId().equals(nodes.localNodeId())) {
-                        localOperations++;
-                    } else {
-                        // do the remote operation here, the localAsync flag is not relevant
-                        performOperation(shardIt, true);
-                    }
+                    performOperation(shardIt, shard, shardIndex);
                 } else {
                     // really, no shards active in this group
-                    onOperation(null, shardIt, null);
-                }
-            }
-            // we have local operations, perform them now
-            if (localOperations > 0) {
-                if (request.operationThreading() == BroadcastOperationThreading.SINGLE_THREAD) {
-                    request.beforeLocalFork();
-                    threadPool.executor(executor).execute(new Runnable() {
-                        @Override
-                        public void run() {
-                            for (final ShardIterator shardIt : shardsIts) {
-                                final ShardRouting shard = shardIt.firstOrNull();
-                                if (shard != null) {
-                                    if (shard.currentNodeId().equals(nodes.localNodeId())) {
-                                        performOperation(shardIt, false);
-                                    }
-                                }
-                            }
-                        }
-                    });
-                } else {
-                    boolean localAsync = request.operationThreading() == BroadcastOperationThreading.THREAD_PER_SHARD;
-                    if (localAsync) {
-                        request.beforeLocalFork();
-                    }
-                    for (final ShardIterator shardIt : shardsIts) {
-                        final ShardRouting shard = shardIt.firstOrNull();
-                        if (shard != null) {
-                            if (shard.currentNodeId().equals(nodes.localNodeId())) {
-                                performOperation(shardIt, localAsync);
-                            }
-                        }
-                    }
+                    onOperation(null, shardIt, shardIndex, new NoShardAvailableActionException(shardIt.shardId()));
                 }
             }
         }
 
-        void performOperation(final ShardIterator shardIt, boolean localAsync) {
-            performOperation(shardIt, shardIt.nextOrNull(), localAsync);
-        }
-
-        void performOperation(final ShardIterator shardIt, final ShardRouting shard, boolean localAsync) {
+        protected void performOperation(final ShardIterator shardIt, final ShardRouting shard, final int shardIndex) {
             if (shard == null) {
                 // no more active shards... (we should not really get here, just safety)
-                onOperation(null, shardIt, null);
+                onOperation(null, shardIt, shardIndex, new NoShardAvailableActionException(shardIt.shardId()));
             } else {
-                final ShardRequest shardRequest = newShardRequest(shard, request);
-                if (shard.currentNodeId().equals(nodes.localNodeId())) {
-                    if (localAsync) {
-                        threadPool.executor(executor).execute(new Runnable() {
-                            @Override
-                            public void run() {
-                                try {
-                                    onOperation(shard, shardOperation(shardRequest));
-                                } catch (Exception e) {
-                                    onOperation(shard, shardIt, e);
-                                }
-                            }
-                        });
-                    } else {
-                        try {
-                            onOperation(shard, shardOperation(shardRequest));
-                        } catch (Throwable e) {
-                            onOperation(shard, shardIt, e);
-                        }
-                    }
-                } else {
+                try {
+                    final ShardRequest shardRequest = newShardRequest(shardIt.size(), shard, request);
                     DiscoveryNode node = nodes.get(shard.currentNodeId());
                     if (node == null) {
                         // no node connected, act as failure
-                        onOperation(shard, shardIt, null);
+                        onOperation(shard, shardIt, shardIndex, new NoShardAvailableActionException(shardIt.shardId()));
                     } else {
                         transportService.sendRequest(node, transportShardAction, shardRequest, new BaseTransportResponseHandler<ShardResponse>() {
                             @Override
@@ -286,78 +172,52 @@ public abstract class TransportBroadcastOperationAction<Request extends Broadcas
 
                             @Override
                             public void handleResponse(ShardResponse response) {
-                                onOperation(shard, response);
+                                onOperation(shard, shardIndex, response);
                             }
 
                             @Override
                             public void handleException(TransportException e) {
-                                onOperation(shard, shardIt, e);
+                                onOperation(shard, shardIt, shardIndex, e);
                             }
                         });
                     }
+                } catch (Throwable e) {
+                    onOperation(shard, shardIt, shardIndex, e);
                 }
             }
         }
 
         @SuppressWarnings({"unchecked"})
-        void onOperation(ShardRouting shard, ShardResponse response) {
-            shardsResponses.set(indexCounter.getAndIncrement(), response);
+        protected void onOperation(ShardRouting shard, int shardIndex, ShardResponse response) {
+            logger.trace("received response for {}", shard);
+            shardsResponses.set(shardIndex, response);
             if (expectedOps == counterOps.incrementAndGet()) {
                 finishHim();
             }
         }
 
         @SuppressWarnings({"unchecked"})
-        void onOperation(@Nullable ShardRouting shard, final ShardIterator shardIt, Throwable t) {
+        void onOperation(@Nullable ShardRouting shard, final ShardIterator shardIt, int shardIndex, Throwable t) {
+            // we set the shard failure always, even if its the first in the replication group, and the next one
+            // will work (it will just override it...)
+            setFailure(shardIt, shardIndex, t);
             ShardRouting nextShard = shardIt.nextOrNull();
             if (nextShard != null) {
                 if (t != null) {
-                    // trace log this exception
                     if (logger.isTraceEnabled()) {
-                        if (!ignoreException(t)) {
-                            if (shard != null) {
-                                logger.trace(shard.shortSummary() + ": Failed to execute [" + request + "]", t);
-                            } else {
-                                logger.trace(shardIt.shardId() + ": Failed to execute [" + request + "]", t);
-                            }
+                        if (!TransportActions.isShardNotAvailableException(t)) {
+                            logger.trace("{}: failed to execute [{}]", t, shard != null ? shard.shortSummary() : shardIt.shardId(), request);
                         }
                     }
                 }
-                // we are not threaded here if we got here from the transport
-                // or we possibly threaded if we got from a local threaded one,
-                // in which case, the next shard in the partition will not be local one
-                // so there is no meaning to this flag
-                performOperation(shardIt, nextShard, true);
+                performOperation(shardIt, nextShard, shardIndex);
             } else {
-                // e is null when there is no next active....
                 if (logger.isDebugEnabled()) {
                     if (t != null) {
-                        if (!ignoreException(t)) {
-                            if (shard != null) {
-                                logger.debug(shard.shortSummary() + ": Failed to execute [" + request + "]", t);
-                            } else {
-                                logger.debug(shardIt.shardId() + ": Failed to execute [" + request + "]", t);
-                            }
+                        if (!TransportActions.isShardNotAvailableException(t)) {
+                            logger.debug("{}: failed to execute [{}]", t, shard != null ? shard.shortSummary() : shardIt.shardId(), request);
                         }
                     }
-                }
-                // no more shards in this group
-                int index = indexCounter.getAndIncrement();
-                if (accumulateExceptions()) {
-                    if (t == null) {
-                        if (!ignoreNonActiveExceptions()) {
-                            t = new BroadcastShardOperationFailedException(shardIt.shardId(), "No active shard(s)");
-                        }
-                    } else {
-                        if (ignoreException(t)) {
-                            t = null;
-                        } else {
-                            if (!(t instanceof BroadcastShardOperationFailedException)) {
-                                t = new BroadcastShardOperationFailedException(shardIt.shardId(), t);
-                            }
-                        }
-                    }
-                    shardsResponses.set(index, t);
                 }
                 if (expectedOps == counterOps.incrementAndGet()) {
                     finishHim();
@@ -365,64 +225,44 @@ public abstract class TransportBroadcastOperationAction<Request extends Broadcas
             }
         }
 
-        void finishHim() {
-            listener.onResponse(newResponse(request, shardsResponses, clusterState));
-        }
-    }
-
-    class TransportHandler extends BaseTransportRequestHandler<Request> {
-
-        @Override
-        public Request newInstance() {
-            return newRequest();
-        }
-
-        @Override
-        public String executor() {
-            return ThreadPool.Names.SAME;
-        }
-
-        @Override
-        public void messageReceived(Request request, final TransportChannel channel) throws Exception {
-            // we just send back a response, no need to fork a listener
-            request.listenerThreaded(false);
-            // we don't spawn, so if we get a request with no threading, change it to single threaded
-            if (request.operationThreading() == BroadcastOperationThreading.NO_THREADS) {
-                request.operationThreading(BroadcastOperationThreading.SINGLE_THREAD);
+        protected void finishHim() {
+            try {
+                listener.onResponse(newResponse(request, shardsResponses, clusterState));
+            } catch (Throwable e) {
+                listener.onFailure(e);
             }
-            execute(request, new ActionListener<Response>() {
-                @Override
-                public void onResponse(Response response) {
-                    try {
-                        channel.sendResponse(response);
-                    } catch (Exception e) {
-                        onFailure(e);
-                    }
-                }
+        }
 
-                @Override
-                public void onFailure(Throwable e) {
-                    try {
-                        channel.sendResponse(e);
-                    } catch (Exception e1) {
-                        logger.warn("Failed to send response", e1);
-                    }
-                }
-            });
+        void setFailure(ShardIterator shardIt, int shardIndex, Throwable t) {
+            // we don't aggregate shard failures on non active shards (but do keep the header counts right)
+            if (TransportActions.isShardNotAvailableException(t)) {
+                return;
+            }
+
+            if (!(t instanceof BroadcastShardOperationFailedException)) {
+                t = new BroadcastShardOperationFailedException(shardIt.shardId(), t);
+            }
+
+            Object response = shardsResponses.get(shardIndex);
+            if (response == null) {
+                // just override it and return
+                shardsResponses.set(shardIndex, t);
+            }
+
+            if (!(response instanceof Throwable)) {
+                // we should never really get here...
+                return;
+            }
+
+            // the failure is already present, try and not override it with an exception that is less meaningless
+            // for example, getting illegal shard state
+            if (TransportActions.isReadOverrideException(t)) {
+                shardsResponses.set(shardIndex, t);
+            }
         }
     }
 
-    class ShardTransportHandler extends BaseTransportRequestHandler<ShardRequest> {
-
-        @Override
-        public ShardRequest newInstance() {
-            return newShardRequest();
-        }
-
-        @Override
-        public String executor() {
-            return executor;
-        }
+    class ShardTransportHandler implements TransportRequestHandler<ShardRequest> {
 
         @Override
         public void messageReceived(final ShardRequest request, final TransportChannel channel) throws Exception {

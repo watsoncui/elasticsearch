@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -35,9 +35,7 @@ public class BytesStreamInput extends StreamInput {
 
     protected int pos;
 
-    protected int count;
-
-    private final boolean unsafe;
+    protected int end;
 
     public BytesStreamInput(BytesReference bytes) {
         if (!bytes.hasArray()) {
@@ -45,26 +43,21 @@ public class BytesStreamInput extends StreamInput {
         }
         this.buf = bytes.array();
         this.pos = bytes.arrayOffset();
-        this.count = bytes.length();
-        this.unsafe = false;
+        this.end = pos + bytes.length();
     }
 
-    public BytesStreamInput(byte buf[], boolean unsafe) {
-        this(buf, 0, buf.length, unsafe);
+    public BytesStreamInput(byte buf[]) {
+        this(buf, 0, buf.length);
     }
 
-    public BytesStreamInput(byte buf[], int offset, int length, boolean unsafe) {
+    public BytesStreamInput(byte buf[], int offset, int length) {
         this.buf = buf;
         this.pos = offset;
-        this.count = Math.min(offset + length, buf.length);
-        this.unsafe = unsafe;
+        this.end = offset + length;
     }
 
     @Override
     public BytesReference readBytesReference(int length) throws IOException {
-        if (unsafe) {
-            return super.readBytesReference(length);
-        }
         BytesArray bytes = new BytesArray(buf, pos, length);
         pos += length;
         return bytes;
@@ -72,9 +65,6 @@ public class BytesStreamInput extends StreamInput {
 
     @Override
     public BytesRef readBytesRef(int length) throws IOException {
-        if (unsafe) {
-            return super.readBytesRef(length);
-        }
         BytesRef bytes = new BytesRef(buf, pos, length);
         pos += length;
         return bytes;
@@ -82,8 +72,8 @@ public class BytesStreamInput extends StreamInput {
 
     @Override
     public long skip(long n) throws IOException {
-        if (pos + n > count) {
-            n = count - pos;
+        if (pos + n > end) {
+            n = end - pos;
         }
         if (n < 0) {
             return 0;
@@ -98,7 +88,7 @@ public class BytesStreamInput extends StreamInput {
 
     @Override
     public int read() throws IOException {
-        return (pos < count) ? (buf[pos++] & 0xff) : -1;
+        return (pos < end) ? (buf[pos++] & 0xff) : -1;
     }
 
     @Override
@@ -108,11 +98,11 @@ public class BytesStreamInput extends StreamInput {
         } else if (off < 0 || len < 0 || len > b.length - off) {
             throw new IndexOutOfBoundsException();
         }
-        if (pos >= count) {
+        if (pos >= end) {
             return -1;
         }
-        if (pos + len > count) {
-            len = count - pos;
+        if (pos + len > end) {
+            len = end - pos;
         }
         if (len <= 0) {
             return 0;
@@ -128,7 +118,7 @@ public class BytesStreamInput extends StreamInput {
 
     @Override
     public byte readByte() throws IOException {
-        if (pos >= count) {
+        if (pos >= end) {
             throw new EOFException();
         }
         return buf[pos++];
@@ -139,11 +129,11 @@ public class BytesStreamInput extends StreamInput {
         if (len == 0) {
             return;
         }
-        if (pos >= count) {
+        if (pos >= end) {
             throw new EOFException();
         }
-        if (pos + len > count) {
-            len = count - pos;
+        if (pos + len > end) {
+            len = end - pos;
         }
         if (len <= 0) {
             throw new EOFException();

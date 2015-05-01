@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,12 +19,20 @@
 
 package org.elasticsearch.common.http.client;
 
+import org.apache.lucene.util.IOUtils;
+import org.elasticsearch.ElasticsearchTimeoutException;
+import org.elasticsearch.Version;
 import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.SuppressForbidden;
+import org.elasticsearch.common.unit.TimeValue;
 
 import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLConnection;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 
 /**
  *
@@ -33,10 +41,9 @@ public class HttpDownloadHelper {
 
     private boolean useTimestamp = false;
     private boolean skipExisting = false;
-    private long maxTime = 0;
 
-    public boolean download(URL source, File dest, @Nullable DownloadProgress progress) throws IOException {
-        if (dest.exists() && skipExisting) {
+    public boolean download(URL source, Path dest, @Nullable DownloadProgress progress, TimeValue timeout) throws Exception {
+        if (Files.exists(dest) && skipExisting) {
             return true;
         }
 
@@ -49,25 +56,26 @@ public class HttpDownloadHelper {
         long timestamp = 0;
 
         boolean hasTimestamp = false;
-        if (useTimestamp && dest.exists()) {
-            timestamp = dest.lastModified();
+        if (useTimestamp && Files.exists(dest) ) {
+            timestamp = Files.getLastModifiedTime(dest).toMillis();
             hasTimestamp = true;
         }
 
         GetThread getThread = new GetThread(source, dest, hasTimestamp, timestamp, progress);
-        getThread.setDaemon(true);
-        getThread.start();
-        try {
-            getThread.join(maxTime * 1000);
-        } catch (InterruptedException ie) {
-            // ignore
-        }
 
-        if (getThread.isAlive()) {
-            String msg = "The GET operation took longer than " + maxTime
-                    + " seconds, stopping it.";
+        try {
+            getThread.setDaemon(true);
+            getThread.start();
+            getThread.join(timeout.millis());
+
+            if (getThread.isAlive()) {
+                throw new ElasticsearchTimeoutException("The GET operation took longer than " + timeout + ", stopping it.");
+            }
+        }
+        catch (InterruptedException ie) {
+            return false;
+        } finally {
             getThread.closeStreams();
-            throw new IOException(msg);
         }
 
         return getThread.wasSuccessful();
@@ -103,6 +111,7 @@ public class HttpDownloadHelper {
         /**
          * begin a download
          */
+        @Override
         public void beginDownload() {
 
         }
@@ -110,12 +119,14 @@ public class HttpDownloadHelper {
         /**
          * tick handler
          */
+        @Override
         public void onTick() {
         }
 
         /**
          * end a download
          */
+        @Override
         public void endDownload() {
 
         }
@@ -124,10 +135,11 @@ public class HttpDownloadHelper {
     /**
      * verbose progress system prints to some output stream
      */
+    @SuppressForbidden(reason = "System#out")
     public static class VerboseProgress implements DownloadProgress {
         private int dots = 0;
         // CheckStyle:VisibilityModifier OFF - bc
-        PrintStream out;
+        PrintWriter writer;
         // CheckStyle:VisibilityModifier ON
 
         /**
@@ -136,24 +148,35 @@ public class HttpDownloadHelper {
          * @param out the output stream.
          */
         public VerboseProgress(PrintStream out) {
-            this.out = out;
+            this.writer = new PrintWriter(out);
+        }
+
+        /**
+         * Construct a verbose progress reporter.
+         *
+         * @param writer the output stream.
+         */
+        public VerboseProgress(PrintWriter writer) {
+            this.writer = writer;
         }
 
         /**
          * begin a download
          */
+        @Override
         public void beginDownload() {
-            out.print("Downloading ");
+            writer.print("Downloading ");
             dots = 0;
         }
 
         /**
          * tick handler
          */
+        @Override
         public void onTick() {
-            out.print(".");
+            writer.print(".");
             if (dots++ > 50) {
-                out.flush();
+                writer.flush();
                 dots = 0;
             }
         }
@@ -161,16 +184,17 @@ public class HttpDownloadHelper {
         /**
          * end a download
          */
+        @Override
         public void endDownload() {
-            out.println("DONE");
-            out.flush();
+            writer.println("DONE");
+            writer.flush();
         }
     }
 
     private class GetThread extends Thread {
 
         private final URL source;
-        private final File dest;
+        private final Path dest;
         private final boolean hasTimestamp;
         private final long timestamp;
         private final DownloadProgress progress;
@@ -182,7 +206,7 @@ public class HttpDownloadHelper {
         private URLConnection connection;
         private int redirections = 0;
 
-        GetThread(URL source, File dest, boolean h, long t, DownloadProgress p) {
+        GetThread(URL source, Path dest, boolean h, long t, DownloadProgress p) {
             this.source = source;
             this.dest = dest;
             hasTimestamp = h;
@@ -190,6 +214,7 @@ public class HttpDownloadHelper {
             progress = p;
         }
 
+        @Override
         public void run() {
             try {
                 success = get();
@@ -255,6 +280,9 @@ public class HttpDownloadHelper {
                 ((HttpURLConnection) connection).setUseCaches(true);
                 ((HttpURLConnection) connection).setConnectTimeout(5000);
             }
+            connection.setRequestProperty("ES-Version", Version.CURRENT.toString());
+            connection.setRequestProperty("User-Agent", "elasticsearch-plugin-manager");
+
             // connect to the remote site (may take some time)
             connection.connect();
 
@@ -317,7 +345,7 @@ public class HttpDownloadHelper {
                 throw new IOException("Can't get " + source + " to " + dest, lastEx);
             }
 
-            os = new FileOutputStream(dest);
+            os = Files.newOutputStream(dest);
             progress.beginDownload();
             boolean finished = false;
             try {
@@ -329,32 +357,24 @@ public class HttpDownloadHelper {
                 }
                 finished = !isInterrupted();
             } finally {
-                try {
-                    os.close();
-                } catch (IOException e) {
-                    // ignore
-                }
-                try {
-                    is.close();
-                } catch (IOException e) {
-                    // ignore
-                }
-
-                // we have started to (over)write dest, but failed.
-                // Try to delete the garbage we'd otherwise leave
-                // behind.
                 if (!finished) {
-                    dest.delete();
+                    // we have started to (over)write dest, but failed.
+                    // Try to delete the garbage we'd otherwise leave
+                    // behind.
+                    IOUtils.closeWhileHandlingException(os, is);
+                    IOUtils.deleteFilesIgnoringExceptions(dest);
+                } else {
+                    IOUtils.close(os, is);
                 }
             }
             progress.endDownload();
             return true;
         }
 
-        private void updateTimeStamp() {
+        private void updateTimeStamp() throws IOException {
             long remoteTimestamp = connection.getLastModified();
             if (remoteTimestamp != 0) {
-                dest.setLastModified(remoteTimestamp);
+                Files.setLastModifiedTime(dest, FileTime.fromMillis(remoteTimestamp));
             }
         }
 
@@ -374,20 +394,15 @@ public class HttpDownloadHelper {
          * Closes streams, interrupts the download, may delete the
          * output file.
          */
-        void closeStreams() {
+        void closeStreams() throws IOException {
             interrupt();
-            try {
-                os.close();
-            } catch (IOException e) {
-                // ignore
-            }
-            try {
-                is.close();
-            } catch (IOException e) {
-                // ignore
-            }
-            if (!success && dest.exists()) {
-                dest.delete();
+            if (success) {
+                IOUtils.close(is, os);
+            } else {
+                IOUtils.closeWhileHandlingException(is, os);
+                if (dest != null && Files.exists(dest)) {
+                    IOUtils.deleteFilesIgnoringExceptions(dest);
+                }
             }
         }
     }

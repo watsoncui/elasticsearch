@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,11 +19,16 @@
 
 package org.elasticsearch.client;
 
-import org.elasticsearch.action.*;
-import org.elasticsearch.action.admin.indices.IndicesAction;
+import org.elasticsearch.action.ActionFuture;
+import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.indices.alias.IndicesAliasesRequest;
 import org.elasticsearch.action.admin.indices.alias.IndicesAliasesRequestBuilder;
 import org.elasticsearch.action.admin.indices.alias.IndicesAliasesResponse;
+import org.elasticsearch.action.admin.indices.alias.exists.AliasesExistRequestBuilder;
+import org.elasticsearch.action.admin.indices.alias.exists.AliasesExistResponse;
+import org.elasticsearch.action.admin.indices.alias.get.GetAliasesRequest;
+import org.elasticsearch.action.admin.indices.alias.get.GetAliasesRequestBuilder;
+import org.elasticsearch.action.admin.indices.alias.get.GetAliasesResponse;
 import org.elasticsearch.action.admin.indices.analyze.AnalyzeRequest;
 import org.elasticsearch.action.admin.indices.analyze.AnalyzeRequestBuilder;
 import org.elasticsearch.action.admin.indices.analyze.AnalyzeResponse;
@@ -48,12 +53,10 @@ import org.elasticsearch.action.admin.indices.exists.types.TypesExistsResponse;
 import org.elasticsearch.action.admin.indices.flush.FlushRequest;
 import org.elasticsearch.action.admin.indices.flush.FlushRequestBuilder;
 import org.elasticsearch.action.admin.indices.flush.FlushResponse;
-import org.elasticsearch.action.admin.indices.gateway.snapshot.GatewaySnapshotRequest;
-import org.elasticsearch.action.admin.indices.gateway.snapshot.GatewaySnapshotRequestBuilder;
-import org.elasticsearch.action.admin.indices.gateway.snapshot.GatewaySnapshotResponse;
-import org.elasticsearch.action.admin.indices.mapping.delete.DeleteMappingRequest;
-import org.elasticsearch.action.admin.indices.mapping.delete.DeleteMappingRequestBuilder;
-import org.elasticsearch.action.admin.indices.mapping.delete.DeleteMappingResponse;
+import org.elasticsearch.action.admin.indices.get.GetIndexRequest;
+import org.elasticsearch.action.admin.indices.get.GetIndexRequestBuilder;
+import org.elasticsearch.action.admin.indices.get.GetIndexResponse;
+import org.elasticsearch.action.admin.indices.mapping.get.*;
 import org.elasticsearch.action.admin.indices.mapping.put.PutMappingRequest;
 import org.elasticsearch.action.admin.indices.mapping.put.PutMappingRequestBuilder;
 import org.elasticsearch.action.admin.indices.mapping.put.PutMappingResponse;
@@ -63,24 +66,30 @@ import org.elasticsearch.action.admin.indices.open.OpenIndexResponse;
 import org.elasticsearch.action.admin.indices.optimize.OptimizeRequest;
 import org.elasticsearch.action.admin.indices.optimize.OptimizeRequestBuilder;
 import org.elasticsearch.action.admin.indices.optimize.OptimizeResponse;
+import org.elasticsearch.action.admin.indices.recovery.RecoveryRequest;
+import org.elasticsearch.action.admin.indices.recovery.RecoveryRequestBuilder;
+import org.elasticsearch.action.admin.indices.recovery.RecoveryResponse;
 import org.elasticsearch.action.admin.indices.refresh.RefreshRequest;
 import org.elasticsearch.action.admin.indices.refresh.RefreshRequestBuilder;
 import org.elasticsearch.action.admin.indices.refresh.RefreshResponse;
 import org.elasticsearch.action.admin.indices.segments.IndicesSegmentResponse;
 import org.elasticsearch.action.admin.indices.segments.IndicesSegmentsRequest;
 import org.elasticsearch.action.admin.indices.segments.IndicesSegmentsRequestBuilder;
-import org.elasticsearch.action.admin.indices.settings.UpdateSettingsRequest;
-import org.elasticsearch.action.admin.indices.settings.UpdateSettingsRequestBuilder;
-import org.elasticsearch.action.admin.indices.settings.UpdateSettingsResponse;
+import org.elasticsearch.action.admin.indices.settings.get.GetSettingsRequest;
+import org.elasticsearch.action.admin.indices.settings.get.GetSettingsRequestBuilder;
+import org.elasticsearch.action.admin.indices.settings.get.GetSettingsResponse;
+import org.elasticsearch.action.admin.indices.settings.put.UpdateSettingsRequest;
+import org.elasticsearch.action.admin.indices.settings.put.UpdateSettingsRequestBuilder;
+import org.elasticsearch.action.admin.indices.settings.put.UpdateSettingsResponse;
 import org.elasticsearch.action.admin.indices.stats.IndicesStatsRequest;
 import org.elasticsearch.action.admin.indices.stats.IndicesStatsRequestBuilder;
 import org.elasticsearch.action.admin.indices.stats.IndicesStatsResponse;
-import org.elasticsearch.action.admin.indices.status.IndicesStatusRequest;
-import org.elasticsearch.action.admin.indices.status.IndicesStatusRequestBuilder;
-import org.elasticsearch.action.admin.indices.status.IndicesStatusResponse;
 import org.elasticsearch.action.admin.indices.template.delete.DeleteIndexTemplateRequest;
 import org.elasticsearch.action.admin.indices.template.delete.DeleteIndexTemplateRequestBuilder;
 import org.elasticsearch.action.admin.indices.template.delete.DeleteIndexTemplateResponse;
+import org.elasticsearch.action.admin.indices.template.get.GetIndexTemplatesRequest;
+import org.elasticsearch.action.admin.indices.template.get.GetIndexTemplatesRequestBuilder;
+import org.elasticsearch.action.admin.indices.template.get.GetIndexTemplatesResponse;
 import org.elasticsearch.action.admin.indices.template.put.PutIndexTemplateRequest;
 import org.elasticsearch.action.admin.indices.template.put.PutIndexTemplateRequestBuilder;
 import org.elasticsearch.action.admin.indices.template.put.PutIndexTemplateResponse;
@@ -90,6 +99,9 @@ import org.elasticsearch.action.admin.indices.validate.query.ValidateQueryRespon
 import org.elasticsearch.action.admin.indices.warmer.delete.DeleteWarmerRequest;
 import org.elasticsearch.action.admin.indices.warmer.delete.DeleteWarmerRequestBuilder;
 import org.elasticsearch.action.admin.indices.warmer.delete.DeleteWarmerResponse;
+import org.elasticsearch.action.admin.indices.warmer.get.GetWarmersRequest;
+import org.elasticsearch.action.admin.indices.warmer.get.GetWarmersRequestBuilder;
+import org.elasticsearch.action.admin.indices.warmer.get.GetWarmersResponse;
 import org.elasticsearch.action.admin.indices.warmer.put.PutWarmerRequest;
 import org.elasticsearch.action.admin.indices.warmer.put.PutWarmerRequestBuilder;
 import org.elasticsearch.action.admin.indices.warmer.put.PutWarmerResponse;
@@ -100,13 +112,7 @@ import org.elasticsearch.common.Nullable;
  *
  * @see AdminClient#indices()
  */
-public interface IndicesAdminClient {
-
-    <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder>> ActionFuture<Response> execute(final IndicesAction<Request, Response, RequestBuilder> action, final Request request);
-
-    <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder>> void execute(final IndicesAction<Request, Response, RequestBuilder> action, final Request request, ActionListener<Response> listener);
-
-    <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder>> RequestBuilder prepareExecute(final IndicesAction<Request, Response, RequestBuilder> action);
+public interface IndicesAdminClient extends ElasticsearchClient<IndicesAdminClient> {
 
 
     /**
@@ -170,27 +176,19 @@ public interface IndicesAdminClient {
     IndicesStatsRequestBuilder prepareStats(String... indices);
 
     /**
-     * The status of one or more indices.
-     *
-     * @param request The indices status request
-     * @return The result future
-     * @see Requests#indicesStatusRequest(String...)
+     * Indices recoveries
      */
-    ActionFuture<IndicesStatusResponse> status(IndicesStatusRequest request);
+    ActionFuture<RecoveryResponse> recoveries(RecoveryRequest request);
 
     /**
-     * The status of one or more indices.
-     *
-     * @param request  The indices status request
-     * @param listener A listener to be notified with a result
-     * @see Requests#indicesStatusRequest(String...)
+     *Indices recoveries
      */
-    void status(IndicesStatusRequest request, ActionListener<IndicesStatusResponse> listener);
+    void recoveries(RecoveryRequest request, ActionListener<RecoveryResponse> listener);
 
     /**
-     * The status of one or more indices.
+     * Indices recoveries
      */
-    IndicesStatusRequestBuilder prepareStatus(String... indices);
+    RecoveryRequestBuilder prepareRecoveries(String... indices);
 
     /**
      * The segments of one or more indices.
@@ -261,7 +259,7 @@ public interface IndicesAdminClient {
     /**
      * Deletes an index based on the index name.
      *
-     * @param indices The indices to delete. Empty array to delete all indices.
+     * @param indices The indices to delete. Use "_all" to delete all indices.
      */
     DeleteIndexRequestBuilder prepareDelete(String... indices);
 
@@ -284,14 +282,14 @@ public interface IndicesAdminClient {
     void close(CloseIndexRequest request, ActionListener<CloseIndexResponse> listener);
 
     /**
-     * Closes an index based on the index name.
+     * Closes one or more indices based on their index name.
      *
-     * @param index The index name to close
+     * @param indices The name of the indices to close
      */
-    CloseIndexRequestBuilder prepareClose(String index);
+    CloseIndexRequestBuilder prepareClose(String... indices);
 
     /**
-     * OPen an index based on the index name.
+     * Open an index based on the index name.
      *
      * @param request The close index request
      * @return The result future
@@ -309,11 +307,11 @@ public interface IndicesAdminClient {
     void open(OpenIndexRequest request, ActionListener<OpenIndexResponse> listener);
 
     /**
-     * Opens an index based on the index name.
+     * Opens one or more indices based on their index name.
      *
-     * @param index The index name to close
+     * @param indices The name of the indices to close
      */
-    OpenIndexRequestBuilder prepareOpen(String index);
+    OpenIndexRequestBuilder prepareOpen(String... indices);
 
     /**
      * Explicitly refresh one or more indices (making the content indexed since the last refresh searchable).
@@ -385,6 +383,36 @@ public interface IndicesAdminClient {
     OptimizeRequestBuilder prepareOptimize(String... indices);
 
     /**
+     * Get the complete mappings of one or more types
+     */
+    void getMappings(GetMappingsRequest request, ActionListener<GetMappingsResponse> listener);
+
+    /**
+     * Get the complete mappings of one or more types
+     */
+    ActionFuture<GetMappingsResponse> getMappings(GetMappingsRequest request);
+
+    /**
+     * Get the complete mappings of one or more types
+     */
+    GetMappingsRequestBuilder prepareGetMappings(String... indices);
+
+    /**
+     * Get the mappings of specific fields
+     */
+    void getFieldMappings(GetFieldMappingsRequest request, ActionListener<GetFieldMappingsResponse> listener);
+
+    /**
+     * Get the mappings of specific fields
+     */
+    GetFieldMappingsRequestBuilder prepareGetFieldMappings(String... indices);
+
+    /**
+     * Get the mappings of specific fields
+     */
+    ActionFuture<GetFieldMappingsResponse> getFieldMappings(GetFieldMappingsRequest request);
+
+    /**
      * Add mapping definition for a type into one or more indices.
      *
      * @param request The create mapping request
@@ -408,52 +436,6 @@ public interface IndicesAdminClient {
     PutMappingRequestBuilder preparePutMapping(String... indices);
 
     /**
-     * Deletes mapping (and all its data) from one or more indices.
-     *
-     * @param request The delete mapping request
-     * @return A result future
-     * @see org.elasticsearch.client.Requests#deleteMappingRequest(String...)
-     */
-    ActionFuture<DeleteMappingResponse> deleteMapping(DeleteMappingRequest request);
-
-    /**
-     * Deletes mapping definition for a type into one or more indices.
-     *
-     * @param request  The delete mapping request
-     * @param listener A listener to be notified with a result
-     * @see org.elasticsearch.client.Requests#deleteMappingRequest(String...)
-     */
-    void deleteMapping(DeleteMappingRequest request, ActionListener<DeleteMappingResponse> listener);
-
-    /**
-     * Deletes mapping definition for a type into one or more indices.
-     */
-    DeleteMappingRequestBuilder prepareDeleteMapping(String... indices);
-
-    /**
-     * Explicitly perform gateway snapshot for one or more indices.
-     *
-     * @param request The gateway snapshot request
-     * @return The result future
-     * @see org.elasticsearch.client.Requests#gatewaySnapshotRequest(String...)
-     */
-    ActionFuture<GatewaySnapshotResponse> gatewaySnapshot(GatewaySnapshotRequest request);
-
-    /**
-     * Explicitly perform gateway snapshot for one or more indices.
-     *
-     * @param request  The gateway snapshot request
-     * @param listener A listener to be notified with a result
-     * @see org.elasticsearch.client.Requests#gatewaySnapshotRequest(String...)
-     */
-    void gatewaySnapshot(GatewaySnapshotRequest request, ActionListener<GatewaySnapshotResponse> listener);
-
-    /**
-     * Explicitly perform gateway snapshot for one or more indices.
-     */
-    GatewaySnapshotRequestBuilder prepareGatewaySnapshot(String... indices);
-
-    /**
      * Allows to add/remove aliases from indices.
      *
      * @param request The index aliases request
@@ -475,6 +457,66 @@ public interface IndicesAdminClient {
      * Allows to add/remove aliases from indices.
      */
     IndicesAliasesRequestBuilder prepareAliases();
+
+    /**
+     * Get specific index aliases that exists in particular indices and / or by name.
+     *
+     * @param request The result future
+     */
+    ActionFuture<GetAliasesResponse> getAliases(GetAliasesRequest request);
+
+    /**
+     * Get specific index aliases that exists in particular indices and / or by name.
+     *
+     * @param request  The index aliases request
+     * @param listener A listener to be notified with a result
+     */
+    void getAliases(GetAliasesRequest request, ActionListener<GetAliasesResponse> listener);
+
+    /**
+     * Get specific index aliases that exists in particular indices and / or by name.
+     */
+    GetAliasesRequestBuilder prepareGetAliases(String... aliases);
+
+    /**
+     * Allows to check to existence of aliases from indices.
+     */
+    AliasesExistRequestBuilder prepareAliasesExist(String... aliases);
+
+    /**
+     * Check to existence of index aliases.
+     *
+     * @param request The result future
+     */
+    ActionFuture<AliasesExistResponse> aliasesExist(GetAliasesRequest request);
+
+    /**
+     * Check the existence of specified index aliases.
+     *
+     * @param request  The index aliases request
+     * @param listener A listener to be notified with a result
+     */
+    void aliasesExist(GetAliasesRequest request, ActionListener<AliasesExistResponse> listener);
+
+    /**
+     * Get index metadata for particular indices.
+     *
+     * @param request The result future
+     */
+    ActionFuture<GetIndexResponse> getIndex(GetIndexRequest request);
+
+    /**
+     * Get index metadata for particular indices.
+     *
+     * @param request  The index aliases request
+     * @param listener A listener to be notified with a result
+     */
+    void getIndex(GetIndexRequest request, ActionListener<GetIndexResponse> listener);
+
+    /**
+     * Get index metadata for particular indices.
+     */
+    GetIndexRequestBuilder prepareGetIndex();
 
     /**
      * Clear indices cache.
@@ -580,6 +622,21 @@ public interface IndicesAdminClient {
     DeleteIndexTemplateRequestBuilder prepareDeleteTemplate(String name);
 
     /**
+     * Gets index template.
+     */
+    ActionFuture<GetIndexTemplatesResponse> getTemplates(GetIndexTemplatesRequest request);
+
+    /**
+     * Gets an index template.
+     */
+    void getTemplates(GetIndexTemplatesRequest request, ActionListener<GetIndexTemplatesResponse> listener);
+
+    /**
+     * Gets an index template (optional).
+     */
+    GetIndexTemplatesRequestBuilder prepareGetTemplates(String... name);
+
+    /**
      * Validate a query for correctness.
      *
      * @param request The count request
@@ -631,4 +688,39 @@ public interface IndicesAdminClient {
      * Deletes an index warmer.
      */
     DeleteWarmerRequestBuilder prepareDeleteWarmer();
+
+    /**
+     * Returns a map of index warmers for the given get request.
+     */
+    void getWarmers(GetWarmersRequest request, ActionListener<GetWarmersResponse> listener);
+
+    /**
+     * Returns a map of index warmers for the given get request.
+     */
+    ActionFuture<GetWarmersResponse> getWarmers(GetWarmersRequest request);
+
+    /**
+     * Returns a new builder to fetch index warmer metadata for the given indices.
+     */
+    GetWarmersRequestBuilder prepareGetWarmers(String... indices);
+
+    /**
+     * Executed a per index settings get request and returns the settings for the indices specified.
+     * Note: this is a per index request and will not include settings that are set on the cluster
+     * level. This request is not exhaustive, it will not return default values for setting.
+     */
+    void getSettings(GetSettingsRequest request, ActionListener<GetSettingsResponse> listener);
+
+    /**
+     * Executed a per index settings get request.
+     * @see #getSettings(org.elasticsearch.action.admin.indices.settings.get.GetSettingsRequest)
+     */
+    ActionFuture<GetSettingsResponse> getSettings(GetSettingsRequest request);
+
+    /**
+     * Returns a builder for a per index settings get request.
+     * @param indices the indices to fetch the setting for.
+     * @see #getSettings(org.elasticsearch.action.admin.indices.settings.get.GetSettingsRequest)
+     */
+    GetSettingsRequestBuilder prepareGetSettings(String... indices);
 }

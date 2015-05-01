@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,11 +20,12 @@
 package org.elasticsearch.client.transport.support;
 
 import com.google.common.collect.ImmutableMap;
-import org.elasticsearch.ElasticSearchException;
 import org.elasticsearch.action.*;
+import org.elasticsearch.action.support.PlainActionFuture;
 import org.elasticsearch.client.AdminClient;
-import org.elasticsearch.client.internal.InternalClient;
+import org.elasticsearch.client.Client;
 import org.elasticsearch.client.support.AbstractClient;
+import org.elasticsearch.client.support.Headers;
 import org.elasticsearch.client.transport.TransportClientNodesService;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.collect.MapBuilder;
@@ -38,7 +39,7 @@ import java.util.Map;
 /**
  *
  */
-public class InternalTransportClient extends AbstractClient implements InternalClient {
+public class InternalTransportClient extends AbstractClient {
 
     private final Settings settings;
     private final ThreadPool threadPool;
@@ -49,16 +50,18 @@ public class InternalTransportClient extends AbstractClient implements InternalC
 
     private final ImmutableMap<Action, TransportActionNodeProxy> actions;
 
+    private final Headers headers;
+
     @Inject
     public InternalTransportClient(Settings settings, ThreadPool threadPool, TransportService transportService,
                                    TransportClientNodesService nodesService, InternalTransportAdminClient adminClient,
-                                   Map<String, GenericAction> actions) {
+                                   Map<String, GenericAction> actions, Headers headers) {
         this.settings = settings;
         this.threadPool = threadPool;
         this.nodesService = nodesService;
         this.adminClient = adminClient;
-
-        MapBuilder<Action, TransportActionNodeProxy> actionsBuilder = new MapBuilder<Action, TransportActionNodeProxy>();
+        this.headers = headers;
+        MapBuilder<Action, TransportActionNodeProxy> actionsBuilder = new MapBuilder<>();
         for (GenericAction action : actions.values()) {
             if (action instanceof Action) {
                 actionsBuilder.put((Action) action, new TransportActionNodeProxy(settings, action, transportService));
@@ -89,23 +92,20 @@ public class InternalTransportClient extends AbstractClient implements InternalC
 
     @SuppressWarnings("unchecked")
     @Override
-    public <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder>> ActionFuture<Response> execute(final Action<Request, Response, RequestBuilder> action, final Request request) {
-        final TransportActionNodeProxy<Request, Response> proxy = actions.get(action);
-        return nodesService.execute(new TransportClientNodesService.NodeCallback<ActionFuture<Response>>() {
-            @Override
-            public ActionFuture<Response> doWithNode(DiscoveryNode node) throws ElasticSearchException {
-                return proxy.execute(node, request);
-            }
-        });
+    public <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder, Client>> ActionFuture<Response> execute(final Action<Request, Response, RequestBuilder, Client> action, final Request request) {
+        PlainActionFuture<Response> actionFuture = PlainActionFuture.newFuture();
+        execute(action, request, actionFuture);
+        return actionFuture;
     }
 
     @SuppressWarnings("unchecked")
     @Override
-    public <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder>> void execute(final Action<Request, Response, RequestBuilder> action, final Request request, ActionListener<Response> listener) {
+    public <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder, Client>> void execute(final Action<Request, Response, RequestBuilder, Client> action, final Request request, ActionListener<Response> listener) {
+        headers.applyTo(request);
         final TransportActionNodeProxy<Request, Response> proxy = actions.get(action);
         nodesService.execute(new TransportClientNodesService.NodeListenerCallback<Response>() {
             @Override
-            public void doWithNode(DiscoveryNode node, ActionListener<Response> listener) throws ElasticSearchException {
+            public void doWithNode(DiscoveryNode node, ActionListener<Response> listener) {
                 proxy.execute(node, request, listener);
             }
         }, listener);

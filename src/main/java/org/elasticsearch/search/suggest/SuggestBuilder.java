@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,15 +22,19 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.client.Requests;
+import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.search.suggest.phrase.PhraseSuggestionBuilder;
-import org.elasticsearch.search.suggest.term.TermSuggestionBuilder;
+import org.elasticsearch.common.xcontent.XContentFactory;
+import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.search.suggest.context.ContextMapping.ContextQuery;
+import org.elasticsearch.search.suggest.context.CategoryContextMapping;
+import org.elasticsearch.search.suggest.context.GeolocationContextMapping;
 
 /**
  * Defines how to perform suggesting. This builders allows a number of global options to be specified and
- * an arbitrary number of {@link org.elasticsearch.search.suggest.SuggestBuilder.TermSuggestionBuilder} instances.
+ * an arbitrary number of {@link org.elasticsearch.search.suggest.term.TermSuggestionBuilder} instances.
  * <p/>
  * Suggesting works by suggesting terms that appear in the suggest text that are similar compared to the terms in
  * provided text. These spelling suggestions are based on several options described in this class.
@@ -40,7 +44,7 @@ public class SuggestBuilder implements ToXContent {
     private final String name;
     private String globalText;
 
-    private final List<SuggestionBuilder<?>> suggestions = new ArrayList<SuggestionBuilder<?>>();
+    private final List<SuggestionBuilder<?>> suggestions = new ArrayList<>();
 
     public SuggestBuilder() {
         this.name = null;
@@ -63,7 +67,7 @@ public class SuggestBuilder implements ToXContent {
     }
 
     /**
-     * Adds an {@link org.elasticsearch.search.suggest.SuggestBuilder.TermSuggestionBuilder} instance under a user defined name.
+     * Adds an {@link org.elasticsearch.search.suggest.term.TermSuggestionBuilder} instance under a user defined name.
      * The order in which the <code>Suggestions</code> are added, is the same as in the response.
      */
     public SuggestBuilder addSuggestion(SuggestionBuilder<?> suggestion) {
@@ -97,21 +101,27 @@ public class SuggestBuilder implements ToXContent {
     }
 
     /**
-     * Convenience factory method.
-     *
-     * @param name The name of this suggestion. This is a required parameter.
+     * Returns a {@link org.elasticsearch.common.bytes.BytesReference}
+     * representing the suggest lookup request.
+     * Builds the request as {@link org.elasticsearch.client.Requests#CONTENT_TYPE}
      */
-    public static TermSuggestionBuilder termSuggestion(String name) {
-        return new TermSuggestionBuilder(name);
+    public BytesReference buildAsBytes() {
+        return this.buildAsBytes(Requests.CONTENT_TYPE);
     }
-    
+
     /**
-     * Convenience factory method.
-     *
-     * @param name The name of this suggestion. This is a required parameter.
+     * Returns a {@link org.elasticsearch.common.bytes.BytesReference}
+     * representing the suggest lookup request.
+     * Builds the request as the provided <code>contentType</code>
      */
-    public static PhraseSuggestionBuilder phraseSuggestion(String name) {
-        return new PhraseSuggestionBuilder(name);
+    public BytesReference buildAsBytes(XContentType contentType) {
+        try {
+            XContentBuilder builder = XContentFactory.contentBuilder(contentType);
+            toXContent(builder, ToXContent.EMPTY_PARAMS);
+            return builder.bytes();
+        } catch (Exception e) {
+            throw new SuggestBuilderException("Failed to build suggest query", e);
+        }
     }
 
     public static abstract class SuggestionBuilder<T> implements ToXContent {
@@ -123,12 +133,86 @@ public class SuggestBuilder implements ToXContent {
         private String analyzer;
         private Integer size;
         private Integer shardSize;
+        
+        private List<ContextQuery> contextQueries = new ArrayList<>();
 
         public SuggestionBuilder(String name, String suggester) {
             this.name = name;
             this.suggester = suggester;
         }
 
+        @SuppressWarnings("unchecked")
+        private T addContextQuery(ContextQuery ctx) {
+            this.contextQueries.add(ctx);
+            return (T) this;
+        }
+
+        /**
+         * Setup a Geolocation for suggestions. See {@link GeolocationContextMapping}.
+         * @param lat Latitude of the location
+         * @param lon Longitude of the Location
+         * @return this
+         */
+        public T addGeoLocation(String name, double lat, double lon, int ... precisions) {
+            return addContextQuery(GeolocationContextMapping.query(name, lat, lon, precisions));
+        }
+
+        /**
+         * Setup a Geolocation for suggestions. See {@link GeolocationContextMapping}.
+         * @param lat Latitude of the location
+         * @param lon Longitude of the Location
+         * @param precisions precisions as string var-args
+         * @return this
+         */
+        public T addGeoLocationWithPrecision(String name, double lat, double lon, String ... precisions) {
+            return addContextQuery(GeolocationContextMapping.query(name, lat, lon, precisions));
+        }
+
+        /**
+         * Setup a Geolocation for suggestions. See {@link GeolocationContextMapping}.
+         * @param geohash Geohash of the location
+         * @return this
+         */
+        public T addGeoLocation(String name, String geohash) {
+            return addContextQuery(GeolocationContextMapping.query(name, geohash));
+        }
+        
+        /**
+         * Setup a Category for suggestions. See {@link CategoryContextMapping}.
+         * @param categories name of the category
+         * @return this
+         */
+        public T addCategory(String name, CharSequence...categories) {
+            return addContextQuery(CategoryContextMapping.query(name, categories));
+        }
+        
+        /**
+         * Setup a Category for suggestions. See {@link CategoryContextMapping}.
+         * @param categories name of the category
+         * @return this
+         */
+        public T addCategory(String name, Iterable<? extends CharSequence> categories) {
+            return addContextQuery(CategoryContextMapping.query(name, categories));
+        }
+        
+        /**
+         * Setup a Context Field for suggestions. See {@link CategoryContextMapping}.
+         * @param fieldvalues name of the category
+         * @return this
+         */
+        public T addContextField(String name, CharSequence...fieldvalues) {
+            return addContextQuery(CategoryContextMapping.query(name, fieldvalues));
+        }
+        
+        /**
+         * Setup a Context Field for suggestions. See {@link CategoryContextMapping}.
+         * @param fieldvalues name of the category
+         * @return this
+         */
+        public T addContextField(String name, Iterable<? extends CharSequence> fieldvalues) {
+            return addContextQuery(CategoryContextMapping.query(name, fieldvalues));
+        }
+        
         /**
          * Same as in {@link SuggestBuilder#setText(String)}, but in the suggestion scope.
          */
@@ -157,6 +241,14 @@ public class SuggestBuilder implements ToXContent {
             if (shardSize != null) {
                 builder.field("shard_size", shardSize);
             }
+
+            if (!contextQueries.isEmpty()) {
+                builder.startObject("context");
+                for (ContextQuery query : contextQueries) {
+                    query.toXContent(builder, params);
+                }
+                builder.endObject();
+            }
             builder = innerToXContent(builder, params);
             builder.endObject();
             builder.endObject();
@@ -168,7 +260,7 @@ public class SuggestBuilder implements ToXContent {
         /**
          * Sets from what field to fetch the candidate suggestions from. This is an
          * required option and needs to be set via this setter or
-         * {@link org.elasticsearch.search.suggest.SuggestBuilder.TermSuggestionBuilder#setField(String)}
+         * {@link org.elasticsearch.search.suggest.term.TermSuggestionBuilder#field(String)}
          * method
          */
         @SuppressWarnings("unchecked")
@@ -193,7 +285,7 @@ public class SuggestBuilder implements ToXContent {
         @SuppressWarnings("unchecked")
         public T size(int size) {
             if (size <= 0) {
-                throw new ElasticSearchIllegalArgumentException("Size must be positive");
+                throw new IllegalArgumentException("Size must be positive");
             }
             this.size = size;
             return (T)this;
@@ -215,6 +307,20 @@ public class SuggestBuilder implements ToXContent {
         public T shardSize(Integer shardSize) {
             this.shardSize = shardSize;
             return (T)this;
+        }
+
+        public BytesReference buildAsBytes() {
+            return this.buildAsBytes(Requests.CONTENT_TYPE);
+        }
+
+        public BytesReference buildAsBytes(XContentType contentType) {
+            try {
+                XContentBuilder builder = XContentFactory.contentBuilder(contentType);
+                toXContent(builder, ToXContent.EMPTY_PARAMS);
+                return builder.bytes();
+            } catch (Exception e) {
+                throw new SuggestBuilderException("Failed to build suggest", e);
+            }
         }
     }
 }

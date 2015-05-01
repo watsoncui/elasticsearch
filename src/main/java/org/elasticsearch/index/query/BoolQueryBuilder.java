@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,6 +19,7 @@
 
 package org.elasticsearch.index.query;
 
+import org.apache.lucene.search.MatchAllDocsQuery;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.io.IOException;
@@ -30,17 +31,21 @@ import java.util.List;
  */
 public class BoolQueryBuilder extends BaseQueryBuilder implements BoostableQueryBuilder<BoolQueryBuilder> {
 
-    private ArrayList<QueryBuilder> mustClauses = new ArrayList<QueryBuilder>();
+    private ArrayList<QueryBuilder> mustClauses = new ArrayList<>();
 
-    private ArrayList<QueryBuilder> mustNotClauses = new ArrayList<QueryBuilder>();
+    private ArrayList<QueryBuilder> mustNotClauses = new ArrayList<>();
 
-    private ArrayList<QueryBuilder> shouldClauses = new ArrayList<QueryBuilder>();
+    private ArrayList<QueryBuilder> shouldClauses = new ArrayList<>();
 
     private float boost = -1;
 
     private Boolean disableCoord;
 
     private String minimumShouldMatch;
+    
+    private Boolean adjustPureNegative;
+
+    private String queryName;
 
     /**
      * Adds a query that <b>must</b> appear in the matching documents.
@@ -74,13 +79,14 @@ public class BoolQueryBuilder extends BaseQueryBuilder implements BoostableQuery
      * Sets the boost for this query.  Documents matching this query will (in addition to the normal
      * weightings) have their score multiplied by the boost provided.
      */
+    @Override
     public BoolQueryBuilder boost(float boost) {
         this.boost = boost;
         return this;
     }
 
     /**
-     * Disables <tt>Similarity#coord(int,int)</tt> in scoring. Defualts to <tt>false</tt>.
+     * Disables <tt>Similarity#coord(int,int)</tt> in scoring. Defaults to <tt>false</tt>.
      */
     public BoolQueryBuilder disableCoord(boolean disableCoord) {
         this.disableCoord = disableCoord;
@@ -114,10 +120,29 @@ public class BoolQueryBuilder extends BaseQueryBuilder implements BoostableQuery
     }
 
     /**
-     * Return <code>true</code> if the query being built has no clause yet
+     * Returns <code>true</code> iff this query builder has at least one should, must or mustNot clause.
+     * Otherwise <code>false</code>.
      */
     public boolean hasClauses() {
-        return !mustClauses.isEmpty() || !mustNotClauses.isEmpty() || !shouldClauses.isEmpty();
+        return !(mustClauses.isEmpty() && shouldClauses.isEmpty() && mustNotClauses.isEmpty());
+    }
+    
+    /**
+     * If a boolean query contains only negative ("must not") clauses should the
+     * BooleanQuery be enhanced with a {@link MatchAllDocsQuery} in order to act
+     * as a pure exclude. The default is <code>true</code>.
+     */
+    public BoolQueryBuilder adjustPureNegative(boolean adjustPureNegative) {
+        this.adjustPureNegative = adjustPureNegative;
+        return this;
+    }
+
+    /**
+     * Sets the query name for the filter that can be used when searching for matched_filters per hit.
+     */
+    public BoolQueryBuilder queryName(String queryName) {
+        this.queryName = queryName;
+        return this;
     }
 
     @Override
@@ -134,6 +159,12 @@ public class BoolQueryBuilder extends BaseQueryBuilder implements BoostableQuery
         }
         if (minimumShouldMatch != null) {
             builder.field("minimum_should_match", minimumShouldMatch);
+        }
+        if (adjustPureNegative != null) {
+            builder.field("adjust_pure_negative", adjustPureNegative);
+        }
+        if (queryName != null) {
+            builder.field("_name", queryName);
         }
         builder.endObject();
     }

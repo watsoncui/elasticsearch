@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,11 +19,12 @@
 
 package org.elasticsearch.rest.action.admin.cluster.state;
 
-import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.cluster.state.ClusterStateRequest;
 import org.elasticsearch.action.admin.cluster.state.ClusterStateResponse;
+import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.Requests;
+import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
@@ -31,10 +32,10 @@ import org.elasticsearch.common.settings.SettingsFilter;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentBuilderString;
 import org.elasticsearch.rest.*;
-import org.elasticsearch.rest.action.support.RestActions;
-import org.elasticsearch.rest.action.support.RestXContentBuilder;
+import org.elasticsearch.rest.action.support.RestBuilderListener;
 
-import java.io.IOException;
+import java.util.EnumSet;
+
 
 /**
  *
@@ -44,51 +45,48 @@ public class RestClusterStateAction extends BaseRestHandler {
     private final SettingsFilter settingsFilter;
 
     @Inject
-    public RestClusterStateAction(Settings settings, Client client, RestController controller,
-                                  SettingsFilter settingsFilter) {
-        super(settings, client);
+    public RestClusterStateAction(Settings settings, RestController controller, Client client, SettingsFilter settingsFilter) {
+        super(settings, controller, client);
         controller.registerHandler(RestRequest.Method.GET, "/_cluster/state", this);
+        controller.registerHandler(RestRequest.Method.GET, "/_cluster/state/{metric}", this);
+        controller.registerHandler(RestRequest.Method.GET, "/_cluster/state/{metric}/{indices}", this);
 
         this.settingsFilter = settingsFilter;
     }
 
     @Override
-    public void handleRequest(final RestRequest request, final RestChannel channel) {
+    public void handleRequest(final RestRequest request, final RestChannel channel, final Client client) {
         final ClusterStateRequest clusterStateRequest = Requests.clusterStateRequest();
         clusterStateRequest.listenerThreaded(false);
-        clusterStateRequest.masterNodeTimeout(request.paramAsTime("master_timeout", clusterStateRequest.masterNodeTimeout()));
-        clusterStateRequest.filterNodes(request.paramAsBoolean("filter_nodes", clusterStateRequest.filterNodes()));
-        clusterStateRequest.filterRoutingTable(request.paramAsBoolean("filter_routing_table", clusterStateRequest.filterRoutingTable()));
-        clusterStateRequest.filterMetaData(request.paramAsBoolean("filter_metadata", clusterStateRequest.filterMetaData()));
-        clusterStateRequest.filterBlocks(request.paramAsBoolean("filter_blocks", clusterStateRequest.filterBlocks()));
-        clusterStateRequest.filteredIndices(RestActions.splitIndices(request.param("filter_indices", null)));
-        clusterStateRequest.filteredIndexTemplates(request.paramAsStringArray("filter_index_templates", Strings.EMPTY_ARRAY));
+        clusterStateRequest.indicesOptions(IndicesOptions.fromRequest(request, clusterStateRequest.indicesOptions()));
         clusterStateRequest.local(request.paramAsBoolean("local", clusterStateRequest.local()));
-        client.admin().cluster().state(clusterStateRequest, new ActionListener<ClusterStateResponse>() {
-            @Override
-            public void onResponse(ClusterStateResponse response) {
-                try {
-                    XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
-                    builder.startObject();
-                    builder.field(Fields.CLUSTER_NAME, response.getClusterName().value());
-                    response.getState().settingsFilter(settingsFilter).toXContent(builder, request);
-                    builder.endObject();
-                    channel.sendResponse(new XContentRestResponse(request, RestStatus.OK, builder));
-                } catch (Exception e) {
-                    onFailure(e);
-                }
-            }
+        clusterStateRequest.masterNodeTimeout(request.paramAsTime("master_timeout", clusterStateRequest.masterNodeTimeout()));
 
+        final String[] indices = Strings.splitStringByCommaToArray(request.param("indices", "_all"));
+        boolean isAllIndicesOnly = indices.length == 1 && "_all".equals(indices[0]);
+        if (!isAllIndicesOnly) {
+            clusterStateRequest.indices(indices);
+        }
+
+        if (request.hasParam("metric")) {
+            EnumSet<ClusterState.Metric> metrics = ClusterState.Metric.parseString(request.param("metric"), true);
+            // do not ask for what we do not need.
+            clusterStateRequest.nodes(metrics.contains(ClusterState.Metric.NODES) || metrics.contains(ClusterState.Metric.MASTER_NODE));
+            //there is no distinction in Java api between routing_table and routing_nodes, it's the same info set over the wire, one single flag to ask for it
+            clusterStateRequest.routingTable(metrics.contains(ClusterState.Metric.ROUTING_TABLE) || metrics.contains(ClusterState.Metric.ROUTING_NODES));
+            clusterStateRequest.metaData(metrics.contains(ClusterState.Metric.METADATA));
+            clusterStateRequest.blocks(metrics.contains(ClusterState.Metric.BLOCKS));
+        }
+        settingsFilter.addFilterSettingParams(request);
+
+        client.admin().cluster().state(clusterStateRequest, new RestBuilderListener<ClusterStateResponse>(channel) {
             @Override
-            public void onFailure(Throwable e) {
-                if (logger.isDebugEnabled()) {
-                    logger.debug("failed to handle cluster state", e);
-                }
-                try {
-                    channel.sendResponse(new XContentThrowableRestResponse(request, e));
-                } catch (IOException e1) {
-                    logger.error("Failed to send failure response", e1);
-                }
+            public RestResponse buildResponse(ClusterStateResponse response, XContentBuilder builder) throws Exception {
+                builder.startObject();
+                builder.field(Fields.CLUSTER_NAME, response.getClusterName().value());
+                response.getState().toXContent(builder, request);
+                builder.endObject();
+                return new BytesRestResponse(RestStatus.OK, builder);
             }
         });
     }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,14 +23,14 @@ import org.apache.lucene.index.Term;
 import org.apache.lucene.search.FuzzyQuery;
 import org.apache.lucene.search.MultiTermQuery;
 import org.apache.lucene.search.Query;
+import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.unit.Fuzziness;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.query.support.QueryParsers;
 
 import java.io.IOException;
-
-import static org.elasticsearch.index.query.support.QueryParsers.wrapSmartNameQuery;
 
 /**
  *
@@ -38,6 +38,9 @@ import static org.elasticsearch.index.query.support.QueryParsers.wrapSmartNameQu
 public class FuzzyQueryParser implements QueryParser {
 
     public static final String NAME = "fuzzy";
+    private static final Fuzziness DEFAULT_FUZZINESS = Fuzziness.AUTO;
+    private static final ParseField FUZZINESS = Fuzziness.FIELD.withDeprecation("min_similarity");
+
 
     @Inject
     public FuzzyQueryParser() {
@@ -54,17 +57,17 @@ public class FuzzyQueryParser implements QueryParser {
 
         XContentParser.Token token = parser.nextToken();
         if (token != XContentParser.Token.FIELD_NAME) {
-            throw new QueryParsingException(parseContext.index(), "[fuzzy] query malformed, no field");
+            throw new QueryParsingException(parseContext, "[fuzzy] query malformed, no field");
         }
         String fieldName = parser.currentName();
 
         String value = null;
         float boost = 1.0f;
-        //LUCENE 4 UPGRADE we should find a good default here I'd vote for 1.0 -> 1 edit
-        String minSimilarity = "0.5";
+        Fuzziness fuzziness = DEFAULT_FUZZINESS;
         int prefixLength = FuzzyQuery.defaultPrefixLength;
         int maxExpansions = FuzzyQuery.defaultMaxExpansions;
         boolean transpositions = false;
+        String queryName = null;
         MultiTermQuery.RewriteMethod rewriteMethod = null;
         token = parser.nextToken();
         if (token == XContentParser.Token.START_OBJECT) {
@@ -79,8 +82,8 @@ public class FuzzyQueryParser implements QueryParser {
                         value = parser.text();
                     } else if ("boost".equals(currentFieldName)) {
                         boost = parser.floatValue();
-                    } else if ("min_similarity".equals(currentFieldName) || "minSimilarity".equals(currentFieldName)) {
-                        minSimilarity = parser.text();
+                    } else if (FUZZINESS.match(currentFieldName, parseContext.parseFlags())) {
+                        fuzziness = Fuzziness.parse(parser);
                     } else if ("prefix_length".equals(currentFieldName) || "prefixLength".equals(currentFieldName)) {
                         prefixLength = parser.intValue();
                     } else if ("max_expansions".equals(currentFieldName) || "maxExpansions".equals(currentFieldName)) {
@@ -89,8 +92,10 @@ public class FuzzyQueryParser implements QueryParser {
                       transpositions = parser.booleanValue();
                     } else if ("rewrite".equals(currentFieldName)) {
                         rewriteMethod = QueryParsers.parseRewriteMethod(parser.textOrNull(), null);
+                    } else if ("_name".equals(currentFieldName)) {
+                        queryName = parser.text();
                     } else {
-                        throw new QueryParsingException(parseContext.index(), "[fuzzy] query does not support [" + currentFieldName + "]");
+                        throw new QueryParsingException(parseContext, "[fuzzy] query does not support [" + currentFieldName + "]");
                     }
                 }
             }
@@ -102,27 +107,27 @@ public class FuzzyQueryParser implements QueryParser {
         }
 
         if (value == null) {
-            throw new QueryParsingException(parseContext.index(), "No value specified for fuzzy query");
+            throw new QueryParsingException(parseContext, "No value specified for fuzzy query");
         }
 
         Query query = null;
         MapperService.SmartNameFieldMappers smartNameFieldMappers = parseContext.smartFieldMappers(fieldName);
         if (smartNameFieldMappers != null) {
             if (smartNameFieldMappers.hasMapper()) {
-                query = smartNameFieldMappers.mapper().fuzzyQuery(value, minSimilarity, prefixLength, maxExpansions, transpositions);
+                query = smartNameFieldMappers.mapper().fuzzyQuery(value, fuzziness, prefixLength, maxExpansions, transpositions);
             }
         }
         if (query == null) {
-            //LUCENE 4 UPGRADE we need to document that this should now be an int rather than a float
-            int edits = FuzzyQuery.floatToEdits(Float.parseFloat(minSimilarity), 
-              value.codePointCount(0, value.length()));
-            query = new FuzzyQuery(new Term(fieldName, value), edits, prefixLength, maxExpansions, transpositions);
+            query = new FuzzyQuery(new Term(fieldName, value), fuzziness.asDistance(value), prefixLength, maxExpansions, transpositions);
         }
         if (query instanceof MultiTermQuery) {
             QueryParsers.setRewriteMethod((MultiTermQuery) query, rewriteMethod);
         }
         query.setBoost(boost);
 
-        return wrapSmartNameQuery(query, smartNameFieldMappers, parseContext);
+        if (queryName != null) {
+            parseContext.addNamedQuery(queryName, query);
+        }
+        return query;
     }
 }

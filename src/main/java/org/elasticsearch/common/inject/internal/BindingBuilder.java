@@ -41,33 +41,39 @@ public class BindingBuilder<T> extends AbstractBindingBuilder<T>
         super(binder, elements, source, key);
     }
 
+    @Override
     public BindingBuilder<T> annotatedWith(Class<? extends Annotation> annotationType) {
         annotatedWithInternal(annotationType);
         return this;
     }
 
+    @Override
     public BindingBuilder<T> annotatedWith(Annotation annotation) {
         annotatedWithInternal(annotation);
         return this;
     }
 
+    @Override
     public BindingBuilder<T> to(Class<? extends T> implementation) {
         return to(Key.get(implementation));
     }
 
+    @Override
     public BindingBuilder<T> to(TypeLiteral<? extends T> implementation) {
         return to(Key.get(implementation));
     }
 
+    @Override
     public BindingBuilder<T> to(Key<? extends T> linkedKey) {
         checkNotNull(linkedKey, "linkedKey");
         checkNotTargetted();
         BindingImpl<T> base = getBinding();
-        setBinding(new LinkedBindingImpl<T>(
+        setBinding(new LinkedBindingImpl<>(
                 base.getSource(), base.getKey(), base.getScoping(), linkedKey));
         return this;
     }
 
+    @Override
     public void toInstance(T instance) {
         checkNotTargetted();
 
@@ -88,10 +94,11 @@ public class BindingBuilder<T> extends AbstractBindingBuilder<T>
         }
 
         BindingImpl<T> base = getBinding();
-        setBinding(new InstanceBindingImpl<T>(
+        setBinding(new InstanceBindingImpl<>(
                 base.getSource(), base.getKey(), base.getScoping(), injectionPoints, instance));
     }
 
+    @Override
     public BindingBuilder<T> toProvider(Provider<? extends T> provider) {
         checkNotNull(provider, "provider");
         checkNotTargetted();
@@ -108,21 +115,23 @@ public class BindingBuilder<T> extends AbstractBindingBuilder<T>
         }
 
         BindingImpl<T> base = getBinding();
-        setBinding(new ProviderInstanceBindingImpl<T>(
+        setBinding(new ProviderInstanceBindingImpl<>(
                 base.getSource(), base.getKey(), base.getScoping(), injectionPoints, provider));
         return this;
     }
 
+    @Override
     public BindingBuilder<T> toProvider(Class<? extends Provider<? extends T>> providerType) {
         return toProvider(Key.get(providerType));
     }
 
+    @Override
     public BindingBuilder<T> toProvider(Key<? extends Provider<? extends T>> providerKey) {
         checkNotNull(providerKey, "providerKey");
         checkNotTargetted();
 
         BindingImpl<T> base = getBinding();
-        setBinding(new LinkedProviderBindingImpl<T>(
+        setBinding(new LinkedProviderBindingImpl<>(
                 base.getSource(), base.getKey(), base.getScoping(), providerKey));
         return this;
     }

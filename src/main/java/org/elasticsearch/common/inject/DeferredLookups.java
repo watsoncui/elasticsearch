@@ -46,14 +46,16 @@ class DeferredLookups implements Lookups {
         new LookupProcessor(errors).process(injector, lookups);
     }
 
+    @Override
     public <T> Provider<T> getProvider(Key<T> key) {
-        ProviderLookup<T> lookup = new ProviderLookup<T>(key, key);
+        ProviderLookup<T> lookup = new ProviderLookup<>(key, key);
         lookups.add(lookup);
         return lookup.getProvider();
     }
 
+    @Override
     public <T> MembersInjector<T> getMembersInjector(TypeLiteral<T> type) {
-        MembersInjectorLookup<T> lookup = new MembersInjectorLookup<T>(type, type);
+        MembersInjectorLookup<T> lookup = new MembersInjectorLookup<>(type, type);
         lookups.add(lookup);
         return lookup.getMembersInjector();
     }

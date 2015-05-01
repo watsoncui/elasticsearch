@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,18 +20,17 @@
 package org.elasticsearch.discovery.zen.ping;
 
 import com.google.common.collect.ImmutableList;
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.ElasticSearchIllegalStateException;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.Version;
 import org.elasticsearch.cluster.ClusterName;
-import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.network.NetworkService;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
-import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
-import org.elasticsearch.discovery.zen.DiscoveryNodesProvider;
+import org.elasticsearch.common.util.concurrent.EsRejectedExecutionException;
+import org.elasticsearch.discovery.zen.elect.ElectMasterService;
 import org.elasticsearch.discovery.zen.ping.multicast.MulticastZenPing;
 import org.elasticsearch.discovery.zen.ping.unicast.UnicastHostsProvider;
 import org.elasticsearch.discovery.zen.ping.unicast.UnicastZenPing;
@@ -39,7 +38,6 @@ import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
 import java.util.Set;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -53,15 +51,14 @@ public class ZenPingService extends AbstractLifecycleComponent<ZenPing> implemen
 
     @Inject
     public ZenPingService(Settings settings, ThreadPool threadPool, TransportService transportService, ClusterName clusterName, NetworkService networkService,
-                          @Nullable Set<UnicastHostsProvider> unicastHostsProviders) {
+                          Version version, ElectMasterService electMasterService, @Nullable Set<UnicastHostsProvider> unicastHostsProviders) {
         super(settings);
-
         ImmutableList.Builder<ZenPing> zenPingsBuilder = ImmutableList.builder();
-        if (componentSettings.getAsBoolean("multicast.enabled", true)) {
-            zenPingsBuilder.add(new MulticastZenPing(settings, threadPool, transportService, clusterName, networkService));
+        if (this.settings.getAsBoolean("discovery.zen.ping.multicast.enabled", true)) {
+            zenPingsBuilder.add(new MulticastZenPing(settings, threadPool, transportService, clusterName, networkService, version));
         }
         // always add the unicast hosts, so it will be able to receive unicast requests even when working in multicast
-        zenPingsBuilder.add(new UnicastZenPing(settings, threadPool, transportService, clusterName, unicastHostsProviders));
+        zenPingsBuilder.add(new UnicastZenPing(settings, threadPool, transportService, clusterName, version, electMasterService, unicastHostsProviders));
 
         this.zenPings = zenPingsBuilder.build();
     }
@@ -70,52 +67,39 @@ public class ZenPingService extends AbstractLifecycleComponent<ZenPing> implemen
         return this.zenPings;
     }
 
-    public void zenPings(ImmutableList<? extends ZenPing> pings) {
-        this.zenPings = pings;
-        if (lifecycle.started()) {
-            for (ZenPing zenPing : zenPings) {
-                zenPing.start();
-            }
-        } else if (lifecycle.stopped()) {
-            for (ZenPing zenPing : zenPings) {
-                zenPing.stop();
-            }
-        }
-    }
-
     @Override
-    public void setNodesProvider(DiscoveryNodesProvider nodesProvider) {
+    public void setPingContextProvider(PingContextProvider contextProvider) {
         if (lifecycle.started()) {
-            throw new ElasticSearchIllegalStateException("Can't set nodes provider when started");
+            throw new IllegalStateException("Can't set nodes provider when started");
         }
         for (ZenPing zenPing : zenPings) {
-            zenPing.setNodesProvider(nodesProvider);
+            zenPing.setPingContextProvider(contextProvider);
         }
     }
 
     @Override
-    protected void doStart() throws ElasticSearchException {
+    protected void doStart() {
         for (ZenPing zenPing : zenPings) {
             zenPing.start();
         }
     }
 
     @Override
-    protected void doStop() throws ElasticSearchException {
+    protected void doStop() {
         for (ZenPing zenPing : zenPings) {
             zenPing.stop();
         }
     }
 
     @Override
-    protected void doClose() throws ElasticSearchException {
+    protected void doClose() {
         for (ZenPing zenPing : zenPings) {
             zenPing.close();
         }
     }
 
     public PingResponse[] pingAndWait(TimeValue timeout) {
-        final AtomicReference<PingResponse[]> response = new AtomicReference<PingResponse[]>();
+        final AtomicReference<PingResponse[]> response = new AtomicReference<>();
         final CountDownLatch latch = new CountDownLatch(1);
         ping(new PingListener() {
             @Override
@@ -134,11 +118,16 @@ public class ZenPingService extends AbstractLifecycleComponent<ZenPing> implemen
     }
 
     @Override
-    public void ping(PingListener listener, TimeValue timeout) throws ElasticSearchException {
+    public void ping(PingListener listener, TimeValue timeout) {
         ImmutableList<? extends ZenPing> zenPings = this.zenPings;
         CompoundPingListener compoundPingListener = new CompoundPingListener(listener, zenPings);
         for (ZenPing zenPing : zenPings) {
-            zenPing.ping(compoundPingListener, timeout);
+            try {
+                zenPing.ping(compoundPingListener, timeout);
+            } catch (EsRejectedExecutionException ex) {
+                logger.debug("Ping execution rejected", ex);
+                compoundPingListener.onPing(null);
+            }
         }
     }
 
@@ -146,27 +135,22 @@ public class ZenPingService extends AbstractLifecycleComponent<ZenPing> implemen
 
         private final PingListener listener;
 
-        private final ImmutableList<? extends ZenPing> zenPings;
-
         private final AtomicInteger counter;
 
-        private ConcurrentMap<DiscoveryNode, PingResponse> responses = ConcurrentCollections.newConcurrentMap();
+        private PingCollection responses = new PingCollection();
 
         private CompoundPingListener(PingListener listener, ImmutableList<? extends ZenPing> zenPings) {
             this.listener = listener;
-            this.zenPings = zenPings;
             this.counter = new AtomicInteger(zenPings.size());
         }
 
         @Override
         public void onPing(PingResponse[] pings) {
             if (pings != null) {
-                for (PingResponse pingResponse : pings) {
-                    responses.put(pingResponse.target(), pingResponse);
-                }
+                responses.addPings(pings);
             }
             if (counter.decrementAndGet() == 0) {
-                listener.onPing(responses.values().toArray(new PingResponse[responses.size()]));
+                listener.onPing(responses.toArray());
             }
         }
     }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,37 +20,39 @@
 package org.elasticsearch.action.admin.indices.create;
 
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.support.master.MasterNodeOperationRequestBuilder;
+import org.elasticsearch.action.admin.indices.alias.Alias;
+import org.elasticsearch.action.support.master.AcknowledgedRequestBuilder;
 import org.elasticsearch.client.IndicesAdminClient;
-import org.elasticsearch.client.internal.InternalIndicesAdminClient;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.util.Map;
 
 /**
- *
+ * Builder for a create index request
  */
-public class CreateIndexRequestBuilder extends MasterNodeOperationRequestBuilder<CreateIndexRequest, CreateIndexResponse, CreateIndexRequestBuilder> {
+public class CreateIndexRequestBuilder extends AcknowledgedRequestBuilder<CreateIndexRequest, CreateIndexResponse, CreateIndexRequestBuilder, IndicesAdminClient> {
 
     public CreateIndexRequestBuilder(IndicesAdminClient indicesClient) {
-        super((InternalIndicesAdminClient) indicesClient, new CreateIndexRequest());
+        super(indicesClient, new CreateIndexRequest());
     }
 
     public CreateIndexRequestBuilder(IndicesAdminClient indicesClient, String index) {
-        super((InternalIndicesAdminClient) indicesClient, new CreateIndexRequest(index));
+        super(indicesClient, new CreateIndexRequest(index));
     }
 
+    /**
+     * Sets the name of the index to be created
+     */
     public CreateIndexRequestBuilder setIndex(String index) {
         request.index(index);
         return this;
     }
 
     /**
-     * The settings to created the index with.
+     * The settings to create the index with.
      */
     public CreateIndexRequestBuilder setSettings(Settings settings) {
         request.settings(settings);
@@ -58,7 +60,7 @@ public class CreateIndexRequestBuilder extends MasterNodeOperationRequestBuilder
     }
 
     /**
-     * The settings to created the index with.
+     * The settings to create the index with.
      */
     public CreateIndexRequestBuilder setSettings(Settings.Builder settings) {
         request.settings(settings);
@@ -74,7 +76,7 @@ public class CreateIndexRequestBuilder extends MasterNodeOperationRequestBuilder
     }
 
     /**
-     * The settings to crete the index with (either json/yaml/properties format)
+     * The settings to create the index with (either json/yaml/properties format)
      */
     public CreateIndexRequestBuilder setSettings(String source) {
         request.settings(source);
@@ -82,7 +84,15 @@ public class CreateIndexRequestBuilder extends MasterNodeOperationRequestBuilder
     }
 
     /**
-     * The settings to crete the index with (either json/yaml/properties format)
+     * A simplified version of settings that takes key value pairs settings.
+     */
+    public CreateIndexRequestBuilder setSettings(Object... settings) {
+        request.settings(settings);
+        return this;
+    }
+
+    /**
+     * The settings to create the index with (either json/yaml/properties format)
      */
     public CreateIndexRequestBuilder setSettings(Map<String, Object> source) {
         request.settings(source);
@@ -131,6 +141,55 @@ public class CreateIndexRequestBuilder extends MasterNodeOperationRequestBuilder
     }
 
     /**
+     * A specialized simplified mapping source method, takes the form of simple properties definition:
+     * ("field1", "type=string,store=true").
+     */
+    public CreateIndexRequestBuilder addMapping(String type, Object... source) {
+        request.mapping(type, source);
+        return this;
+    }
+
+    /**
+     * Sets the aliases that will be associated with the index when it gets created
+     */
+    public CreateIndexRequestBuilder setAliases(Map source) {
+        request.aliases(source);
+        return this;
+    }
+
+    /**
+     * Sets the aliases that will be associated with the index when it gets created
+     */
+    public CreateIndexRequestBuilder setAliases(String source) {
+        request.aliases(source);
+        return this;
+    }
+
+    /**
+     * Sets the aliases that will be associated with the index when it gets created
+     */
+    public CreateIndexRequestBuilder setAliases(XContentBuilder source) {
+        request.aliases(source);
+        return this;
+    }
+
+    /**
+     * Sets the aliases that will be associated with the index when it gets created
+     */
+    public CreateIndexRequestBuilder setAliases(BytesReference source) {
+        request.aliases(source);
+        return this;
+    }
+
+    /**
+     * Adds an alias that will be associated with the index when it gets created
+     */
+    public CreateIndexRequestBuilder addAlias(Alias alias) {
+        request.alias(alias);
+        return this;
+    }
+
+    /**
      * Sets the settings and mappings as a single source.
      */
     public CreateIndexRequestBuilder setSource(String source) {
@@ -170,6 +229,9 @@ public class CreateIndexRequestBuilder extends MasterNodeOperationRequestBuilder
         return this;
     }
 
+    /**
+     * Adds custom metadata to the index to be created.
+     */
     public CreateIndexRequestBuilder addCustom(IndexMetaData.Custom custom) {
         request.custom(custom);
         return this;
@@ -183,26 +245,8 @@ public class CreateIndexRequestBuilder extends MasterNodeOperationRequestBuilder
         return this;
     }
 
-    /**
-     * Timeout to wait for the index creation to be acknowledged by current cluster nodes. Defaults
-     * to <tt>10s</tt>.
-     */
-    public CreateIndexRequestBuilder setTimeout(TimeValue timeout) {
-        request.timeout(timeout);
-        return this;
-    }
-
-    /**
-     * Timeout to wait for the index creation to be acknowledged by current cluster nodes. Defaults
-     * to <tt>10s</tt>.
-     */
-    public CreateIndexRequestBuilder setTimeout(String timeout) {
-        request.timeout(timeout);
-        return this;
-    }
-
     @Override
     protected void doExecute(ActionListener<CreateIndexResponse> listener) {
-        ((IndicesAdminClient) client).create(request, listener);
+        client.create(request, listener);
     }
 }

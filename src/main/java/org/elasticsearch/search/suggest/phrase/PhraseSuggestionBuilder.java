@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -18,18 +18,13 @@
  */
 package org.elasticsearch.search.suggest.phrase;
 
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Set;
-
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.search.suggest.SuggestBuilder.SuggestionBuilder;
+
+import java.io.IOException;
+import java.util.*;
+import java.util.Map.Entry;
 
 /**
  * Defines the actual suggest command for phrase suggestions ( <tt>phrase</tt>).
@@ -39,10 +34,18 @@ public final class PhraseSuggestionBuilder extends SuggestionBuilder<PhraseSugge
     private String separator;
     private Float realWordErrorLikelihood;
     private Float confidence;
-    private final Map<String, List<CandidateGenerator>> generators = new HashMap<String, List<PhraseSuggestionBuilder.CandidateGenerator>>();
+    private final Map<String, List<CandidateGenerator>> generators = new HashMap<>();
     private Integer gramSize;
     private SmoothingModel model;
     private Boolean forceUnigrams;
+    private Integer tokenLimit;
+    private String preTag;
+    private String postTag;
+    private String collateQuery;
+    private String collateFilter;
+    private String collatePreference;
+    private Map<String, Object> collateParams;
+    private Boolean collatePrune;
 
     public PhraseSuggestionBuilder(String name) {
         super(name, "phrase");
@@ -55,7 +58,7 @@ public final class PhraseSuggestionBuilder extends SuggestionBuilder<PhraseSugge
      */
     public PhraseSuggestionBuilder gramSize(int gramSize) {
         if (gramSize < 1) {
-            throw new ElasticSearchIllegalArgumentException("gramSize must be >= 1");
+            throw new IllegalArgumentException("gramSize must be >= 1");
         }
         this.gramSize = gramSize;
         return this;
@@ -116,10 +119,18 @@ public final class PhraseSuggestionBuilder extends SuggestionBuilder<PhraseSugge
     public PhraseSuggestionBuilder addCandidateGenerator(CandidateGenerator generator) {
         List<CandidateGenerator> list = this.generators.get(generator.getType());
         if (list == null) {
-            list = new ArrayList<PhraseSuggestionBuilder.CandidateGenerator>();
+            list = new ArrayList<>();
             this.generators.put(generator.getType(), list);
         }
         list.add(generator);
+        return this;
+    }
+
+    /**
+     * Clear the candidate generators.
+     */
+    public PhraseSuggestionBuilder clearCandidateGenerators() {
+        this.generators.clear();
         return this;
     }
     
@@ -138,6 +149,64 @@ public final class PhraseSuggestionBuilder extends SuggestionBuilder<PhraseSugge
      */
     public PhraseSuggestionBuilder smoothingModel(SmoothingModel model) {
         this.model = model;
+        return this;
+    }
+    
+    public PhraseSuggestionBuilder tokenLimit(int tokenLimit) {
+        this.tokenLimit = tokenLimit;
+        return this;
+    }
+
+    /**
+     * Setup highlighting for suggestions.  If this is called a highlight field
+     * is returned with suggestions wrapping changed tokens with preTag and postTag.
+     */
+    public PhraseSuggestionBuilder highlight(String preTag, String postTag) {
+        if ((preTag == null) != (postTag == null)) {
+            throw new IllegalArgumentException("Pre and post tag must both be null or both not be null.");
+        }
+        this.preTag = preTag;
+        this.postTag = postTag;
+        return this;
+    }
+
+    /**
+     * Sets a query used for filtering out suggested phrases (collation).
+     */
+    public PhraseSuggestionBuilder collateQuery(String collateQuery) {
+        this.collateQuery = collateQuery;
+        return this;
+    }
+
+    /**
+     * Sets a filter used for filtering out suggested phrases (collation).
+     */
+    public PhraseSuggestionBuilder collateFilter(String collateFilter) {
+        this.collateFilter = collateFilter;
+        return this;
+    }
+
+    /**
+     * Sets routing preferences for executing filter query (collation).
+     */
+    public PhraseSuggestionBuilder collatePreference(String collatePreference) {
+        this.collatePreference = collatePreference;
+        return this;
+    }
+
+    /**
+     * Sets additional params for collate script
+     */
+    public PhraseSuggestionBuilder collateParams(Map<String, Object> collateParams) {
+        this.collateParams = collateParams;
+        return this;
+    }
+
+    /**
+     * Sets whether to prune suggestions after collation
+     */
+    public PhraseSuggestionBuilder collatePrune(boolean collatePrune) {
+        this.collatePrune = collatePrune;
         return this;
     }
 
@@ -161,6 +230,9 @@ public final class PhraseSuggestionBuilder extends SuggestionBuilder<PhraseSugge
         if (forceUnigrams != null) {
             builder.field("force_unigrams", forceUnigrams);
         }
+        if (tokenLimit != null) {
+            builder.field("token_limit", tokenLimit);
+        }
         if (!generators.isEmpty()) {
             Set<Entry<String, List<CandidateGenerator>>> entrySet = generators.entrySet();
             for (Entry<String, List<CandidateGenerator>> entry : entrySet) {
@@ -174,6 +246,31 @@ public final class PhraseSuggestionBuilder extends SuggestionBuilder<PhraseSugge
         if (model != null) {
             builder.startObject("smoothing");
             model.toXContent(builder, params);
+            builder.endObject();
+        }
+        if (preTag != null) {
+            builder.startObject("highlight");
+            builder.field("pre_tag", preTag);
+            builder.field("post_tag", postTag);
+            builder.endObject();
+        }
+        if (collateQuery != null || collateFilter != null) {
+            builder.startObject("collate");
+            if (collateQuery != null) {
+                builder.field("query", collateQuery);
+            }
+            if (collateFilter != null) {
+                builder.field("filter", collateFilter);
+            }
+            if (collatePreference != null) {
+                builder.field("preference", collatePreference);
+            }
+            if (collateParams != null) {
+                builder.field("params", collateParams);
+            }
+            if (collatePrune != null) {
+                builder.field("prune", collatePrune.booleanValue());
+            }
             builder.endObject();
         }
         return builder;
@@ -392,7 +489,7 @@ public final class PhraseSuggestionBuilder extends SuggestionBuilder<PhraseSugge
          */
         public DirectCandidateGenerator size(int size) {
             if (size <= 0) {
-                throw new ElasticSearchIllegalArgumentException("Size must be positive");
+                throw new IllegalArgumentException("Size must be positive");
             }
             this.size = size;
             return this;
@@ -524,7 +621,7 @@ public final class PhraseSuggestionBuilder extends SuggestionBuilder<PhraseSugge
             this.postFilter = postFilter;
             return this;
         }
-
+        
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
             builder.startObject();
@@ -559,7 +656,7 @@ public final class PhraseSuggestionBuilder extends SuggestionBuilder<PhraseSugge
                 builder.field("prefix_length", prefixLength);
             }
             if (minWordLength != null) {
-                builder.field("min_word_len", minWordLength);
+                builder.field("min_word_length", minWordLength);
             }
             if (minDocFreq != null) {
                 builder.field("min_doc_freq", minDocFreq);

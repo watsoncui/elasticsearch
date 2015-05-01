@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,10 +19,14 @@
 
 package org.elasticsearch.cluster.action.index;
 
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.cluster.ClusterService;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.action.IndicesRequest;
+import org.elasticsearch.action.support.IndicesOptions;
+import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.MetaDataMappingService;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -38,83 +42,72 @@ import java.io.IOException;
  */
 public class NodeMappingRefreshAction extends AbstractComponent {
 
-    private final ThreadPool threadPool;
+    public static final String ACTION_NAME = "internal:cluster/node/mapping/refresh";
 
     private final TransportService transportService;
-
-    private final ClusterService clusterService;
-
     private final MetaDataMappingService metaDataMappingService;
 
     @Inject
-    public NodeMappingRefreshAction(Settings settings, ThreadPool threadPool, TransportService transportService, ClusterService clusterService,
-                                    MetaDataMappingService metaDataMappingService) {
+    public NodeMappingRefreshAction(Settings settings, TransportService transportService, MetaDataMappingService metaDataMappingService) {
         super(settings);
-        this.threadPool = threadPool;
         this.transportService = transportService;
-        this.clusterService = clusterService;
         this.metaDataMappingService = metaDataMappingService;
-        transportService.registerHandler(NodeMappingRefreshTransportHandler.ACTION, new NodeMappingRefreshTransportHandler());
+        transportService.registerRequestHandler(ACTION_NAME, NodeMappingRefreshRequest.class, ThreadPool.Names.SAME, new NodeMappingRefreshTransportHandler());
     }
 
-    public void nodeMappingRefresh(final NodeMappingRefreshRequest request) throws ElasticSearchException {
-        DiscoveryNodes nodes = clusterService.state().nodes();
-        if (nodes.localNodeMaster()) {
-            threadPool.generic().execute(new Runnable() {
-                @Override
-                public void run() {
-                    innerMappingRefresh(request);
-                }
-            });
-        } else {
-            transportService.sendRequest(clusterService.state().nodes().masterNode(),
-                    NodeMappingRefreshTransportHandler.ACTION, request, EmptyTransportResponseHandler.INSTANCE_SAME);
+    public void nodeMappingRefresh(final ClusterState state, final NodeMappingRefreshRequest request) {
+        final DiscoveryNodes nodes = state.nodes();
+        if (nodes.masterNode() == null) {
+            logger.warn("can't send mapping refresh for [{}][{}], no master known.", request.index(), Strings.arrayToCommaDelimitedString(request.types()));
+            return;
         }
+        transportService.sendRequest(nodes.masterNode(), ACTION_NAME, request, EmptyTransportResponseHandler.INSTANCE_SAME);
     }
 
-    private void innerMappingRefresh(NodeMappingRefreshRequest request) {
-        metaDataMappingService.refreshMapping(request.index(), request.types());
-    }
-
-    private class NodeMappingRefreshTransportHandler extends BaseTransportRequestHandler<NodeMappingRefreshRequest> {
-
-        static final String ACTION = "cluster/nodeMappingRefresh";
-
-        @Override
-        public NodeMappingRefreshRequest newInstance() {
-            return new NodeMappingRefreshRequest();
-        }
+    private class NodeMappingRefreshTransportHandler implements TransportRequestHandler<NodeMappingRefreshRequest> {
 
         @Override
         public void messageReceived(NodeMappingRefreshRequest request, TransportChannel channel) throws Exception {
-            innerMappingRefresh(request);
+            metaDataMappingService.refreshMapping(request.index(), request.indexUUID(), request.types());
             channel.sendResponse(TransportResponse.Empty.INSTANCE);
-        }
-
-        @Override
-        public String executor() {
-            return ThreadPool.Names.SAME;
         }
     }
 
-    public static class NodeMappingRefreshRequest extends TransportRequest {
+    public static class NodeMappingRefreshRequest extends TransportRequest implements IndicesRequest {
 
         private String index;
+        private String indexUUID = IndexMetaData.INDEX_UUID_NA_VALUE;
         private String[] types;
         private String nodeId;
 
         NodeMappingRefreshRequest() {
         }
 
-        public NodeMappingRefreshRequest(String index, String[] types, String nodeId) {
+        public NodeMappingRefreshRequest(String index, String indexUUID, String[] types, String nodeId) {
             this.index = index;
+            this.indexUUID = indexUUID;
             this.types = types;
             this.nodeId = nodeId;
+        }
+
+        @Override
+        public String[] indices() {
+            return new String[]{index};
+        }
+
+        @Override
+        public IndicesOptions indicesOptions() {
+            return IndicesOptions.strictSingleIndexNoExpandForbidClosed();
         }
 
         public String index() {
             return index;
         }
+
+        public String indexUUID() {
+            return indexUUID;
+        }
+
 
         public String[] types() {
             return types;
@@ -130,6 +123,7 @@ public class NodeMappingRefreshAction extends AbstractComponent {
             out.writeString(index);
             out.writeStringArray(types);
             out.writeString(nodeId);
+            out.writeString(indexUUID);
         }
 
         @Override
@@ -138,6 +132,7 @@ public class NodeMappingRefreshAction extends AbstractComponent {
             index = in.readString();
             types = in.readStringArray();
             nodeId = in.readString();
+            indexUUID = in.readString();
         }
     }
 }

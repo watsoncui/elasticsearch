@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,7 +21,7 @@ package org.elasticsearch.index.query;
 
 import org.apache.lucene.search.Filter;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.lucene.search.LimitFilter;
+import org.elasticsearch.common.lucene.search.Queries;
 import org.elasticsearch.common.xcontent.XContentParser;
 
 import java.io.IOException;
@@ -53,15 +53,16 @@ public class LimitFilterParser implements FilterParser {
                 if ("value".equals(currentFieldName)) {
                     limit = parser.intValue();
                 } else {
-                    throw new QueryParsingException(parseContext.index(), "[limit] filter does not support [" + currentFieldName + "]");
+                    throw new QueryParsingException(parseContext, "[limit] filter does not support [" + currentFieldName + "]");
                 }
             }
         }
 
         if (limit == -1) {
-            throw new QueryParsingException(parseContext.index(), "No value specified for limit filter");
+            throw new QueryParsingException(parseContext, "No value specified for limit filter");
         }
 
-        return new LimitFilter(limit);
+        // this filter is deprecated and parses to a filter that matches everything
+        return Queries.newMatchAllFilter();
     }
 }

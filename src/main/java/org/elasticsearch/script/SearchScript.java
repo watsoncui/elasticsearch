@@ -1,13 +1,13 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,36 +16,17 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.script;
 
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.search.Scorer;
+import org.apache.lucene.index.LeafReaderContext;
 
-import java.util.Map;
+import java.io.IOException;
 
 /**
  * A search script.
- *
- * @see ExplainableSearchScript for script which can explain a score
  */
-public interface SearchScript extends ExecutableScript {
+public interface SearchScript {
 
-    void setScorer(Scorer scorer);
+    LeafSearchScript getLeafSearchScript(LeafReaderContext context) throws IOException;
 
-    void setNextReader(AtomicReaderContext context);
-
-    void setNextDocId(int doc);
-
-    void setNextSource(Map<String, Object> source);
-
-    void setNextScore(float score);
-
-    float runAsFloat();
-
-    long runAsLong();
-
-    double runAsDouble();
 }

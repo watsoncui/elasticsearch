@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -33,6 +33,7 @@ import org.elasticsearch.index.shard.AbstractIndexShardComponent;
 import org.elasticsearch.index.shard.ShardId;
 
 import java.io.IOException;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -80,8 +81,8 @@ public class ShardSlowLogIndexingService extends AbstractIndexShardComponent {
 
             String level = settings.get(INDEX_INDEXING_SLOWLOG_LEVEL, ShardSlowLogIndexingService.this.level);
             if (!level.equals(ShardSlowLogIndexingService.this.level)) {
-                ShardSlowLogIndexingService.this.indexLogger.setLevel(level.toUpperCase());
-                ShardSlowLogIndexingService.this.deleteLogger.setLevel(level.toUpperCase());
+                ShardSlowLogIndexingService.this.indexLogger.setLevel(level.toUpperCase(Locale.ROOT));
+                ShardSlowLogIndexingService.this.deleteLogger.setLevel(level.toUpperCase(Locale.ROOT));
                 ShardSlowLogIndexingService.this.level = level;
             }
 
@@ -96,14 +97,14 @@ public class ShardSlowLogIndexingService extends AbstractIndexShardComponent {
     public ShardSlowLogIndexingService(ShardId shardId, @IndexSettings Settings indexSettings, IndexSettingsService indexSettingsService) {
         super(shardId, indexSettings);
 
-        this.reformat = componentSettings.getAsBoolean("reformat", true);
+        this.reformat = indexSettings.getAsBoolean(INDEX_INDEXING_SLOWLOG_REFORMAT, true);
 
-        this.indexWarnThreshold = componentSettings.getAsTime("threshold.index.warn", TimeValue.timeValueNanos(-1)).nanos();
-        this.indexInfoThreshold = componentSettings.getAsTime("threshold.index.info", TimeValue.timeValueNanos(-1)).nanos();
-        this.indexDebugThreshold = componentSettings.getAsTime("threshold.index.debug", TimeValue.timeValueNanos(-1)).nanos();
-        this.indexTraceThreshold = componentSettings.getAsTime("threshold.index.trace", TimeValue.timeValueNanos(-1)).nanos();
+        this.indexWarnThreshold = indexSettings.getAsTime(INDEX_INDEXING_SLOWLOG_THRESHOLD_INDEX_WARN, TimeValue.timeValueNanos(-1)).nanos();
+        this.indexInfoThreshold = indexSettings.getAsTime(INDEX_INDEXING_SLOWLOG_THRESHOLD_INDEX_INFO, TimeValue.timeValueNanos(-1)).nanos();
+        this.indexDebugThreshold = indexSettings.getAsTime(INDEX_INDEXING_SLOWLOG_THRESHOLD_INDEX_DEBUG, TimeValue.timeValueNanos(-1)).nanos();
+        this.indexTraceThreshold = indexSettings.getAsTime(INDEX_INDEXING_SLOWLOG_THRESHOLD_INDEX_TRACE, TimeValue.timeValueNanos(-1)).nanos();
 
-        this.level = componentSettings.get("level", "TRACE").toUpperCase();
+        this.level = indexSettings.get(INDEX_INDEXING_SLOWLOG_LEVEL, "TRACE").toUpperCase(Locale.ROOT);
 
         this.indexLogger = Loggers.getLogger(logger, ".index");
         this.deleteLogger = Loggers.getLogger(logger, ".delete");

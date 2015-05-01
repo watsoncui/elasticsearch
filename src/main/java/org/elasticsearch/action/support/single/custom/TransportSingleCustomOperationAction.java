@@ -1,13 +1,13 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,53 +16,49 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.action.support.single.custom;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.action.NoShardAvailableActionException;
-import org.elasticsearch.action.support.TransportAction;
+import org.elasticsearch.action.support.ActionFilters;
+import org.elasticsearch.action.support.HandledTransportAction;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.block.ClusterBlockException;
+import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.cluster.routing.ShardsIterator;
-import org.elasticsearch.common.io.stream.StreamInput;
-import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.*;
 
-import java.io.IOException;
-
 /**
- *
+ * Transport action used to send a read request to one of the shards that belong to an index.
+ * Supports retrying another shard in case of failure.
  */
-public abstract class TransportSingleCustomOperationAction<Request extends SingleCustomOperationRequest, Response extends ActionResponse> extends TransportAction<Request, Response> {
+public abstract class TransportSingleCustomOperationAction<Request extends SingleCustomOperationRequest, Response extends ActionResponse> extends HandledTransportAction<Request, Response> {
 
     protected final ClusterService clusterService;
-
     protected final TransportService transportService;
 
-    final String transportAction;
     final String transportShardAction;
     final String executor;
 
-    protected TransportSingleCustomOperationAction(Settings settings, ThreadPool threadPool, ClusterService clusterService, TransportService transportService) {
-        super(settings, threadPool);
+    protected TransportSingleCustomOperationAction(Settings settings, String actionName, ThreadPool threadPool, ClusterService clusterService, TransportService transportService, ActionFilters actionFilters,
+                                                   Class<Request> request, String executor) {
+        super(settings, actionName, threadPool, transportService, actionFilters, request);
         this.clusterService = clusterService;
         this.transportService = transportService;
 
-        this.transportAction = transportAction();
-        this.transportShardAction = transportAction() + "/s";
-        this.executor = executor();
+        this.transportShardAction = actionName + "[s]";
+        this.executor = executor;
 
-        transportService.registerHandler(transportAction, new TransportHandler());
-        transportService.registerHandler(transportShardAction, new ShardTransportHandler());
+        transportService.registerRequestHandler(transportShardAction, request, executor, new ShardTransportHandler());
     }
 
     @Override
@@ -70,24 +66,28 @@ public abstract class TransportSingleCustomOperationAction<Request extends Singl
         new AsyncSingleAction(request, listener).start();
     }
 
-    protected abstract String transportAction();
-
-    protected abstract String executor();
-
     /**
      * Can return null to execute on this local node.
      */
-    protected abstract ShardsIterator shards(ClusterState state, Request request);
+    protected abstract ShardsIterator shards(ClusterState state, InternalRequest request);
 
-    protected abstract Response shardOperation(Request request, int shardId) throws ElasticSearchException;
-
-    protected abstract Request newRequest();
+    /**
+     * Operation to be executed at the shard level. Can be called with shardId set to null, meaning that there is no
+     * shard involved and the operation just needs to be executed on the local node.
+     */
+    protected abstract Response shardOperation(Request request, ShardId shardId);
 
     protected abstract Response newResponse();
 
-    protected abstract ClusterBlockException checkGlobalBlock(ClusterState state, Request request);
+    protected ClusterBlockException checkGlobalBlock(ClusterState state) {
+        return state.blocks().globalBlockedException(ClusterBlockLevel.READ);
+    }
 
-    protected abstract ClusterBlockException checkRequestBlock(ClusterState state, Request request);
+    protected ClusterBlockException checkRequestBlock(ClusterState state, InternalRequest request) {
+        return state.blocks().indexBlockedException(ClusterBlockLevel.READ, request.concreteIndex());
+    }
+
+    protected abstract boolean resolveIndex(Request request);
 
     private class AsyncSingleAction {
 
@@ -95,34 +95,42 @@ public abstract class TransportSingleCustomOperationAction<Request extends Singl
 
         private final ShardsIterator shardsIt;
 
-        private final Request request;
+        private final InternalRequest internalRequest;
 
         private final DiscoveryNodes nodes;
 
         private AsyncSingleAction(Request request, ActionListener<Response> listener) {
-            this.request = request;
             this.listener = listener;
 
             ClusterState clusterState = clusterService.state();
             nodes = clusterState.nodes();
-            ClusterBlockException blockException = checkGlobalBlock(clusterState, request);
+            ClusterBlockException blockException = checkGlobalBlock(clusterState);
             if (blockException != null) {
                 throw blockException;
             }
-            blockException = checkRequestBlock(clusterState, request);
+
+            String concreteSingleIndex;
+            if (resolveIndex(request)) {
+                concreteSingleIndex = clusterState.metaData().concreteSingleIndex(request.index(), request.indicesOptions());
+            } else {
+                concreteSingleIndex = request.index();
+            }
+            this.internalRequest = new InternalRequest(request, concreteSingleIndex);
+
+            blockException = checkRequestBlock(clusterState, internalRequest);
             if (blockException != null) {
                 throw blockException;
             }
-            this.shardsIt = shards(clusterState, request);
+            this.shardsIt = shards(clusterState, internalRequest);
         }
 
         public void start() {
             performFirst();
         }
 
-        private void onFailure(ShardRouting shardRouting, Exception e) {
+        private void onFailure(ShardRouting shardRouting, Throwable e) {
             if (logger.isTraceEnabled() && e != null) {
-                logger.trace(shardRouting.shortSummary() + ": Failed to execute [" + request + "]", e);
+                logger.trace(shardRouting.shortSummary() + ": Failed to execute [" + internalRequest.request() + "]", e);
             }
             perform(e);
         }
@@ -133,15 +141,15 @@ public abstract class TransportSingleCustomOperationAction<Request extends Singl
         private void performFirst() {
             if (shardsIt == null) {
                 // just execute it on the local node
-                if (request.operationThreaded()) {
-                    request.beforeLocalFork();
-                    threadPool.executor(executor()).execute(new Runnable() {
+                if (internalRequest.request().operationThreaded()) {
+                    internalRequest.request().beforeLocalFork();
+                    threadPool.executor(executor).execute(new Runnable() {
                         @Override
                         public void run() {
                             try {
-                                Response response = shardOperation(request, -1);
+                                Response response = shardOperation(internalRequest.request(), null);
                                 listener.onResponse(response);
-                            } catch (Exception e) {
+                            } catch (Throwable e) {
                                 onFailure(null, e);
                             }
                         }
@@ -149,32 +157,32 @@ public abstract class TransportSingleCustomOperationAction<Request extends Singl
                     return;
                 } else {
                     try {
-                        final Response response = shardOperation(request, -1);
+                        final Response response = shardOperation(internalRequest.request(), null);
                         listener.onResponse(response);
                         return;
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         onFailure(null, e);
                     }
                 }
                 return;
             }
 
-            if (request.preferLocalShard()) {
+            if (internalRequest.request().preferLocalShard()) {
                 boolean foundLocal = false;
                 ShardRouting shardX;
                 while ((shardX = shardsIt.nextOrNull()) != null) {
                     final ShardRouting shard = shardX;
                     if (shard.currentNodeId().equals(nodes.localNodeId())) {
                         foundLocal = true;
-                        if (request.operationThreaded()) {
-                            request.beforeLocalFork();
-                            threadPool.executor(executor()).execute(new Runnable() {
+                        if (internalRequest.request().operationThreaded()) {
+                            internalRequest.request().beforeLocalFork();
+                            threadPool.executor(executor).execute(new Runnable() {
                                 @Override
                                 public void run() {
                                     try {
-                                        Response response = shardOperation(request, shard.id());
+                                        Response response = shardOperation(internalRequest.request(), shard.shardId());
                                         listener.onResponse(response);
-                                    } catch (Exception e) {
+                                    } catch (Throwable e) {
                                         shardsIt.reset();
                                         onFailure(shard, e);
                                     }
@@ -183,10 +191,10 @@ public abstract class TransportSingleCustomOperationAction<Request extends Singl
                             return;
                         } else {
                             try {
-                                final Response response = shardOperation(request, shard.id());
+                                final Response response = shardOperation(internalRequest.request(), shard.shardId());
                                 listener.onResponse(response);
                                 return;
-                            } catch (Exception e) {
+                            } catch (Throwable e) {
                                 shardsIt.reset();
                                 onFailure(shard, e);
                             }
@@ -203,49 +211,50 @@ public abstract class TransportSingleCustomOperationAction<Request extends Singl
             }
         }
 
-        private void perform(final Exception lastException) {
+        private void perform(final Throwable lastException) {
             final ShardRouting shard = shardsIt == null ? null : shardsIt.nextOrNull();
             if (shard == null) {
-                Exception failure = lastException;
+                Throwable failure = lastException;
                 if (failure == null) {
-                    failure = new NoShardAvailableActionException(null, "No shard available for [" + request + "]");
+                    failure = new NoShardAvailableActionException(null, "No shard available for [" + internalRequest.request() + "]");
                 } else {
                     if (logger.isDebugEnabled()) {
-                        logger.debug("failed to execute [" + request + "]", failure);
+                        logger.debug("failed to execute [" + internalRequest.request() + "]", failure);
                     }
                 }
                 listener.onFailure(failure);
             } else {
                 if (shard.currentNodeId().equals(nodes.localNodeId())) {
                     // we don't prefer local shard, so try and do it here
-                    if (!request.preferLocalShard()) {
-                        if (request.operationThreaded()) {
-                            request.beforeLocalFork();
-                            threadPool.executor(executor).execute(new Runnable() {
-                                @Override
-                                public void run() {
-                                    try {
-                                        Response response = shardOperation(request, shard.id());
-                                        listener.onResponse(response);
-                                    } catch (Exception e) {
-                                        onFailure(shard, e);
+                    if (!internalRequest.request().preferLocalShard()) {
+                        try {
+                            if (internalRequest.request().operationThreaded()) {
+                                internalRequest.request().beforeLocalFork();
+                                threadPool.executor(executor).execute(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        try {
+                                            Response response = shardOperation(internalRequest.request(), shard.shardId());
+                                            listener.onResponse(response);
+                                        } catch (Throwable e) {
+                                            onFailure(shard, e);
+                                        }
                                     }
-                                }
-                            });
-                        } else {
-                            try {
-                                final Response response = shardOperation(request, shard.id());
+                                });
+                            } else {
+                                final Response response = shardOperation(internalRequest.request(), shard.shardId());
                                 listener.onResponse(response);
-                            } catch (Exception e) {
-                                onFailure(shard, e);
                             }
+                        } catch (Throwable e) {
+                            onFailure(shard, e);
                         }
                     } else {
                         perform(lastException);
                     }
                 } else {
                     DiscoveryNode node = nodes.get(shard.currentNodeId());
-                    transportService.sendRequest(node, transportShardAction, new ShardSingleOperationRequest(request, shard.id()), new BaseTransportResponseHandler<Response>() {
+                    internalRequest.request().internalShardId = shard.shardId();
+                    transportService.sendRequest(node, transportShardAction, internalRequest.request(), new BaseTransportResponseHandler<Response>() {
                         @Override
                         public Response newInstance() {
                             return newResponse();
@@ -271,100 +280,33 @@ public abstract class TransportSingleCustomOperationAction<Request extends Singl
         }
     }
 
-    private class TransportHandler extends BaseTransportRequestHandler<Request> {
+    private class ShardTransportHandler implements TransportRequestHandler<Request> {
 
         @Override
-        public Request newInstance() {
-            return newRequest();
-        }
-
-        @Override
-        public void messageReceived(Request request, final TransportChannel channel) throws Exception {
-            // no need to have a threaded listener since we just send back a response
-            request.listenerThreaded(false);
-            // if we have a local operation, execute it on a thread since we don't spawn
-            request.operationThreaded(true);
-            execute(request, new ActionListener<Response>() {
-                @Override
-                public void onResponse(Response result) {
-                    try {
-                        channel.sendResponse(result);
-                    } catch (Exception e) {
-                        onFailure(e);
-                    }
-                }
-
-                @Override
-                public void onFailure(Throwable e) {
-                    try {
-                        channel.sendResponse(e);
-                    } catch (Exception e1) {
-                        logger.warn("Failed to send response for get", e1);
-                    }
-                }
-            });
-        }
-
-        @Override
-        public String executor() {
-            return ThreadPool.Names.SAME;
-        }
-    }
-
-    private class ShardTransportHandler extends BaseTransportRequestHandler<ShardSingleOperationRequest> {
-
-        @Override
-        public ShardSingleOperationRequest newInstance() {
-            return new ShardSingleOperationRequest();
-        }
-
-        @Override
-        public String executor() {
-            return executor;
-        }
-
-        @Override
-        public void messageReceived(final ShardSingleOperationRequest request, final TransportChannel channel) throws Exception {
-            Response response = shardOperation(request.request(), request.shardId());
+        public void messageReceived(final Request request, final TransportChannel channel) throws Exception {
+            Response response = shardOperation(request, request.internalShardId);
             channel.sendResponse(response);
         }
     }
 
-    protected class ShardSingleOperationRequest extends TransportRequest {
+    /**
+     * Internal request class that gets built on each node. Holds the original request plus additional info.
+     */
+    protected class InternalRequest {
+        final Request request;
+        final String concreteIndex;
 
-        private Request request;
-        private int shardId;
-
-        ShardSingleOperationRequest() {
-        }
-
-        public ShardSingleOperationRequest(Request request, int shardId) {
-            super(request);
+        InternalRequest(Request request, String concreteIndex) {
             this.request = request;
-            this.shardId = shardId;
+            this.concreteIndex = concreteIndex;
         }
 
         public Request request() {
             return request;
         }
 
-        public int shardId() {
-            return shardId;
-        }
-
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
-            request = newRequest();
-            request.readFrom(in);
-            shardId = in.readVInt();
-        }
-
-        @Override
-        public void writeTo(StreamOutput out) throws IOException {
-            super.writeTo(out);
-            request.writeTo(out);
-            out.writeVInt(shardId);
+        public String concreteIndex() {
+            return concreteIndex;
         }
     }
 }

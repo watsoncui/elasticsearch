@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,15 +20,18 @@
 package org.elasticsearch.indices;
 
 import com.google.common.collect.ImmutableList;
+
+import org.elasticsearch.action.update.UpdateHelper;
 import org.elasticsearch.common.inject.AbstractModule;
 import org.elasticsearch.common.inject.Module;
 import org.elasticsearch.common.inject.SpawnModules;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.indices.analysis.IndicesAnalysisModule;
 import org.elasticsearch.indices.cache.filter.IndicesFilterCache;
-import org.elasticsearch.indices.cache.filter.terms.IndicesTermsFilterCache;
+import org.elasticsearch.indices.cache.query.IndicesQueryCache;
 import org.elasticsearch.indices.cluster.IndicesClusterStateService;
 import org.elasticsearch.indices.fielddata.cache.IndicesFieldDataCache;
+import org.elasticsearch.indices.fielddata.cache.IndicesFieldDataCacheListener;
 import org.elasticsearch.indices.memory.IndexingMemoryController;
 import org.elasticsearch.indices.query.IndicesQueriesModule;
 import org.elasticsearch.indices.recovery.RecoverySettings;
@@ -37,8 +40,6 @@ import org.elasticsearch.indices.recovery.RecoveryTarget;
 import org.elasticsearch.indices.store.IndicesStore;
 import org.elasticsearch.indices.store.TransportNodesListShardStoreMetaData;
 import org.elasticsearch.indices.ttl.IndicesTTLService;
-import org.elasticsearch.indices.warmer.IndicesWarmer;
-import org.elasticsearch.indices.warmer.InternalIndicesWarmer;
 
 /**
  *
@@ -60,20 +61,22 @@ public class IndicesModule extends AbstractModule implements SpawnModules {
     protected void configure() {
         bind(IndicesLifecycle.class).to(InternalIndicesLifecycle.class).asEagerSingleton();
 
-        bind(IndicesService.class).to(InternalIndicesService.class).asEagerSingleton();
+        bind(IndicesService.class).asEagerSingleton();
 
         bind(RecoverySettings.class).asEagerSingleton();
         bind(RecoveryTarget.class).asEagerSingleton();
         bind(RecoverySource.class).asEagerSingleton();
-
         bind(IndicesStore.class).asEagerSingleton();
         bind(IndicesClusterStateService.class).asEagerSingleton();
         bind(IndexingMemoryController.class).asEagerSingleton();
         bind(IndicesFilterCache.class).asEagerSingleton();
+        bind(IndicesQueryCache.class).asEagerSingleton();
         bind(IndicesFieldDataCache.class).asEagerSingleton();
-        bind(IndicesTermsFilterCache.class).asEagerSingleton();
         bind(TransportNodesListShardStoreMetaData.class).asEagerSingleton();
         bind(IndicesTTLService.class).asEagerSingleton();
-        bind(IndicesWarmer.class).to(InternalIndicesWarmer.class).asEagerSingleton();
+        bind(IndicesWarmer.class).asEagerSingleton();
+        bind(UpdateHelper.class).asEagerSingleton();
+
+        bind(IndicesFieldDataCacheListener.class).asEagerSingleton();
     }
 }

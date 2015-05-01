@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,7 +22,6 @@ package org.elasticsearch.action.admin.indices.stats;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.broadcast.BroadcastOperationRequestBuilder;
 import org.elasticsearch.client.IndicesAdminClient;
-import org.elasticsearch.client.internal.InternalIndicesAdminClient;
 
 /**
  * A request to get indices level stats. Allow to enable different stats to be returned.
@@ -33,10 +32,10 @@ import org.elasticsearch.client.internal.InternalIndicesAdminClient;
  * <p>All the stats to be returned can be cleared using {@link #clear()}, at which point, specific
  * stats can be enabled.
  */
-public class IndicesStatsRequestBuilder extends BroadcastOperationRequestBuilder<IndicesStatsRequest, IndicesStatsResponse, IndicesStatsRequestBuilder> {
+public class IndicesStatsRequestBuilder extends BroadcastOperationRequestBuilder<IndicesStatsRequest, IndicesStatsResponse, IndicesStatsRequestBuilder, IndicesAdminClient> {
 
     public IndicesStatsRequestBuilder(IndicesAdminClient indicesClient) {
-        super((InternalIndicesAdminClient) indicesClient, new IndicesStatsRequest());
+        super(indicesClient, new IndicesStatsRequest());
     }
 
     /**
@@ -114,8 +113,68 @@ public class IndicesStatsRequestBuilder extends BroadcastOperationRequestBuilder
         return this;
     }
 
+    public IndicesStatsRequestBuilder setFilterCache(boolean filterCache) {
+        request.filterCache(filterCache);
+        return this;
+    }
+
+    public IndicesStatsRequestBuilder setIdCache(boolean idCache) {
+        request.idCache(idCache);
+        return this;
+    }
+
+    public IndicesStatsRequestBuilder setFieldData(boolean fieldData) {
+        request.fieldData(fieldData);
+        return this;
+    }
+
+    public IndicesStatsRequestBuilder setFieldDataFields(String... fields) {
+        request.fieldDataFields(fields);
+        return this;
+    }
+
+    public IndicesStatsRequestBuilder setPercolate(boolean percolate) {
+        request.percolate(percolate);
+        return this;
+    }
+
+    public IndicesStatsRequestBuilder setSegments(boolean segments) {
+        request.segments(segments);
+        return this;
+    }
+
+    public IndicesStatsRequestBuilder setCompletion(boolean completion) {
+        request.completion(completion);
+        return this;
+    }
+
+    public IndicesStatsRequestBuilder setCompletionFields(String... fields) {
+        request.completionFields(fields);
+        return this;
+    }
+
+    public IndicesStatsRequestBuilder setTranslog(boolean translog) {
+        request.translog(translog);
+        return this;
+    }
+
+    public IndicesStatsRequestBuilder setSuggest(boolean suggest) {
+        request.suggest(suggest);
+        return this;
+    }
+
+    public IndicesStatsRequestBuilder setQueryCache(boolean queryCache) {
+        request.queryCache(queryCache);
+        return this;
+    }
+
+    public IndicesStatsRequestBuilder setRecovery(boolean recovery) {
+        request.recovery(recovery);
+        return this;
+    }
+
     @Override
     protected void doExecute(ActionListener<IndicesStatsResponse> listener) {
-        ((IndicesAdminClient) client).stats(request, listener);
+        client.stats(request, listener);
     }
 }

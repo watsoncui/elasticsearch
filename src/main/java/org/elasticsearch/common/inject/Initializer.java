@@ -68,7 +68,7 @@ class Initializer {
             return Initializables.of(instance);
         }
 
-        InjectableReference<T> initializable = new InjectableReference<T>(injector, instance, source);
+        InjectableReference<T> initializable = new InjectableReference<>(injector, instance, source);
         pendingInjection.put(instance, initializable);
         return initializable;
     }
@@ -132,6 +132,7 @@ class Initializer {
          * Reentrant. If {@code instance} was registered for injection at injector-creation time, this
          * method will ensure that all its members have been injected before returning.
          */
+        @Override
         public T get(Errors errors) throws ErrorsException {
             if (ready.getCount() == 0) {
                 return instance;

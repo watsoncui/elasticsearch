@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,29 +19,23 @@
 
 package org.elasticsearch.index.query;
 
-import org.apache.lucene.search.BooleanClause;
 import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.common.xcontent.ToXContent.Params;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * A filter that matches documents matching boolean combinations of other filters.
- *
- *
  */
 public class BoolFilterBuilder extends BaseFilterBuilder {
-    
-    private ArrayList<FilterBuilder> mustClauses = new ArrayList<FilterBuilder>();
 
-    private ArrayList<FilterBuilder> mustNotClauses = new ArrayList<FilterBuilder>();
+    private ArrayList<FilterBuilder> mustClauses = new ArrayList<>();
 
-    private ArrayList<FilterBuilder> shouldClauses = new ArrayList<FilterBuilder>();
-    
+    private ArrayList<FilterBuilder> mustNotClauses = new ArrayList<>();
+
+    private ArrayList<FilterBuilder> shouldClauses = new ArrayList<>();
+
     private Boolean cache;
     private String cacheKey;
 
@@ -51,27 +45,27 @@ public class BoolFilterBuilder extends BaseFilterBuilder {
      * Adds a filter that <b>must</b> appear in the matching documents.
      */
     public BoolFilterBuilder must(FilterBuilder filterBuilder) {
-    	mustClauses.add(filterBuilder);
-    	return this;
+        mustClauses.add(filterBuilder);
+        return this;
     }
 
     /**
      * Adds a filter that <b>must not</b> appear in the matching documents.
      */
     public BoolFilterBuilder mustNot(FilterBuilder filterBuilder) {
-    	mustNotClauses.add(filterBuilder);
-    	return this;
+        mustNotClauses.add(filterBuilder);
+        return this;
     }
 
-    
+
     /**
      * Adds a filter that <i>should</i> appear in the matching documents. For a boolean filter
      * with no <tt>MUST</tt> clauses one or more <code>SHOULD</code> clauses must match a document
      * for the BooleanQuery to match.
      */
     public BoolFilterBuilder should(FilterBuilder filterBuilder) {
-    	shouldClauses.add(filterBuilder);
-    	return this;
+        shouldClauses.add(filterBuilder);
+        return this;
     }
 
     /**
@@ -79,7 +73,7 @@ public class BoolFilterBuilder extends BaseFilterBuilder {
      */
     public BoolFilterBuilder must(FilterBuilder... filterBuilders) {
         for (FilterBuilder fb : filterBuilders) {
-        	mustClauses.add(fb);
+            mustClauses.add(fb);
         }
         return this;
     }
@@ -89,7 +83,7 @@ public class BoolFilterBuilder extends BaseFilterBuilder {
      */
     public BoolFilterBuilder mustNot(FilterBuilder... filterBuilders) {
         for (FilterBuilder fb : filterBuilders) {
-        	mustNotClauses.add(fb);
+            mustNotClauses.add(fb);
         }
         return this;
     }
@@ -99,11 +93,19 @@ public class BoolFilterBuilder extends BaseFilterBuilder {
      */
     public BoolFilterBuilder should(FilterBuilder... filterBuilders) {
         for (FilterBuilder fb : filterBuilders) {
-        	shouldClauses.add(fb);
+            shouldClauses.add(fb);
         }
         return this;
     }
-    
+
+    /**
+     * Returns <code>true</code> iff this filter builder has at least one should, must or mustNot clause.
+     * Otherwise <code>false</code>.
+     */
+    public boolean hasClauses() {
+        return !(mustClauses.isEmpty() && shouldClauses.isEmpty() && mustNotClauses.isEmpty());
+    }
+
     /**
      * Sets the filter name for the filter that can be used when searching for matched_filters per hit.
      */
@@ -131,7 +133,7 @@ public class BoolFilterBuilder extends BaseFilterBuilder {
         doXArrayContent("must", mustClauses, builder, params);
         doXArrayContent("must_not", mustNotClauses, builder, params);
         doXArrayContent("should", shouldClauses, builder, params);
-        
+
         if (filterName != null) {
             builder.field("_name", filterName);
         }

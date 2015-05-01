@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,17 +19,18 @@
 
 package org.elasticsearch.search.highlight;
 
-import java.io.IOException;
-import java.util.Map;
-
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.queries.BlendedTermQuery;
+import org.apache.lucene.search.FilteredQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.highlight.QueryScorer;
 import org.apache.lucene.search.highlight.WeightedSpanTerm;
 import org.apache.lucene.search.highlight.WeightedSpanTermExtractor;
-import org.elasticsearch.common.lucene.search.XFilteredQuery;
 import org.elasticsearch.common.lucene.search.function.FiltersFunctionScoreQuery;
 import org.elasticsearch.common.lucene.search.function.FunctionScoreQuery;
+
+import java.io.IOException;
+import java.util.Map;
 
 public final class CustomQueryScorer extends QueryScorer {
 
@@ -83,9 +84,11 @@ public final class CustomQueryScorer extends QueryScorer {
             } else if (query instanceof FiltersFunctionScoreQuery) {
                 query = ((FiltersFunctionScoreQuery) query).getSubQuery();
                 extract(query, terms);
-            } else if (query instanceof XFilteredQuery) {
-                query = ((XFilteredQuery) query).getQuery();
+            } else if (query instanceof FilteredQuery) {
+                query = ((FilteredQuery) query).getQuery();
                 extract(query, terms);
+            } else if (query instanceof BlendedTermQuery) {
+                extractWeightedTerms(terms, query);
             }
         }
 

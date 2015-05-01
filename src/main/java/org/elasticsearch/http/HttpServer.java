@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,18 +20,22 @@
 package org.elasticsearch.http;
 
 import com.google.common.collect.ImmutableMap;
-import org.elasticsearch.ElasticSearchException;
+
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.io.Streams;
+import org.elasticsearch.common.io.FileSystemUtils;
+import org.elasticsearch.common.io.PathUtils;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.env.Environment;
 import org.elasticsearch.node.service.NodeService;
 import org.elasticsearch.rest.*;
 
-import java.io.File;
 import java.io.IOException;
+import java.nio.file.*;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 
 import static org.elasticsearch.rest.RestStatus.*;
@@ -64,7 +68,7 @@ public class HttpServer extends AbstractLifecycleComponent<HttpServer> {
         this.nodeService = nodeService;
         nodeService.setHttpServer(this);
 
-        this.disableSites = componentSettings.getAsBoolean("disable_sites", false);
+        this.disableSites = this.settings.getAsBoolean("http.disable_sites", false);
 
         transport.httpServerAdapter(new Dispatcher(this));
     }
@@ -84,7 +88,7 @@ public class HttpServer extends AbstractLifecycleComponent<HttpServer> {
     }
 
     @Override
-    protected void doStart() throws ElasticSearchException {
+    protected void doStart() {
         transport.start();
         if (logger.isInfoEnabled()) {
             logger.info("{}", transport.boundAddress());
@@ -93,13 +97,13 @@ public class HttpServer extends AbstractLifecycleComponent<HttpServer> {
     }
 
     @Override
-    protected void doStop() throws ElasticSearchException {
+    protected void doStop() {
         nodeService.removeAttribute("http_address");
         transport.stop();
     }
 
     @Override
-    protected void doClose() throws ElasticSearchException {
+    protected void doClose() {
         transport.close();
     }
 
@@ -124,24 +128,23 @@ public class HttpServer extends AbstractLifecycleComponent<HttpServer> {
     class PluginSiteFilter extends RestFilter {
 
         @Override
-        public void process(RestRequest request, RestChannel channel, RestFilterChain filterChain) {
+        public void process(RestRequest request, RestChannel channel, RestFilterChain filterChain) throws IOException {
             handlePluginSite((HttpRequest) request, (HttpChannel) channel);
         }
     }
 
-    void handlePluginSite(HttpRequest request, HttpChannel channel) {
+    void handlePluginSite(HttpRequest request, HttpChannel channel) throws IOException {
         if (disableSites) {
-            channel.sendResponse(new StringRestResponse(FORBIDDEN));
+            channel.sendResponse(new BytesRestResponse(FORBIDDEN));
             return;
         }
         if (request.method() == RestRequest.Method.OPTIONS) {
             // when we have OPTIONS request, simply send OK by default (with the Access Control Origin header which gets automatically added)
-            StringRestResponse response = new StringRestResponse(OK);
-            channel.sendResponse(response);
+            channel.sendResponse(new BytesRestResponse(OK));
             return;
         }
         if (request.method() != RestRequest.Method.GET) {
-            channel.sendResponse(new StringRestResponse(FORBIDDEN));
+            channel.sendResponse(new BytesRestResponse(FORBIDDEN));
             return;
         }
         // TODO for a "/_plugin" endpoint, we should have a page that lists all the plugins?
@@ -154,7 +157,10 @@ public class HttpServer extends AbstractLifecycleComponent<HttpServer> {
             pluginName = path;
             sitePath = null;
             // If a trailing / is missing, we redirect to the right page #2654
-            channel.sendResponse(new HttpRedirectRestResponse(request.rawPath() + "/"));
+            String redirectUrl = request.rawPath() + "/";
+            BytesRestResponse restResponse = new BytesRestResponse(RestStatus.MOVED_PERMANENTLY, "text/html", "<head><meta http-equiv=\"refresh\" content=\"0; URL=" + redirectUrl + "></head>");
+            restResponse.addHeader("Location", redirectUrl);
+            channel.sendResponse(restResponse);
             return;
         } else {
             pluginName = path.substring(0, i1);
@@ -164,30 +170,40 @@ public class HttpServer extends AbstractLifecycleComponent<HttpServer> {
         if (sitePath.length() == 0) {
             sitePath = "/index.html";
         }
+        final Path siteFile = environment.pluginsFile().resolve(pluginName).resolve("_site");
 
+        final String separator = siteFile.getFileSystem().getSeparator();
         // Convert file separators.
-        sitePath = sitePath.replace('/', File.separatorChar);
-
+        sitePath = sitePath.replace("/", separator);
         // this is a plugin provided site, serve it as static files from the plugin location
-        File siteFile = new File(new File(environment.pluginsFile(), pluginName), "_site");
-        File file = new File(siteFile, sitePath);
-        if (!file.exists() || file.isHidden()) {
-            channel.sendResponse(new StringRestResponse(NOT_FOUND));
+        Path file = FileSystemUtils.append(siteFile, PathUtils.get(sitePath), 0);
+
+        // return not found instead of forbidden to prevent malicious requests to find out if files exist or dont exist
+        if (!Files.exists(file) || Files.isHidden(file) || !file.toAbsolutePath().normalize().startsWith(siteFile.toAbsolutePath())) {
+            channel.sendResponse(new BytesRestResponse(NOT_FOUND));
             return;
         }
-        if (!file.isFile()) {
-            channel.sendResponse(new StringRestResponse(FORBIDDEN));
-            return;
+
+        BasicFileAttributes attributes = Files.readAttributes(file, BasicFileAttributes.class);
+        if (!attributes.isRegularFile()) {
+            // If it's not a dir, we send a 403
+            if (!attributes.isDirectory()) {
+                channel.sendResponse(new BytesRestResponse(FORBIDDEN));
+                return;
+            }
+            // We don't serve dir but if index.html exists in dir we should serve it
+            file = file.resolve("index.html");
+            if (!Files.exists(file) || Files.isHidden(file) || !Files.isRegularFile(file)) {
+                channel.sendResponse(new BytesRestResponse(FORBIDDEN));
+                return;
+            }
         }
-        if (!file.getAbsolutePath().startsWith(siteFile.getAbsolutePath())) {
-            channel.sendResponse(new StringRestResponse(FORBIDDEN));
-            return;
-        }
+
         try {
-            byte[] data = Streams.copyToByteArray(file);
-            channel.sendResponse(new BytesRestResponse(data, guessMimeType(sitePath)));
+            byte[] data = Files.readAllBytes(file);
+            channel.sendResponse(new BytesRestResponse(OK, guessMimeType(sitePath), data));
         } catch (IOException e) {
-            channel.sendResponse(new StringRestResponse(INTERNAL_SERVER_ERROR));
+            channel.sendResponse(new BytesRestResponse(INTERNAL_SERVER_ERROR));
         }
     }
 
@@ -198,7 +214,7 @@ public class HttpServer extends AbstractLifecycleComponent<HttpServer> {
         if (lastDot == -1) {
             return "";
         }
-        String extension = path.substring(lastDot + 1).toLowerCase();
+        String extension = path.substring(lastDot + 1).toLowerCase(Locale.ROOT);
         String mimeType = DEFAULT_MIME_TYPES.get(extension);
         if (mimeType == null) {
             return "";
@@ -208,7 +224,7 @@ public class HttpServer extends AbstractLifecycleComponent<HttpServer> {
 
     static {
         // This is not an exhaustive list, just the most common types. Call registerMimeType() to add more.
-        Map<String, String> mimeTypes = new HashMap<String, String>();
+        Map<String, String> mimeTypes = new HashMap<>();
         mimeTypes.put("txt", "text/plain");
         mimeTypes.put("css", "text/css");
         mimeTypes.put("csv", "text/csv");

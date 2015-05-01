@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,10 +21,13 @@ package org.elasticsearch.action.support.replication;
 
 import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.ActionRequestValidationException;
+import org.elasticsearch.action.IndicesRequest;
 import org.elasticsearch.action.WriteConsistencyLevel;
+import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.index.shard.ShardId;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
@@ -34,33 +37,58 @@ import static org.elasticsearch.action.ValidateActions.addValidationError;
 /**
  *
  */
-public abstract class ShardReplicationOperationRequest<T extends ShardReplicationOperationRequest> extends ActionRequest<T> {
+public abstract class ShardReplicationOperationRequest<T extends ShardReplicationOperationRequest> extends ActionRequest<T> implements IndicesRequest {
 
     public static final TimeValue DEFAULT_TIMEOUT = new TimeValue(1, TimeUnit.MINUTES);
 
-    protected TimeValue timeout = DEFAULT_TIMEOUT;
+    ShardId internalShardId;
 
+    protected TimeValue timeout = DEFAULT_TIMEOUT;
     protected String index;
 
     private boolean threadedOperation = true;
-    private ReplicationType replicationType = ReplicationType.DEFAULT;
     private WriteConsistencyLevel consistencyLevel = WriteConsistencyLevel.DEFAULT;
+    private volatile boolean canHaveDuplicates = false;
 
     protected ShardReplicationOperationRequest() {
 
     }
 
-    public ShardReplicationOperationRequest(ActionRequest request) {
+    /**
+     * Creates a new request that inherits headers and context from the request provided as argument.
+     */
+    protected ShardReplicationOperationRequest(ActionRequest request) {
         super(request);
     }
 
-    public ShardReplicationOperationRequest(T request) {
-        super(request);
+    /**
+     * Copy constructor that creates a new request that is a copy of the one provided as an argument.
+     */
+    protected ShardReplicationOperationRequest(T request) {
+        this(request, request);
+    }
+
+    /**
+     * Copy constructor that creates a new request that is a copy of the one provided as an argument.
+     * The new request will inherit though headers and context from the original request that caused it.
+     */
+    protected ShardReplicationOperationRequest(T request, ActionRequest originalRequest) {
+        super(originalRequest);
         this.timeout = request.timeout();
         this.index = request.index();
         this.threadedOperation = request.operationThreaded();
-        this.replicationType = request.replicationType();
         this.consistencyLevel = request.consistencyLevel();
+    }
+
+    void setCanHaveDuplicates() {
+        this.canHaveDuplicates = true;
+    }
+
+    /**
+     * Is this request can potentially be dup on a single shard.
+     */
+    public boolean canHaveDuplicates() {
+        return canHaveDuplicates;
     }
 
     /**
@@ -110,27 +138,14 @@ public abstract class ShardReplicationOperationRequest<T extends ShardReplicatio
         return (T) this;
     }
 
-    /**
-     * The replication type.
-     */
-    public ReplicationType replicationType() {
-        return this.replicationType;
+    @Override
+    public String[] indices() {
+        return new String[]{index};
     }
 
-    /**
-     * Sets the replication type.
-     */
-    @SuppressWarnings("unchecked")
-    public final T replicationType(ReplicationType replicationType) {
-        this.replicationType = replicationType;
-        return (T) this;
-    }
-
-    /**
-     * Sets the replication type.
-     */
-    public final T replicationType(String replicationType) {
-        return replicationType(ReplicationType.fromString(replicationType));
+    @Override
+    public IndicesOptions indicesOptions() {
+        return IndicesOptions.strictSingleIndexNoExpandForbidClosed();
     }
 
     public WriteConsistencyLevel consistencyLevel() {
@@ -158,26 +173,23 @@ public abstract class ShardReplicationOperationRequest<T extends ShardReplicatio
     @Override
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
-        replicationType = ReplicationType.fromId(in.readByte());
+        if (in.readBoolean()) {
+            internalShardId = ShardId.readShardId(in);
+        }
         consistencyLevel = WriteConsistencyLevel.fromId(in.readByte());
         timeout = TimeValue.readTimeValue(in);
         index = in.readString();
+        canHaveDuplicates = in.readBoolean();
         // no need to serialize threaded* parameters, since they only matter locally
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
-        out.writeByte(replicationType.id());
+        out.writeOptionalStreamable(internalShardId);
         out.writeByte(consistencyLevel.id());
         timeout.writeTo(out);
         out.writeString(index);
-    }
-
-    /**
-     * Called before the request gets forked into a local thread.
-     */
-    public void beforeLocalFork() {
-
+        out.writeBoolean(canHaveDuplicates);
     }
 }

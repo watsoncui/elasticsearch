@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,10 +21,12 @@ package org.elasticsearch.bootstrap;
 
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.Version;
+import org.elasticsearch.common.PidFile;
+import org.elasticsearch.common.SuppressForbidden;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.inject.CreationException;
 import org.elasticsearch.common.inject.spi.Message;
-import org.elasticsearch.common.io.FileSystemUtils;
+import org.elasticsearch.common.io.PathUtils;
 import org.elasticsearch.common.jna.Natives;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
@@ -32,16 +34,17 @@ import org.elasticsearch.common.logging.log4j.LogConfigurator;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.env.Environment;
 import org.elasticsearch.monitor.jvm.JvmInfo;
+import org.elasticsearch.monitor.process.JmxProcessProbe;
 import org.elasticsearch.node.Node;
 import org.elasticsearch.node.NodeBuilder;
-import org.elasticsearch.node.internal.InternalSettingsPerparer;
+import org.elasticsearch.node.internal.InternalSettingsPreparer;
 
-import java.io.File;
-import java.io.RandomAccessFile;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 
 import static com.google.common.collect.Sets.newHashSet;
+import static org.elasticsearch.common.jna.Kernel32Library.ConsoleCtrlHandler;
 import static org.elasticsearch.common.settings.ImmutableSettings.Builder.EMPTY_SETTINGS;
 
 /**
@@ -53,17 +56,14 @@ public class Bootstrap {
 
     private static volatile Thread keepAliveThread;
     private static volatile CountDownLatch keepAliveLatch;
-
     private static Bootstrap bootstrap;
 
-    private void setup(boolean addShutdownHook, Tuple<Settings, Environment> tuple) throws Exception {
-//        Loggers.getLogger(Bootstrap.class, tuple.v1().get("name")).info("heap_size {}/{}", JvmStats.jvmStats().mem().heapCommitted(), JvmInfo.jvmInfo().mem().heapMax());
-        if (tuple.v1().getAsBoolean("bootstrap.mlockall", false)) {
+    private void setup(boolean addShutdownHook, Settings settings, Environment environment) throws Exception {
+        if (settings.getAsBoolean("bootstrap.mlockall", false)) {
             Natives.tryMlockall();
         }
-        tuple = setupJmx(tuple);
 
-        NodeBuilder nodeBuilder = NodeBuilder.nodeBuilder().settings(tuple.v1()).loadConfigSettings(false);
+        NodeBuilder nodeBuilder = NodeBuilder.nodeBuilder().settings(settings).loadConfigSettings(false);
         node = nodeBuilder.build();
         if (addShutdownHook) {
             Runtime.getRuntime().addShutdownHook(new Thread() {
@@ -73,34 +73,55 @@ public class Bootstrap {
                 }
             });
         }
+
+        if (settings.getAsBoolean("bootstrap.ctrlhandler", true)) {
+            Natives.addConsoleCtrlHandler(new ConsoleCtrlHandler() {
+                @Override
+                public boolean handle(int code) {
+                    if (CTRL_CLOSE_EVENT == code) {
+                        ESLogger logger = Loggers.getLogger(Bootstrap.class);
+                        logger.info("running graceful exit on windows");
+
+                        System.exit(0);
+                        return true;
+                    }
+                    return false;
+                }
+            });
+        }
+        // install SM after natives, JNA can require strange permissions
+        setupSecurity(settings, environment);
+    }
+    
+    /** 
+     * option for elasticsearch.yml etc to turn off our security manager completely,
+     * for example if you want to have your own configuration or just disable.
+     */
+    static final String SECURITY_SETTING = "security.manager.enabled";
+
+    private void setupSecurity(Settings settings, Environment environment) throws Exception {
+        if (settings.getAsBoolean(SECURITY_SETTING, true)) {
+            Security.configure(environment);
+        }
     }
 
-    private static Tuple<Settings, Environment> setupJmx(Tuple<Settings, Environment> tuple) {
-        // We disable JMX on by default, since we don't really want the overhead of RMI (and RMI GC...)
-//        if (tuple.v1().get(JmxService.SettingsConstants.CREATE_CONNECTOR) == null) {
-//            // automatically create the connector if we are bootstrapping
-//            Settings updated = settingsBuilder().put(tuple.v1()).put(JmxService.SettingsConstants.CREATE_CONNECTOR, true).build();
-//            tuple = new Tuple<Settings, Environment>(updated, tuple.v2());
-//        }
-        return tuple;
-    }
-
-    private static void setupLogging(Tuple<Settings, Environment> tuple) {
+    @SuppressForbidden(reason = "Exception#printStackTrace()")
+    private static void setupLogging(Settings settings, Environment environment) {
         try {
-            tuple.v1().getClassLoader().loadClass("org.apache.log4j.Logger");
-            LogConfigurator.configure(tuple.v1());
+            settings.getClassLoader().loadClass("org.apache.log4j.Logger");
+            LogConfigurator.configure(settings);
         } catch (ClassNotFoundException e) {
             // no log4j
         } catch (NoClassDefFoundError e) {
             // no log4j
         } catch (Exception e) {
-            System.err.println("Failed to configure logging...");
+            sysError("Failed to configure logging...", false);
             e.printStackTrace();
         }
     }
 
     private static Tuple<Settings, Environment> initialSettings() {
-        return InternalSettingsPerparer.prepareSettings(EMPTY_SETTINGS, true);
+        return InternalSettingsPreparer.prepareSettings(EMPTY_SETTINGS, true);
     }
 
     /**
@@ -108,8 +129,10 @@ public class Bootstrap {
      */
     public void init(String[] args) throws Exception {
         Tuple<Settings, Environment> tuple = initialSettings();
-        setupLogging(tuple);
-        setup(true, tuple);
+        Settings settings = tuple.v1();
+        Environment environment = tuple.v2();
+        setupLogging(settings, environment);
+        setup(true, settings, environment);
     }
 
     /**
@@ -123,7 +146,7 @@ public class Bootstrap {
      * hook for JSVC
      */
     public void stop() {
-        node.stop();
+       destroy();
     }
 
 
@@ -146,47 +169,39 @@ public class Bootstrap {
 
         if (pidFile != null) {
             try {
-                File fPidFile = new File(pidFile);
-                if (fPidFile.getParentFile() != null) {
-                    FileSystemUtils.mkdirs(fPidFile.getParentFile());
-                }
-                RandomAccessFile rafPidFile = new RandomAccessFile(fPidFile, "rw");
-                rafPidFile.writeBytes(Long.toString(JvmInfo.jvmInfo().pid()));
-                rafPidFile.close();
-
-                fPidFile.deleteOnExit();
+                PidFile.create(PathUtils.get(pidFile), true);
             } catch (Exception e) {
                 String errorMessage = buildErrorMessage("pid", e);
-                System.err.println(errorMessage);
-                System.err.flush();
+                sysError(errorMessage, true);
                 System.exit(3);
             }
         }
-
         boolean foreground = System.getProperty("es.foreground", System.getProperty("es-foreground")) != null;
         // handle the wrapper system property, if its a service, don't run as a service
         if (System.getProperty("wrapper.service", "XXX").equalsIgnoreCase("true")) {
             foreground = false;
         }
 
-        Tuple<Settings, Environment> tuple = null;
+        Settings settings = null;
+        Environment environment = null;
         try {
-            tuple = initialSettings();
-            setupLogging(tuple);
+            Tuple<Settings, Environment> tuple = initialSettings();
+            settings = tuple.v1();
+            environment = tuple.v2();
+            setupLogging(settings, environment);
         } catch (Exception e) {
             String errorMessage = buildErrorMessage("Setup", e);
-            System.err.println(errorMessage);
-            System.err.flush();
+            sysError(errorMessage, true);
             System.exit(3);
         }
 
         if (System.getProperty("es.max-open-files", "false").equals("true")) {
             ESLogger logger = Loggers.getLogger(Bootstrap.class);
-            logger.info("max_open_files [{}]", FileSystemUtils.maxOpenFiles(new File(tuple.v2().workFile(), "open_files")));
+            logger.info("max_open_files [{}]", JmxProcessProbe.getMaxFileDescriptorCount());
         }
 
         // warn if running using the client VM
-        if (JvmInfo.jvmInfo().vmName().toLowerCase().contains("client")) {
+        if (JvmInfo.jvmInfo().getVmName().toLowerCase(Locale.ROOT).contains("client")) {
             ESLogger logger = Loggers.getLogger(Bootstrap.class);
             logger.warn("jvm uses the client vm, make sure to run `java` with the server vm for best performance by adding `-server` to the command line");
         }
@@ -195,15 +210,19 @@ public class Bootstrap {
         try {
             if (!foreground) {
                 Loggers.disableConsoleLogging();
-                System.out.close();
+                closeSystOut();
             }
-            bootstrap.setup(true, tuple);
+
+            // fail if using broken version
+            JVMCheck.check();
+
+            bootstrap.setup(true, settings, environment);
 
             stage = "Startup";
             bootstrap.start();
 
             if (!foreground) {
-                System.err.close();
+                closeSysError();
             }
 
             keepAliveLatch = new CountDownLatch(1);
@@ -234,16 +253,30 @@ public class Bootstrap {
             }
             String errorMessage = buildErrorMessage(stage, e);
             if (foreground) {
-                logger.error(errorMessage);
-            } else {
-                System.err.println(errorMessage);
-                System.err.flush();
+                sysError(errorMessage, true);
+                Loggers.disableConsoleLogging();
             }
-            Loggers.disableConsoleLogging();
-            if (logger.isDebugEnabled()) {
-                logger.debug("Exception", e);
-            }
+            logger.error("Exception", e);
+            
             System.exit(3);
+        }
+    }
+
+    @SuppressForbidden(reason = "System#out")
+    private static void closeSystOut() {
+        System.out.close();
+    }
+
+    @SuppressForbidden(reason = "System#err")
+    private static void closeSysError() {
+        System.err.close();
+    }
+
+    @SuppressForbidden(reason = "System#err")
+    private static void sysError(String line, boolean flush) {
+        System.err.println(line);
+        if (flush) {
+            System.err.flush();
         }
     }
 
@@ -272,6 +305,9 @@ public class Bootstrap {
             }
         } else {
             errorMessage.append("- ").append(ExceptionsHelper.detailedMessage(e, true, 0));
+        }
+        if (Loggers.getLogger(Bootstrap.class).isDebugEnabled()) {
+            errorMessage.append("\n").append(ExceptionsHelper.stackTrace(e));
         }
         return errorMessage.toString();
     }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,7 @@
 
 package org.elasticsearch.common.settings.loader;
 
-import org.elasticsearch.ElasticSearchParseException;
+import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.XContentType;
@@ -41,21 +41,15 @@ public abstract class XContentSettingsLoader implements SettingsLoader {
 
     @Override
     public Map<String, String> load(String source) throws IOException {
-        XContentParser parser = XContentFactory.xContent(contentType()).createParser(source);
-        try {
+        try (XContentParser parser = XContentFactory.xContent(contentType()).createParser(source)) {
             return load(parser);
-        } finally {
-            parser.close();
         }
     }
 
     @Override
     public Map<String, String> load(byte[] source) throws IOException {
-        XContentParser parser = XContentFactory.xContent(contentType()).createParser(source);
-        try {
+        try (XContentParser parser = XContentFactory.xContent(contentType()).createParser(source)) {
             return load(parser);
-        } finally {
-            parser.close();
         }
     }
 
@@ -68,7 +62,7 @@ public abstract class XContentSettingsLoader implements SettingsLoader {
             return settings;
         }
         if (token != XContentParser.Token.START_OBJECT) {
-            throw new ElasticSearchParseException("malformed, expected settings to start with 'object', instead was [" + token + "]");
+            throw new ElasticsearchParseException("malformed, expected settings to start with 'object', instead was [" + token + "]");
         }
         serializeObject(settings, sb, path, jp, null);
         return settings;

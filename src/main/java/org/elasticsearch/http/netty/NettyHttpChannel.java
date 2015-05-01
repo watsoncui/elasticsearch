@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,47 +19,70 @@
 
 package org.elasticsearch.http.netty;
 
-import org.elasticsearch.common.io.stream.CachedStreamOutput;
-import org.elasticsearch.common.xcontent.XContentBuilder;
+import com.google.common.base.Strings;
+import org.apache.lucene.util.BytesRef;
+import org.elasticsearch.common.bytes.BytesReference;
+import org.elasticsearch.common.io.stream.BytesStreamOutput;
+import org.elasticsearch.common.io.stream.ReleasableBytesStreamOutput;
+import org.elasticsearch.common.lease.Releasable;
+import org.elasticsearch.common.netty.NettyUtils;
+import org.elasticsearch.common.netty.ReleaseChannelFutureListener;
 import org.elasticsearch.http.HttpChannel;
-import org.elasticsearch.http.HttpException;
+import org.elasticsearch.http.netty.pipelining.OrderedDownstreamChannelEvent;
+import org.elasticsearch.http.netty.pipelining.OrderedUpstreamMessageEvent;
 import org.elasticsearch.rest.RestResponse;
 import org.elasticsearch.rest.RestStatus;
-import org.elasticsearch.rest.XContentRestResponse;
 import org.elasticsearch.rest.support.RestUtils;
-import org.elasticsearch.transport.netty.NettyTransport;
 import org.jboss.netty.buffer.ChannelBuffer;
 import org.jboss.netty.buffer.ChannelBuffers;
-import org.jboss.netty.channel.Channel;
-import org.jboss.netty.channel.ChannelFuture;
-import org.jboss.netty.channel.ChannelFutureListener;
+import org.jboss.netty.channel.*;
 import org.jboss.netty.handler.codec.http.*;
 
-import java.io.IOException;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
+
+import static org.elasticsearch.http.netty.NettyHttpServerTransport.*;
+import static org.jboss.netty.handler.codec.http.HttpHeaders.Names.*;
 
 /**
  *
  */
-public class NettyHttpChannel implements HttpChannel {
+public class NettyHttpChannel extends HttpChannel {
+
     private final NettyHttpServerTransport transport;
     private final Channel channel;
-    private final org.jboss.netty.handler.codec.http.HttpRequest request;
+    private final org.jboss.netty.handler.codec.http.HttpRequest nettyRequest;
+    private OrderedUpstreamMessageEvent orderedUpstreamMessageEvent = null;
+    private Pattern corsPattern;
 
-    public NettyHttpChannel(NettyHttpServerTransport transport, Channel channel, org.jboss.netty.handler.codec.http.HttpRequest request) {
+    public NettyHttpChannel(NettyHttpServerTransport transport, NettyHttpRequest request, Pattern corsPattern, boolean detailedErrorsEnabled) {
+        super(request, detailedErrorsEnabled);
         this.transport = transport;
-        this.channel = channel;
-        this.request = request;
+        this.channel = request.getChannel();
+        this.nettyRequest = request.request();
+        this.corsPattern = corsPattern;
+    }
+
+    public NettyHttpChannel(NettyHttpServerTransport transport, NettyHttpRequest request, Pattern corsPattern, OrderedUpstreamMessageEvent orderedUpstreamMessageEvent, boolean detailedErrorsEnabled) {
+        this(transport, request, corsPattern, detailedErrorsEnabled);
+        this.orderedUpstreamMessageEvent = orderedUpstreamMessageEvent;
     }
 
     @Override
-    public void sendResponse(RestResponse response) {
+    public BytesStreamOutput newBytesOutput() {
+        return new ReleasableBytesStreamOutput(transport.bigArrays);
+    }
 
+
+    @Override
+    public void sendResponse(RestResponse response) {
         // Decide whether to close the connection or not.
-        boolean http10 = request.getProtocolVersion().equals(HttpVersion.HTTP_1_0);
+        boolean http10 = nettyRequest.getProtocolVersion().equals(HttpVersion.HTTP_1_0);
         boolean close =
-                HttpHeaders.Values.CLOSE.equalsIgnoreCase(request.getHeader(HttpHeaders.Names.CONNECTION)) ||
-                        (http10 && !HttpHeaders.Values.KEEP_ALIVE.equalsIgnoreCase(request.getHeader(HttpHeaders.Names.CONNECTION)));
+                HttpHeaders.Values.CLOSE.equalsIgnoreCase(nettyRequest.headers().get(HttpHeaders.Names.CONNECTION)) ||
+                        (http10 && !HttpHeaders.Values.KEEP_ALIVE.equalsIgnoreCase(nettyRequest.headers().get(HttpHeaders.Names.CONNECTION)));
 
         // Build the response object.
         HttpResponseStatus status = getStatus(response.status());
@@ -67,98 +90,109 @@ public class NettyHttpChannel implements HttpChannel {
         if (http10) {
             resp = new DefaultHttpResponse(HttpVersion.HTTP_1_0, status);
             if (!close) {
-                resp.addHeader(HttpHeaders.Names.CONNECTION, "Keep-Alive");
+                resp.headers().add(HttpHeaders.Names.CONNECTION, "Keep-Alive");
             }
         } else {
             resp = new DefaultHttpResponse(HttpVersion.HTTP_1_1, status);
         }
-        if (RestUtils.isBrowser(request.getHeader(HttpHeaders.Names.USER_AGENT))) {
-            if (transport.settings().getAsBoolean("http.cors.enabled", true)) {
-                // Add support for cross-origin Ajax requests (CORS)
-                resp.addHeader("Access-Control-Allow-Origin", transport.settings().get("http.cors.allow-origin", "*"));
-                if (request.getMethod() == HttpMethod.OPTIONS) {
-                    // Allow Ajax requests based on the CORS "preflight" request
-                    resp.addHeader("Access-Control-Max-Age", transport.settings().getAsInt("http.cors.max-age", 1728000));
-                    resp.addHeader("Access-Control-Allow-Methods", transport.settings().get("http.cors.allow-methods", "OPTIONS, HEAD, GET, POST, PUT, DELETE"));
-                    resp.addHeader("Access-Control-Allow-Headers", transport.settings().get("http.cors.allow-headers", "X-Requested-With, Content-Type, Content-Length"));
-                }
-            }
-        }
-
-        String opaque = request.getHeader("X-Opaque-Id");
-        if (opaque != null) {
-            resp.addHeader("X-Opaque-Id", opaque);
-        }
-
-        // Convert the response content to a ChannelBuffer.
-        ChannelFutureListener releaseContentListener = null;
-        ChannelBuffer buf;
-        try {
-            if (response instanceof XContentRestResponse) {
-                // if its a builder based response, and it was created with a CachedStreamOutput, we can release it
-                // after we write the response, and no need to do an extra copy because its not thread safe
-                XContentBuilder builder = ((XContentRestResponse) response).builder();
-                if (builder.payload() instanceof CachedStreamOutput.Entry) {
-                    releaseContentListener = new NettyTransport.CacheFutureListener((CachedStreamOutput.Entry) builder.payload());
-                    buf = builder.bytes().toChannelBuffer();
-                } else if (response.contentThreadSafe()) {
-                    buf = ChannelBuffers.wrappedBuffer(response.content(), response.contentOffset(), response.contentLength());
-                } else {
-                    buf = ChannelBuffers.copiedBuffer(response.content(), response.contentOffset(), response.contentLength());
-                }
-            } else {
-                if (response.contentThreadSafe()) {
-                    buf = ChannelBuffers.wrappedBuffer(response.content(), response.contentOffset(), response.contentLength());
-                } else {
-                    buf = ChannelBuffers.copiedBuffer(response.content(), response.contentOffset(), response.contentLength());
-                }
-            }
-        } catch (IOException e) {
-            throw new HttpException("Failed to convert response to bytes", e);
-        }
-        if (response.prefixContent() != null || response.suffixContent() != null) {
-            ChannelBuffer prefixBuf = ChannelBuffers.EMPTY_BUFFER;
-            if (response.prefixContent() != null) {
-                prefixBuf = ChannelBuffers.copiedBuffer(response.prefixContent(), response.prefixContentOffset(), response.prefixContentLength());
-            }
-            ChannelBuffer suffixBuf = ChannelBuffers.EMPTY_BUFFER;
-            if (response.suffixContent() != null) {
-                suffixBuf = ChannelBuffers.copiedBuffer(response.suffixContent(), response.suffixContentOffset(), response.suffixContentLength());
-            }
-            buf = ChannelBuffers.wrappedBuffer(prefixBuf, buf, suffixBuf);
-        }
-        resp.setContent(buf);
-        resp.setHeader(HttpHeaders.Names.CONTENT_TYPE, response.contentType());
-
-        resp.setHeader(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(buf.readableBytes()));
-
-        if (transport.resetCookies) {
-            String cookieString = request.getHeader(HttpHeaders.Names.COOKIE);
-            if (cookieString != null) {
-                CookieDecoder cookieDecoder = new CookieDecoder();
-                Set<Cookie> cookies = cookieDecoder.decode(cookieString);
-                if (!cookies.isEmpty()) {
-                    // Reset the cookies if necessary.
-                    CookieEncoder cookieEncoder = new CookieEncoder(true);
-                    for (Cookie cookie : cookies) {
-                        cookieEncoder.addCookie(cookie);
+        if (RestUtils.isBrowser(nettyRequest.headers().get(USER_AGENT))) {
+            if (transport.settings().getAsBoolean(SETTING_CORS_ENABLED, false)) {
+                String originHeader = request.header(ORIGIN);
+                if (!Strings.isNullOrEmpty(originHeader)) {
+                    if (corsPattern == null) {
+                        resp.headers().add(ACCESS_CONTROL_ALLOW_ORIGIN, transport.settings().get(SETTING_CORS_ALLOW_ORIGIN, "*"));
+                    } else {
+                        resp.headers().add(ACCESS_CONTROL_ALLOW_ORIGIN, corsPattern.matcher(originHeader).matches() ? originHeader : "null");
                     }
-                    resp.addHeader(HttpHeaders.Names.SET_COOKIE, cookieEncoder.encode());
+                }
+                if (nettyRequest.getMethod() == HttpMethod.OPTIONS) {
+                    // Allow Ajax requests based on the CORS "preflight" request
+                    resp.headers().add(ACCESS_CONTROL_MAX_AGE, transport.settings().getAsInt(SETTING_CORS_MAX_AGE, 1728000));
+                    resp.headers().add(ACCESS_CONTROL_ALLOW_METHODS, transport.settings().get(SETTING_CORS_ALLOW_METHODS, "OPTIONS, HEAD, GET, POST, PUT, DELETE"));
+                    resp.headers().add(ACCESS_CONTROL_ALLOW_HEADERS, transport.settings().get(SETTING_CORS_ALLOW_HEADERS, "X-Requested-With, Content-Type, Content-Length"));
+                }
+
+                if (transport.settings().getAsBoolean(SETTING_CORS_ALLOW_CREDENTIALS, false)) {
+                    resp.headers().add(ACCESS_CONTROL_ALLOW_CREDENTIALS, "true");
                 }
             }
         }
 
-        // Write the response.
-        ChannelFuture future = channel.write(resp);
-        if (releaseContentListener != null) {
-            future.addListener(releaseContentListener);
+        String opaque = nettyRequest.headers().get("X-Opaque-Id");
+        if (opaque != null) {
+            resp.headers().add("X-Opaque-Id", opaque);
         }
 
-        // Close the connection after the write operation is done if necessary.
-        if (close) {
-            future.addListener(ChannelFutureListener.CLOSE);
+        // Add all custom headers
+        Map<String, List<String>> customHeaders = response.getHeaders();
+        if (customHeaders != null) {
+            for (Map.Entry<String, List<String>> headerEntry : customHeaders.entrySet()) {
+                for (String headerValue : headerEntry.getValue()) {
+                    resp.headers().add(headerEntry.getKey(), headerValue);
+                }
+            }
+        }
+
+        BytesReference content = response.content();
+        ChannelBuffer buffer;
+        boolean addedReleaseListener = false;
+        try {
+            buffer = content.toChannelBuffer();
+            resp.setContent(buffer);
+
+            // If our response doesn't specify a content-type header, set one
+            if (!resp.headers().contains(HttpHeaders.Names.CONTENT_TYPE)) {
+                resp.headers().add(HttpHeaders.Names.CONTENT_TYPE, response.contentType());
+            }
+
+            // If our response has no content-length, calculate and set one
+            if (!resp.headers().contains(HttpHeaders.Names.CONTENT_LENGTH)) {
+                resp.headers().add(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(buffer.readableBytes()));
+            }
+
+            if (transport.resetCookies) {
+                String cookieString = nettyRequest.headers().get(HttpHeaders.Names.COOKIE);
+                if (cookieString != null) {
+                    CookieDecoder cookieDecoder = new CookieDecoder();
+                    Set<Cookie> cookies = cookieDecoder.decode(cookieString);
+                    if (!cookies.isEmpty()) {
+                        // Reset the cookies if necessary.
+                        CookieEncoder cookieEncoder = new CookieEncoder(true);
+                        for (Cookie cookie : cookies) {
+                            cookieEncoder.addCookie(cookie);
+                        }
+                        resp.headers().add(HttpHeaders.Names.SET_COOKIE, cookieEncoder.encode());
+                    }
+                }
+            }
+
+            ChannelFuture future;
+
+            if (orderedUpstreamMessageEvent != null) {
+                OrderedDownstreamChannelEvent downstreamChannelEvent = new OrderedDownstreamChannelEvent(orderedUpstreamMessageEvent, 0, true, resp);
+                future = downstreamChannelEvent.getFuture();
+                channel.getPipeline().sendDownstream(downstreamChannelEvent);
+            } else {
+                future = channel.write(resp);
+            }
+
+            if (content instanceof Releasable) {
+                future.addListener(new ReleaseChannelFutureListener((Releasable) content));
+                addedReleaseListener = true;
+            }
+
+            if (close) {
+                future.addListener(ChannelFutureListener.CLOSE);
+            }
+
+        } finally {
+            if (!addedReleaseListener && content instanceof Releasable) {
+                ((Releasable) content).close();
+            }
         }
     }
+
+    private static final HttpResponseStatus TOO_MANY_REQUESTS = new HttpResponseStatus(429, "Too Many Requests");
 
     private HttpResponseStatus getStatus(RestStatus status) {
         switch (status) {
@@ -239,6 +273,8 @@ public class NettyHttpChannel implements HttpChannel {
                 return HttpResponseStatus.BAD_REQUEST;
             case FAILED_DEPENDENCY:
                 return HttpResponseStatus.BAD_REQUEST;
+            case TOO_MANY_REQUESTS:
+                return TOO_MANY_REQUESTS;
             case INTERNAL_SERVER_ERROR:
                 return HttpResponseStatus.INTERNAL_SERVER_ERROR;
             case NOT_IMPLEMENTED:

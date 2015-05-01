@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,6 +19,7 @@
 
 package org.elasticsearch.index.query;
 
+import org.apache.lucene.util.automaton.Operations;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.io.IOException;
@@ -34,6 +35,8 @@ public class RegexpFilterBuilder extends BaseFilterBuilder {
     private final String name;
     private final String regexp;
     private int flags = -1;
+    private int maxDeterminizedStates = Operations.DEFAULT_MAX_DETERMINIZED_STATES;
+    private boolean maxDetermizedStatesSet;
 
     private Boolean cache;
     private String cacheKey;
@@ -76,6 +79,15 @@ public class RegexpFilterBuilder extends BaseFilterBuilder {
     }
 
     /**
+     * Sets the regexp maxDeterminizedStates.
+     */
+    public RegexpFilterBuilder maxDeterminizedStates(int value) {
+        this.maxDeterminizedStates = value;
+        this.maxDetermizedStatesSet = true;
+        return this;
+    }
+
+    /**
      * Should the filter be cached or not. Defaults to <tt>false</tt>.
      */
     public RegexpFilterBuilder cache(boolean cache) {
@@ -96,8 +108,11 @@ public class RegexpFilterBuilder extends BaseFilterBuilder {
         } else {
             builder.startObject(name)
                     .field("value", regexp)
-                    .field("flags_value", flags)
-                    .endObject();
+                    .field("flags_value", flags);
+            if (maxDetermizedStatesSet) {
+                builder.field("max_determinized_states", maxDeterminizedStates);
+            }
+            builder.endObject();
         }
 
         if (filterName != null) {

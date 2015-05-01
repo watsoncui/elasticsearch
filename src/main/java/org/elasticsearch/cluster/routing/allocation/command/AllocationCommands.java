@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,10 +19,8 @@
 
 package org.elasticsearch.cluster.routing.allocation.command;
 
-import com.google.common.collect.Lists;
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
-import org.elasticsearch.ElasticSearchParseException;
+import org.elasticsearch.ElasticsearchParseException;
+import org.elasticsearch.cluster.routing.allocation.RoutingExplanations;
 import org.elasticsearch.cluster.routing.allocation.RoutingAllocation;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -37,13 +35,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static com.google.common.collect.Lists.newArrayList;
+
 /**
  * A simple {@link AllocationCommand} composite managing several
  * {@link AllocationCommand} implementations
  */
 public class AllocationCommands {
 
-    private static Map<String, AllocationCommand.Factory> factories = new HashMap<String, AllocationCommand.Factory>();
+    private static Map<String, AllocationCommand.Factory> factories = new HashMap<>();
 
     /**
      * Register a custom index meta data factory. Make sure to call it from a static block.
@@ -59,10 +59,10 @@ public class AllocationCommands {
     }
 
     @SuppressWarnings("unchecked")
-    public static <T extends AllocationCommand> AllocationCommand.Factory<T> lookupFactorySafe(String name) throws ElasticSearchIllegalArgumentException {
+    public static <T extends AllocationCommand> AllocationCommand.Factory<T> lookupFactorySafe(String name) {
         AllocationCommand.Factory<T> factory = factories.get(name);
         if (factory == null) {
-            throw new ElasticSearchIllegalArgumentException("No allocation command factory registered for name [" + name + "]");
+            throw new IllegalArgumentException("No allocation command factory registered for name [" + name + "]");
         }
         return factory;
     }
@@ -73,7 +73,7 @@ public class AllocationCommands {
         registerFactory(MoveAllocationCommand.NAME, new MoveAllocationCommand.Factory());
     }
 
-    private final List<AllocationCommand> commands = Lists.newArrayList();
+    private final List<AllocationCommand> commands = newArrayList();
 
     /**
      * Creates a new set of {@link AllocationCommands}
@@ -109,12 +109,14 @@ public class AllocationCommands {
     /**
      * Executes all wrapped commands on a given {@link RoutingAllocation}
      * @param allocation {@link RoutingAllocation} to apply this command to
-     * @throws ElasticSearchException if something happens during execution
+     * @throws org.elasticsearch.ElasticsearchException if something happens during execution
      */
-    public void execute(RoutingAllocation allocation) throws ElasticSearchException {
+    public RoutingExplanations execute(RoutingAllocation allocation, boolean explain) {
+        RoutingExplanations explanations = new RoutingExplanations();
         for (AllocationCommand command : commands) {
-            command.execute(allocation);
+            explanations.add(command.execute(allocation, explain));
         }
+        return explanations;
     }
 
     /**
@@ -167,23 +169,23 @@ public class AllocationCommands {
 
         XContentParser.Token token = parser.currentToken();
         if (token == null) {
-            throw new ElasticSearchParseException("No commands");
+            throw new ElasticsearchParseException("No commands");
         }
         if (token == XContentParser.Token.FIELD_NAME) {
             if (!parser.currentName().equals("commands")) {
-                throw new ElasticSearchParseException("expected field name to be named `commands`, got " + parser.currentName());
+                throw new ElasticsearchParseException("expected field name to be named `commands`, got " + parser.currentName());
             }
             if (!parser.currentName().equals("commands")) {
-                throw new ElasticSearchParseException("expected field name to be named `commands`, got " + parser.currentName());
+                throw new ElasticsearchParseException("expected field name to be named `commands`, got " + parser.currentName());
             }
             token = parser.nextToken();
             if (token != XContentParser.Token.START_ARRAY) {
-                throw new ElasticSearchParseException("commands should follow with an array element");
+                throw new ElasticsearchParseException("commands should follow with an array element");
             }
         } else if (token == XContentParser.Token.START_ARRAY) {
             // ok...
         } else {
-            throw new ElasticSearchParseException("expected either field name commands, or start array, got " + token);
+            throw new ElasticsearchParseException("expected either field name commands, or start array, got " + token);
         }
         while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
             if (token == XContentParser.Token.START_OBJECT) {
@@ -194,10 +196,10 @@ public class AllocationCommands {
                 commands.add(AllocationCommands.lookupFactorySafe(commandName).fromXContent(parser));
                 // move to the end object one
                 if (parser.nextToken() != XContentParser.Token.END_OBJECT) {
-                    throw new ElasticSearchParseException("allocation command is malformed, done parsing a command, but didn't get END_OBJECT, got " + token);
+                    throw new ElasticsearchParseException("allocation command is malformed, done parsing a command, but didn't get END_OBJECT, got " + token);
                 }
             } else {
-                throw new ElasticSearchParseException("allocation command is malformed, got token " + token);
+                throw new ElasticsearchParseException("allocation command is malformed, got token " + token);
             }
         }
         return commands;
@@ -216,7 +218,7 @@ public class AllocationCommands {
         for (AllocationCommand command : commands.commands) {
             builder.startObject();
             builder.field(command.name());
-            AllocationCommands.lookupFactorySafe(command.name()).toXContent(command, builder, params);
+            AllocationCommands.lookupFactorySafe(command.name()).toXContent(command, builder, params, null);
             builder.endObject();
         }
         builder.endArray();

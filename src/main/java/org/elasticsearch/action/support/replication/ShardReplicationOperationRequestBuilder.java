@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,15 +22,15 @@ package org.elasticsearch.action.support.replication;
 import org.elasticsearch.action.ActionRequestBuilder;
 import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.action.WriteConsistencyLevel;
-import org.elasticsearch.client.internal.InternalGenericClient;
+import org.elasticsearch.client.Client;
 import org.elasticsearch.common.unit.TimeValue;
 
 /**
  */
 public abstract class ShardReplicationOperationRequestBuilder<Request extends ShardReplicationOperationRequest<Request>, Response extends ActionResponse, RequestBuilder extends ShardReplicationOperationRequestBuilder<Request, Response, RequestBuilder>>
-        extends ActionRequestBuilder<Request, Response, RequestBuilder> {
+        extends ActionRequestBuilder<Request, Response, RequestBuilder, Client> {
 
-    protected ShardReplicationOperationRequestBuilder(InternalGenericClient client, Request request) {
+    protected ShardReplicationOperationRequestBuilder(Client client, Request request) {
         super(client, request);
     }
 
@@ -65,24 +65,6 @@ public abstract class ShardReplicationOperationRequestBuilder<Request extends Sh
     @SuppressWarnings("unchecked")
     public final RequestBuilder setIndex(String index) {
         request.index(index);
-        return (RequestBuilder) this;
-    }
-
-    /**
-     * Sets the replication type.
-     */
-    @SuppressWarnings("unchecked")
-    public RequestBuilder setReplicationType(ReplicationType replicationType) {
-        request.replicationType(replicationType);
-        return (RequestBuilder) this;
-    }
-
-    /**
-     * Sets the replication type.
-     */
-    @SuppressWarnings("unchecked")
-    public RequestBuilder setReplicationType(String replicationType) {
-        request.replicationType(replicationType);
         return (RequestBuilder) this;
     }
 

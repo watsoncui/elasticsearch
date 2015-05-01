@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,15 +19,18 @@
 
 package org.elasticsearch.common.xcontent.json;
 
+import com.fasterxml.jackson.core.JsonLocation;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
+
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.UnicodeUtil;
-import org.elasticsearch.ElasticSearchIllegalStateException;
+import org.apache.lucene.util.IOUtils;
+import org.elasticsearch.common.xcontent.XContentLocation;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.common.xcontent.support.AbstractXContentParser;
 
 import java.io.IOException;
+import java.nio.CharBuffer;
 
 /**
  *
@@ -86,10 +89,13 @@ public class JsonXContentParser extends AbstractXContentParser {
     }
 
     @Override
-    public BytesRef bytes() throws IOException {
-        BytesRef bytes = new BytesRef();
-        UnicodeUtil.UTF16toUTF8(parser.getTextCharacters(), parser.getTextOffset(), parser.getTextLength(), bytes);
-        return bytes;
+    public BytesRef utf8Bytes() throws IOException {
+        // Tentative workaround for https://github.com/elastic/elasticsearch/issues/8629
+        // TODO: Remove this when we upgrade jackson to 2.6.x.
+        if (parser.getTextLength() == 0) {
+            return new BytesRef();
+        }
+        return new BytesRef(CharBuffer.wrap(parser.getTextCharacters(), parser.getTextOffset(), parser.getTextLength()));
     }
 
     @Override
@@ -114,7 +120,7 @@ public class JsonXContentParser extends AbstractXContentParser {
     public Object objectBytes() throws IOException {
         JsonToken currentToken = parser.getCurrentToken();
         if (currentToken == JsonToken.VALUE_STRING) {
-            return bytes();
+            return utf8Bytes();
         } else if (currentToken == JsonToken.VALUE_NUMBER_INT || currentToken == JsonToken.VALUE_NUMBER_FLOAT) {
             return parser.getNumberValue();
         } else if (currentToken == JsonToken.VALUE_TRUE) {
@@ -124,7 +130,8 @@ public class JsonXContentParser extends AbstractXContentParser {
         } else if (currentToken == JsonToken.VALUE_NULL) {
             return null;
         } else {
-            return bytes();
+            //TODO should this really do UTF-8 conversion?
+            return utf8Bytes();
         }
     }
 
@@ -184,12 +191,17 @@ public class JsonXContentParser extends AbstractXContentParser {
     }
 
     @Override
-    public void close() {
-        try {
-            parser.close();
-        } catch (IOException e) {
-            // ignore
+    public XContentLocation getTokenLocation() {
+        JsonLocation loc = parser.getTokenLocation();
+        if (loc == null) {
+            return null;
         }
+        return new XContentLocation(loc.getLineNr(), loc.getColumnNr());
+    }
+
+    @Override
+    public void close() {
+        IOUtils.closeWhileHandlingException(parser);
     }
 
     private NumberType convertNumberType(JsonParser.NumberType numberType) {
@@ -203,7 +215,7 @@ public class JsonXContentParser extends AbstractXContentParser {
             case DOUBLE:
                 return NumberType.DOUBLE;
         }
-        throw new ElasticSearchIllegalStateException("No matching token for number_type [" + numberType + "]");
+        throw new IllegalStateException("No matching token for number_type [" + numberType + "]");
     }
 
     private Token convertToken(JsonToken token) {
@@ -234,6 +246,6 @@ public class JsonXContentParser extends AbstractXContentParser {
             case VALUE_EMBEDDED_OBJECT:
                 return Token.VALUE_EMBEDDED_OBJECT;
         }
-        throw new ElasticSearchIllegalStateException("No matching token for json_token [" + token + "]");
+        throw new IllegalStateException("No matching token for json_token [" + token + "]");
     }
 }

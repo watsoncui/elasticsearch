@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,7 @@
 
 package org.elasticsearch.action.search;
 
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.common.ParseField;
 
 /**
  * Search type represent the manner at which the search operation is executed.
@@ -56,14 +56,18 @@ public enum SearchType {
      */
     SCAN((byte) 4),
     /**
-     * Only counts the results, will still execute facets and the like.
+     * Only counts the results, will still execute aggregations and the like.
+     * @deprecated does not any improvements compared to {@link #QUERY_THEN_FETCH} with a `size` of {@code 0}
      */
+    @Deprecated
     COUNT((byte) 5);
 
     /**
      * The default search type ({@link #QUERY_THEN_FETCH}.
      */
     public static final SearchType DEFAULT = QUERY_THEN_FETCH;
+
+    private static final ParseField COUNT_VALUE = new ParseField("count").withAllDeprecated("query_then_fetch");
 
     private byte id;
 
@@ -95,7 +99,7 @@ public enum SearchType {
         } else if (id == 5) {
             return COUNT;
         } else {
-            throw new ElasticSearchIllegalArgumentException("No search type for [" + id + "]");
+            throw new IllegalArgumentException("No search type for [" + id + "]");
         }
     }
 
@@ -104,7 +108,7 @@ public enum SearchType {
      * one of "dfs_query_then_fetch"/"dfsQueryThenFetch", "dfs_query_and_fetch"/"dfsQueryAndFetch",
      * "query_then_fetch"/"queryThenFetch", "query_and_fetch"/"queryAndFetch", and "scan".
      */
-    public static SearchType fromString(String searchType) throws ElasticSearchIllegalArgumentException {
+    public static SearchType fromString(String searchType) {
         if (searchType == null) {
             return SearchType.DEFAULT;
         }
@@ -118,10 +122,10 @@ public enum SearchType {
             return SearchType.QUERY_AND_FETCH;
         } else if ("scan".equals(searchType)) {
             return SearchType.SCAN;
-        } else if ("count".equals(searchType)) {
+        } else if (COUNT_VALUE.match(searchType)) {
             return SearchType.COUNT;
         } else {
-            throw new ElasticSearchIllegalArgumentException("No search type for [" + searchType + "]");
+            throw new IllegalArgumentException("No search type for [" + searchType + "]");
         }
     }
 }

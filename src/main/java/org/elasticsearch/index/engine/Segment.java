@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,13 +19,21 @@
 
 package org.elasticsearch.index.engine;
 
+import com.google.common.collect.Iterators;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
+import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.common.unit.ByteSizeValue;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
 
 public class Segment implements Streamable {
 
@@ -36,8 +44,11 @@ public class Segment implements Streamable {
     public long sizeInBytes = -1;
     public int docCount = -1;
     public int delDocCount = -1;
-    public String version = null;
+    public org.apache.lucene.util.Version version = null;
     public Boolean compound = null;
+    public String mergeId;
+    public long memoryInBytes;
+    public Accountable ramTree = null;
 
     Segment() {
     }
@@ -79,13 +90,29 @@ public class Segment implements Streamable {
         return this.sizeInBytes;
     }
 
-    public String getVersion() {
+    public org.apache.lucene.util.Version getVersion() {
         return version;
     }
 
     @Nullable
     public Boolean isCompound() {
         return compound;
+    }
+
+    /**
+     * If set, a string representing that the segment is part of a merge, with the value representing the
+     * group of segments that represent this merge.
+     */
+    @Nullable
+    public String getMergeId() {
+        return this.mergeId;
+    }
+
+    /**
+     * Estimation of the memory usage used by a segment.
+     */
+    public long getMemoryInBytes() {
+        return this.memoryInBytes;
     }
 
     @Override
@@ -120,8 +147,14 @@ public class Segment implements Streamable {
         docCount = in.readInt();
         delDocCount = in.readInt();
         sizeInBytes = in.readLong();
-        version = in.readOptionalString();
+        version = Lucene.parseVersionLenient(in.readOptionalString(), null);
         compound = in.readOptionalBoolean();
+        mergeId = in.readOptionalString();
+        memoryInBytes = in.readLong();
+        if (in.readBoolean()) {
+            // verbose mode
+            ramTree = readRamTree(in);
+        }
     }
 
     @Override
@@ -132,7 +165,57 @@ public class Segment implements Streamable {
         out.writeInt(docCount);
         out.writeInt(delDocCount);
         out.writeLong(sizeInBytes);
-        out.writeOptionalString(version);
+        out.writeOptionalString(version.toString());
         out.writeOptionalBoolean(compound);
+        out.writeOptionalString(mergeId);
+        out.writeLong(memoryInBytes);
+        
+        boolean verbose = ramTree != null;
+        out.writeBoolean(verbose);
+        if (verbose) {
+            writeRamTree(out, ramTree);
+        }
+    }
+
+    Accountable readRamTree(StreamInput in) throws IOException {
+        final String name = in.readString();
+        final long bytes = in.readVLong();
+        int numChildren = in.readVInt();
+        if (numChildren == 0) {
+            return Accountables.namedAccountable(name, bytes);
+        }
+        List<Accountable> children = new ArrayList(numChildren);
+        while (numChildren-- > 0) {
+            children.add(readRamTree(in));
+        }
+        return Accountables.namedAccountable(name, children, bytes);
+    }
+    
+    // the ram tree is written recursively since the depth is fairly low (5 or 6)
+    void writeRamTree(StreamOutput out, Accountable tree) throws IOException {
+        out.writeString(tree.toString());
+        out.writeVLong(tree.ramBytesUsed());
+        Collection<Accountable> children = tree.getChildResources();
+        out.writeVInt(children.size());
+        for (Accountable child : children) {
+            writeRamTree(out, child);
+        }
+    }
+
+    @Override
+    public String toString() {
+        return "Segment{" +
+                "name='" + name + '\'' +
+                ", generation=" + generation +
+                ", committed=" + committed +
+                ", search=" + search +
+                ", sizeInBytes=" + sizeInBytes +
+                ", docCount=" + docCount +
+                ", delDocCount=" + delDocCount +
+                ", version='" + version + '\'' +
+                ", compound=" + compound +
+                ", mergeId='" + mergeId + '\'' +
+                ", memoryInBytes=" + memoryInBytes +
+                '}';
     }
 }

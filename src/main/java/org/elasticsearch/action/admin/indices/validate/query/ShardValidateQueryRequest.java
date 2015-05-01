@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -25,6 +25,7 @@ import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.index.shard.ShardId;
 
 import java.io.IOException;
 
@@ -33,9 +34,11 @@ import java.io.IOException;
  */
 class ShardValidateQueryRequest extends BroadcastShardOperationRequest {
 
-    private BytesReference querySource;
+    private BytesReference source;
     private String[] types = Strings.EMPTY_ARRAY;
     private boolean explain;
+    private boolean rewrite;
+    private long nowInMillis;
 
     @Nullable
     private String[] filteringAliases;
@@ -44,16 +47,18 @@ class ShardValidateQueryRequest extends BroadcastShardOperationRequest {
 
     }
 
-    public ShardValidateQueryRequest(String index, int shardId, @Nullable String[] filteringAliases, ValidateQueryRequest request) {
-        super(index, shardId, request);
-        this.querySource = request.querySource();
+    ShardValidateQueryRequest(ShardId shardId, @Nullable String[] filteringAliases, ValidateQueryRequest request) {
+        super(shardId, request);
+        this.source = request.source();
         this.types = request.types();
         this.explain = request.explain();
+        this.rewrite = request.rewrite();
         this.filteringAliases = filteringAliases;
+        this.nowInMillis = request.nowInMillis;
     }
 
-    public BytesReference querySource() {
-        return querySource;
+    public BytesReference source() {
+        return source;
     }
 
     public String[] types() {
@@ -64,14 +69,22 @@ class ShardValidateQueryRequest extends BroadcastShardOperationRequest {
         return this.explain;
     }
 
+    public boolean rewrite() { 
+        return this.rewrite; 
+    }
+
     public String[] filteringAliases() {
         return filteringAliases;
+    }
+
+    public long nowInMillis() {
+        return this.nowInMillis;
     }
 
     @Override
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
-        querySource = in.readBytesReference();
+        source = in.readBytesReference();
 
         int typesSize = in.readVInt();
         if (typesSize > 0) {
@@ -89,12 +102,14 @@ class ShardValidateQueryRequest extends BroadcastShardOperationRequest {
         }
 
         explain = in.readBoolean();
+        rewrite = in.readBoolean();
+        nowInMillis = in.readVLong();
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
-        out.writeBytesReference(querySource);
+        out.writeBytesReference(source);
 
         out.writeVInt(types.length);
         for (String type : types) {
@@ -110,5 +125,7 @@ class ShardValidateQueryRequest extends BroadcastShardOperationRequest {
         }
 
         out.writeBoolean(explain);
+        out.writeBoolean(rewrite);
+        out.writeVLong(nowInMillis);
     }
 }

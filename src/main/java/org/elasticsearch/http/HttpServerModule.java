@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,33 +19,48 @@
 
 package org.elasticsearch.http;
 
-import com.google.common.collect.ImmutableList;
+import com.google.common.base.Preconditions;
 import org.elasticsearch.common.inject.AbstractModule;
-import org.elasticsearch.common.inject.Module;
-import org.elasticsearch.common.inject.Modules;
-import org.elasticsearch.common.inject.SpawnModules;
+import org.elasticsearch.common.logging.ESLogger;
+import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.http.netty.NettyHttpServerTransportModule;
+import org.elasticsearch.http.netty.NettyHttpServerTransport;
 
 /**
  *
  */
-public class HttpServerModule extends AbstractModule implements SpawnModules {
+public class HttpServerModule extends AbstractModule {
 
     private final Settings settings;
+    private final ESLogger logger;
+
+    private Class<? extends HttpServerTransport> configuredHttpServerTransport;
+    private String configuredHttpServerTransportSource;
 
     public HttpServerModule(Settings settings) {
         this.settings = settings;
-    }
-
-    @Override
-    public Iterable<? extends Module> spawnModules() {
-        return ImmutableList.of(Modules.createModule(settings.getAsClass("http.type", NettyHttpServerTransportModule.class, "org.elasticsearch.http.", "HttpServerTransportModule"), settings));
+        this.logger = Loggers.getLogger(getClass(), settings);
     }
 
     @SuppressWarnings({"unchecked"})
     @Override
     protected void configure() {
+        if (configuredHttpServerTransport != null) {
+            logger.info("Using [{}] as http transport, overridden by [{}]", configuredHttpServerTransport.getName(), configuredHttpServerTransportSource);
+            bind(HttpServerTransport.class).to(configuredHttpServerTransport).asEagerSingleton();
+        } else {
+            Class<? extends HttpServerTransport> defaultHttpServerTransport = NettyHttpServerTransport.class;
+            Class<? extends HttpServerTransport> httpServerTransport = settings.getAsClass("http.type", defaultHttpServerTransport, "org.elasticsearch.http.", "HttpServerTransport");
+            bind(HttpServerTransport.class).to(httpServerTransport).asEagerSingleton();
+        }
+
         bind(HttpServer.class).asEagerSingleton();
+    }
+
+    public void setHttpServerTransport(Class<? extends HttpServerTransport> httpServerTransport, String source) {
+        Preconditions.checkNotNull(httpServerTransport, "Configured http server transport may not be null");
+        Preconditions.checkNotNull(source, "Plugin, that changes transport may not be null");
+        this.configuredHttpServerTransport = httpServerTransport;
+        this.configuredHttpServerTransportSource = source;
     }
 }

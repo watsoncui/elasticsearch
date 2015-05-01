@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,20 +19,20 @@
 
 package org.elasticsearch.action.bulk;
 
-import org.elasticsearch.ElasticSearchIllegalStateException;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.delete.DeleteRequest;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.client.Client;
-import org.elasticsearch.client.internal.InternalClient;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.util.concurrent.EsExecutors;
+import org.elasticsearch.common.util.concurrent.FutureUtils;
 
+import java.io.Closeable;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -43,7 +43,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p/>
  * In order to create a new bulk processor, use the {@link Builder}.
  */
-public class BulkProcessor {
+public class BulkProcessor implements Closeable {
 
     /**
      * A listener for the execution.
@@ -155,7 +155,7 @@ public class BulkProcessor {
 
     private final int concurrentRequests;
     private final int bulkActions;
-    private final int bulkSize;
+    private final long bulkSize;
     private final TimeValue flushInterval;
 
     private final Semaphore semaphore;
@@ -174,14 +174,14 @@ public class BulkProcessor {
         this.name = name;
         this.concurrentRequests = concurrentRequests;
         this.bulkActions = bulkActions;
-        this.bulkSize = bulkSize.bytesAsInt();
+        this.bulkSize = bulkSize.bytes();
 
         this.semaphore = new Semaphore(concurrentRequests);
         this.bulkRequest = new BulkRequest();
 
         this.flushInterval = flushInterval;
         if (flushInterval != null) {
-            this.scheduler = (ScheduledThreadPoolExecutor) Executors.newScheduledThreadPool(1, EsExecutors.daemonThreadFactory(((InternalClient) client).settings(), (name != null ? "[" + name + "]" : "") + "bulk_processor"));
+            this.scheduler = (ScheduledThreadPoolExecutor) Executors.newScheduledThreadPool(1, EsExecutors.daemonThreadFactory(client.settings(), (name != null ? "[" + name + "]" : "") + "bulk_processor"));
             this.scheduler.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
             this.scheduler.setContinueExistingPeriodicTasksAfterShutdownPolicy(false);
             this.scheduledFuture = this.scheduler.scheduleWithFixedDelay(new Flush(), flushInterval.millis(), flushInterval.millis(), TimeUnit.MILLISECONDS);
@@ -192,20 +192,49 @@ public class BulkProcessor {
     }
 
     /**
-     * Closes the processor. If flushing by time is enabled, then its shutdown. Any remaining bulk actions are flushed.
+     * Closes the processor. If flushing by time is enabled, then it's shutdown. Any remaining bulk actions are flushed.
      */
-    public synchronized void close() {
+    @Override
+    public void close() {
+        try {
+            awaitClose(0, TimeUnit.NANOSECONDS);
+        } catch(InterruptedException exc) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Closes the processor. If flushing by time is enabled, then it's shutdown. Any remaining bulk actions are flushed.
+     *
+     * If concurrent requests are not enabled, returns {@code true} immediately.
+     * If concurrent requests are enabled, waits for up to the specified timeout for all bulk requests to complete then returns {@code true},
+     * If the specified waiting time elapses before all bulk requests complete, {@code false} is returned.
+     *
+     * @param timeout The maximum time to wait for the bulk requests to complete
+     * @param unit The time unit of the {@code timeout} argument
+     * @return {@code true} if all bulk requests completed and {@code false} if the waiting time elapsed before all the bulk requests completed
+     * @throws InterruptedException If the current thread is interrupted
+     */
+    public synchronized boolean awaitClose(long timeout, TimeUnit unit) throws InterruptedException {
         if (closed) {
-            return;
+            return true;
         }
         closed = true;
         if (this.scheduledFuture != null) {
-            this.scheduledFuture.cancel(false);
+            FutureUtils.cancel(this.scheduledFuture);
             this.scheduler.shutdown();
         }
         if (bulkRequest.numberOfActions() > 0) {
             execute();
         }
+        if (this.concurrentRequests < 1) {
+            return true;
+        }
+        if (semaphore.tryAcquire(this.concurrentRequests, timeout, unit)) {
+            semaphore.release(this.concurrentRequests);
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -235,25 +264,34 @@ public class BulkProcessor {
         return this;
     }
 
+    boolean isOpen() {
+        return closed == false;
+    }
+
+    protected void ensureOpen() {
+        if (closed) {
+            throw new IllegalStateException("bulk process already closed");
+        }
+    }
+
     private synchronized void internalAdd(ActionRequest request, @Nullable Object payload) {
+        ensureOpen();
         bulkRequest.add(request, payload);
         executeIfNeeded();
     }
 
-    public BulkProcessor add(BytesReference data, boolean contentUnsafe, @Nullable String defaultIndex, @Nullable String defaultType) throws Exception {
-        return add(data, contentUnsafe, defaultIndex, defaultType, null);
+    public BulkProcessor add(BytesReference data, @Nullable String defaultIndex, @Nullable String defaultType) throws Exception {
+        return add(data, defaultIndex, defaultType, null);
     }
 
-    public synchronized BulkProcessor add(BytesReference data, boolean contentUnsafe, @Nullable String defaultIndex, @Nullable String defaultType, @Nullable Object payload) throws Exception {
-        bulkRequest.add(data, contentUnsafe, defaultIndex, defaultType, payload);
+    public synchronized BulkProcessor add(BytesReference data, @Nullable String defaultIndex, @Nullable String defaultType, @Nullable Object payload) throws Exception {
+        bulkRequest.add(data, defaultIndex, defaultType, null, payload, true);
         executeIfNeeded();
         return this;
     }
 
     private void executeIfNeeded() {
-        if (closed) {
-            throw new ElasticSearchIllegalStateException("bulk process already closed");
-        }
+        ensureOpen();
         if (!isOverTheLimit()) {
             return;
         }
@@ -269,50 +307,73 @@ public class BulkProcessor {
 
         if (concurrentRequests == 0) {
             // execute in a blocking fashion...
+            boolean afterCalled = false;
             try {
                 listener.beforeBulk(executionId, bulkRequest);
-                listener.afterBulk(executionId, bulkRequest, client.bulk(bulkRequest).actionGet());
+                BulkResponse bulkItemResponses = client.bulk(bulkRequest).actionGet();
+                afterCalled = true;
+                listener.afterBulk(executionId, bulkRequest, bulkItemResponses);
             } catch (Exception e) {
-                listener.afterBulk(executionId, bulkRequest, e);
+                if (!afterCalled) {
+                    listener.afterBulk(executionId, bulkRequest, e);
+                }
             }
         } else {
+            boolean success = false;
             try {
+                listener.beforeBulk(executionId, bulkRequest);
                 semaphore.acquire();
-            } catch (InterruptedException e) {
-                listener.afterBulk(executionId, bulkRequest, e);
-                return;
-            }
-            listener.beforeBulk(executionId, bulkRequest);
-            client.bulk(bulkRequest, new ActionListener<BulkResponse>() {
-                @Override
-                public void onResponse(BulkResponse response) {
-                    try {
-                        listener.afterBulk(executionId, bulkRequest, response);
-                    } finally {
-                        semaphore.release();
+                client.bulk(bulkRequest, new ActionListener<BulkResponse>() {
+                    @Override
+                    public void onResponse(BulkResponse response) {
+                        try {
+                            listener.afterBulk(executionId, bulkRequest, response);
+                        } finally {
+                            semaphore.release();
+                        }
                     }
-                }
 
-                @Override
-                public void onFailure(Throwable e) {
-                    try {
-                        listener.afterBulk(executionId, bulkRequest, e);
-                    } finally {
-                        semaphore.release();
+                    @Override
+                    public void onFailure(Throwable e) {
+                        try {
+                            listener.afterBulk(executionId, bulkRequest, e);
+                        } finally {
+                            semaphore.release();
+                        }
                     }
-                }
-            });
+                });
+                success = true;
+            } catch (InterruptedException e) {
+                Thread.interrupted();
+                listener.afterBulk(executionId, bulkRequest, e);
+            } catch (Throwable t) {
+                listener.afterBulk(executionId, bulkRequest, t);
+            } finally {
+                 if (!success) {  // if we fail on client.bulk() release the semaphore
+                     semaphore.release();
+                 }
+            }
         }
     }
 
     private boolean isOverTheLimit() {
-        if (bulkActions != -1 && bulkRequest.numberOfActions() > bulkActions) {
+        if (bulkActions != -1 && bulkRequest.numberOfActions() >= bulkActions) {
             return true;
         }
-        if (bulkSize != -1 && bulkRequest.estimatedSizeInBytes() > bulkSize) {
+        if (bulkSize != -1 && bulkRequest.estimatedSizeInBytes() >= bulkSize) {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Flush pending delete or index requests.
+     */
+    public synchronized void flush() {
+        ensureOpen();
+        if (bulkRequest.numberOfActions() > 0) {
+            execute();
+        }
     }
 
     class Flush implements Runnable {

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -37,10 +37,7 @@ import static org.elasticsearch.search.Scroll.readScroll;
 public class SearchScrollRequest extends ActionRequest<SearchScrollRequest> {
 
     private String scrollId;
-
     private Scroll scroll;
-
-    private SearchOperationThreading operationThreading = SearchOperationThreading.THREAD_PER_SHARD;
 
     public SearchScrollRequest() {
     }
@@ -56,21 +53,6 @@ public class SearchScrollRequest extends ActionRequest<SearchScrollRequest> {
             validationException = addValidationError("scrollId is missing", validationException);
         }
         return validationException;
-    }
-
-    /**
-     * Controls the the search operation threading model.
-     */
-    public SearchOperationThreading operationThreading() {
-        return this.operationThreading;
-    }
-
-    /**
-     * Controls the the search operation threading model.
-     */
-    public SearchScrollRequest operationThreading(SearchOperationThreading operationThreading) {
-        this.operationThreading = operationThreading;
-        return this;
     }
 
     /**
@@ -117,7 +99,6 @@ public class SearchScrollRequest extends ActionRequest<SearchScrollRequest> {
     @Override
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
-        operationThreading = SearchOperationThreading.fromId(in.readByte());
         scrollId = in.readString();
         if (in.readBoolean()) {
             scroll = readScroll(in);
@@ -127,7 +108,6 @@ public class SearchScrollRequest extends ActionRequest<SearchScrollRequest> {
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
-        out.writeByte(operationThreading.id());
         out.writeString(scrollId);
         if (scroll == null) {
             out.writeBoolean(false);

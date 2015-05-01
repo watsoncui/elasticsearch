@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,8 +19,9 @@
 
 package org.elasticsearch.action.admin.indices.segments;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ShardOperationFailedException;
+import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.DefaultShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.BroadcastShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.BroadcastShardOperationRequest;
@@ -35,8 +36,9 @@ import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.index.service.InternalIndexService;
-import org.elasticsearch.index.shard.service.InternalIndexShard;
+import org.elasticsearch.index.IndexService;
+import org.elasticsearch.index.shard.ShardId;
+import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
@@ -56,29 +58,10 @@ public class TransportIndicesSegmentsAction extends TransportBroadcastOperationA
 
     @Inject
     public TransportIndicesSegmentsAction(Settings settings, ThreadPool threadPool, ClusterService clusterService, TransportService transportService,
-                                          IndicesService indicesService) {
-        super(settings, threadPool, clusterService, transportService);
+                                          IndicesService indicesService, ActionFilters actionFilters) {
+        super(settings, IndicesSegmentsAction.NAME, threadPool, clusterService, transportService, actionFilters,
+                IndicesSegmentsRequest.class, TransportIndicesSegmentsAction.IndexShardSegmentRequest.class, ThreadPool.Names.MANAGEMENT);
         this.indicesService = indicesService;
-    }
-
-    @Override
-    protected String executor() {
-        return ThreadPool.Names.MANAGEMENT;
-    }
-
-    @Override
-    protected String transportAction() {
-        return IndicesSegmentsAction.NAME;
-    }
-
-    @Override
-    protected IndicesSegmentsRequest newRequest() {
-        return new IndicesSegmentsRequest();
-    }
-
-    @Override
-    protected boolean ignoreNonActiveExceptions() {
-        return true;
     }
 
     /**
@@ -91,12 +74,12 @@ public class TransportIndicesSegmentsAction extends TransportBroadcastOperationA
 
     @Override
     protected ClusterBlockException checkGlobalBlock(ClusterState state, IndicesSegmentsRequest request) {
-        return state.blocks().globalBlockedException(ClusterBlockLevel.METADATA);
+        return state.blocks().globalBlockedException(ClusterBlockLevel.METADATA_READ);
     }
 
     @Override
     protected ClusterBlockException checkRequestBlock(ClusterState state, IndicesSegmentsRequest countRequest, String[] concreteIndices) {
-        return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA, concreteIndices);
+        return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA_READ, concreteIndices);
     }
 
     @Override
@@ -124,13 +107,8 @@ public class TransportIndicesSegmentsAction extends TransportBroadcastOperationA
     }
 
     @Override
-    protected IndexShardSegmentRequest newShardRequest() {
-        return new IndexShardSegmentRequest();
-    }
-
-    @Override
-    protected IndexShardSegmentRequest newShardRequest(ShardRouting shard, IndicesSegmentsRequest request) {
-        return new IndexShardSegmentRequest(shard.index(), shard.id(), request);
+    protected IndexShardSegmentRequest newShardRequest(int numShards, ShardRouting shard, IndicesSegmentsRequest request) {
+        return new IndexShardSegmentRequest(shard.shardId(), request);
     }
 
     @Override
@@ -139,29 +117,34 @@ public class TransportIndicesSegmentsAction extends TransportBroadcastOperationA
     }
 
     @Override
-    protected ShardSegments shardOperation(IndexShardSegmentRequest request) throws ElasticSearchException {
-        InternalIndexService indexService = (InternalIndexService) indicesService.indexServiceSafe(request.index());
-        InternalIndexShard indexShard = (InternalIndexShard) indexService.shardSafe(request.shardId());
-        return new ShardSegments(indexShard.routingEntry(), indexShard.engine().segments());
+    protected ShardSegments shardOperation(IndexShardSegmentRequest request) {
+        IndexService indexService = indicesService.indexServiceSafe(request.shardId().getIndex());
+        IndexShard indexShard = indexService.shardSafe(request.shardId().id());
+        return new ShardSegments(indexShard.routingEntry(), indexShard.engine().segments(request.verbose));
     }
 
-    public static class IndexShardSegmentRequest extends BroadcastShardOperationRequest {
-
+    static class IndexShardSegmentRequest extends BroadcastShardOperationRequest {
+        boolean verbose;
+        
         IndexShardSegmentRequest() {
+            verbose = false;
         }
 
-        IndexShardSegmentRequest(String index, int shardId, IndicesSegmentsRequest request) {
-            super(index, shardId, request);
-        }
-
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
+        IndexShardSegmentRequest(ShardId shardId, IndicesSegmentsRequest request) {
+            super(shardId, request);
+            verbose = request.verbose();
         }
 
         @Override
         public void writeTo(StreamOutput out) throws IOException {
             super.writeTo(out);
+            out.writeBoolean(verbose);
+        }
+
+        @Override
+        public void readFrom(StreamInput in) throws IOException {
+            super.readFrom(in);
+            verbose = in.readBoolean();
         }
     }
 }

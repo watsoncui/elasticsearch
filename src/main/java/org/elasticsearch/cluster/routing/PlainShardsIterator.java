@@ -1,13 +1,13 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,7 +16,6 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.cluster.routing;
 
 import java.util.List;
@@ -29,77 +28,45 @@ public class PlainShardsIterator implements ShardsIterator {
 
     private final List<ShardRouting> shards;
 
-    private final int size;
-
-    private final int index;
-
-    private final int limit;
-
-    private volatile int counter;
+    // Calls to nextOrNull might be performed on different threads in the transport actions so we need the volatile
+    // keyword in order to ensure visibility. Note that it is fine to use `volatile` for a counter in that case given
+    // that although nextOrNull might be called from different threads, it can never happen concurrently.
+    private volatile int index;
 
     public PlainShardsIterator(List<ShardRouting> shards) {
-        this(shards, 0);
-    }
-
-    public PlainShardsIterator(List<ShardRouting> shards, int index) {
         this.shards = shards;
-        this.size = shards.size();
-        if (size == 0) {
-            this.index = 0;
-        } else {
-            this.index = Math.abs(index % size);
-        }
-        this.counter = this.index;
-        this.limit = this.index + size;
+        reset();
     }
 
     @Override
-    public ShardsIterator reset() {
-        this.counter = this.index;
-        return this;
+    public void reset() {
+        index = 0;
     }
 
     @Override
     public int remaining() {
-        return limit - counter;
-    }
-
-    @Override
-    public ShardRouting firstOrNull() {
-        if (size == 0) {
-            return null;
-        }
-        return shards.get(index);
+        return shards.size() - index;
     }
 
     @Override
     public ShardRouting nextOrNull() {
-        if (size == 0) {
+        if (index == shards.size()) {
             return null;
-        }
-        int counter = (this.counter);
-        if (counter >= size) {
-            if (counter >= limit) {
-                return null;
-            }
-            this.counter = counter + 1;
-            return shards.get(counter - size);
         } else {
-            this.counter = counter + 1;
-            return shards.get(counter);
+            return shards.get(index++);
         }
     }
 
     @Override
     public int size() {
-        return size;
+        return shards.size();
     }
 
     @Override
     public int sizeActive() {
         int count = 0;
-        for (int i = 0; i < size; i++) {
-            if (shards.get(i).active()) {
+        for (ShardRouting shard : shards) {
+            if (shard.active()) {
                 count++;
             }
         }
@@ -109,8 +76,7 @@ public class PlainShardsIterator implements ShardsIterator {
     @Override
     public int assignedReplicasIncludingRelocating() {
         int count = 0;
-        for (int i = 0; i < size; i++) {
-            ShardRouting shard = shards.get(i);
+        for (ShardRouting shard : shards) {
             if (shard.unassigned()) {
                 continue;
             }

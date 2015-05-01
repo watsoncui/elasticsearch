@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,54 +21,23 @@ package org.apache.lucene.store;
 import org.apache.lucene.store.IOContext.Context;
 
 import java.io.IOException;
-import java.util.Collection;
 
-public final class RateLimitedFSDirectory extends Directory {
-    private final FSDirectory delegate;
+public final class RateLimitedFSDirectory extends FilterDirectory {
 
     private final StoreRateLimiting.Provider rateLimitingProvider;
 
     private final StoreRateLimiting.Listener rateListener;
 
-    public RateLimitedFSDirectory(FSDirectory wrapped, StoreRateLimiting.Provider rateLimitingProvider,
+    public RateLimitedFSDirectory(Directory wrapped, StoreRateLimiting.Provider rateLimitingProvider,
                                   StoreRateLimiting.Listener rateListener) {
-        this.delegate = wrapped;
+        super(wrapped);
         this.rateLimitingProvider = rateLimitingProvider;
         this.rateListener = rateListener;
     }
 
-    public FSDirectory wrappedDirectory() {
-        return this.delegate;
-    }
-
-    @Override
-    public String[] listAll() throws IOException {
-        ensureOpen();
-        return delegate.listAll();
-    }
-
-    @Override
-    public boolean fileExists(String name) throws IOException {
-        ensureOpen();
-        return delegate.fileExists(name);
-    }
-
-    @Override
-    public void deleteFile(String name) throws IOException {
-        ensureOpen();
-        delegate.deleteFile(name);
-    }
-
-    @Override
-    public long fileLength(String name) throws IOException {
-        ensureOpen();
-        return delegate.fileLength(name);
-    }
-
     @Override
     public IndexOutput createOutput(String name, IOContext context) throws IOException {
-        ensureOpen();
-        final IndexOutput output = delegate.createOutput(name, context);
+        final IndexOutput output = in.createOutput(name, context);
 
         StoreRateLimiting rateLimiting = rateLimitingProvider.rateLimiting();
         StoreRateLimiting.Type type = rateLimiting.getType();
@@ -76,140 +45,62 @@ public final class RateLimitedFSDirectory extends Directory {
         if (type == StoreRateLimiting.Type.NONE || limiter == null) {
             return output;
         }
-        if (context.context == Context.MERGE) {
-            // we are mering, and type is either MERGE or ALL, rate limit...
-            return new RateLimitedIndexOutput(limiter, rateListener, output);
-        }
-        if (type == StoreRateLimiting.Type.ALL) {
-            return new RateLimitedIndexOutput(limiter, rateListener, output);
+        if (context.context == Context.MERGE || type == StoreRateLimiting.Type.ALL) {
+            // we are merging, and type is either MERGE or ALL, rate limit...
+            return new RateLimitedIndexOutput(new RateLimiterWrapper(limiter, rateListener), output);
         }
         // we shouldn't really get here...
         return output;
     }
 
-    @Override
-    public void sync(Collection<String> names) throws IOException {
-        ensureOpen();
-        delegate.sync(names);
-    }
-
-    @Override
-    public IndexInput openInput(String name, IOContext context) throws IOException {
-        ensureOpen();
-        return delegate.openInput(name, context);
-    }
 
     @Override
     public void close() throws IOException {
-        isOpen = false;
-        delegate.close();
-    }
-
-    @Override
-    public IndexInputSlicer createSlicer(String name, IOContext context) throws IOException {
-        ensureOpen();
-        return delegate.createSlicer(name, context);
-    }
-
-    @Override
-    public Lock makeLock(String name) {
-        ensureOpen();
-        return delegate.makeLock(name);
-    }
-
-    @Override
-    public void clearLock(String name) throws IOException {
-        ensureOpen();
-        delegate.clearLock(name);
-    }
-
-    @Override
-    public void setLockFactory(LockFactory lockFactory) throws IOException {
-        ensureOpen();
-        delegate.setLockFactory(lockFactory);
-    }
-
-    @Override
-    public LockFactory getLockFactory() {
-        ensureOpen();
-        return delegate.getLockFactory();
-    }
-
-    @Override
-    public String getLockID() {
-        ensureOpen();
-        return delegate.getLockID();
+        in.close();
     }
 
     @Override
     public String toString() {
-        return "RateLimitedDirectoryWrapper(" + delegate.toString() + ")";
+        StoreRateLimiting rateLimiting = rateLimitingProvider.rateLimiting();
+        StoreRateLimiting.Type type = rateLimiting.getType();
+        RateLimiter limiter = rateLimiting.getRateLimiter();
+        if (type == StoreRateLimiting.Type.NONE || limiter == null) {
+            return StoreUtils.toString(in);
+        } else {
+            return "rate_limited(" + StoreUtils.toString(in) + ", type=" + type.name() + ", rate=" + limiter.getMBPerSec() + ")";
+        }
     }
 
-    @Override
-    public void copy(Directory to, String src, String dest, IOContext context) throws IOException {
-        ensureOpen();
-        delegate.copy(to, src, dest, context);
-    }
-
-    static final class RateLimitedIndexOutput extends BufferedIndexOutput {
-
-        private final IndexOutput delegate;
-        private final BufferedIndexOutput bufferedDelegate;
-        private final RateLimiter rateLimiter;
+    // we wrap the limiter to notify our store if we limited to get statistics
+    static final class RateLimiterWrapper extends RateLimiter {
+        private final RateLimiter delegate;
         private final StoreRateLimiting.Listener rateListener;
 
-        RateLimitedIndexOutput(final RateLimiter rateLimiter, final StoreRateLimiting.Listener rateListener, final IndexOutput delegate) {
-            // TODO if Lucene exposed in BufferedIndexOutput#getBufferSize, we could initialize it if the delegate is buffered
-            if (delegate instanceof BufferedIndexOutput) {
-                bufferedDelegate = (BufferedIndexOutput) delegate;
-                this.delegate = delegate;
-            } else {
-                this.delegate = delegate;
-                bufferedDelegate = null;
-            }
-            this.rateLimiter = rateLimiter;
+        RateLimiterWrapper(RateLimiter delegate, StoreRateLimiting.Listener rateListener) {
+            this.delegate = delegate;
             this.rateListener = rateListener;
         }
 
         @Override
-        protected void flushBuffer(byte[] b, int offset, int len) throws IOException {
-            rateListener.onPause(rateLimiter.pause(len));
-            if (bufferedDelegate != null) {
-                bufferedDelegate.flushBuffer(b, offset, len);
-            } else {
-                delegate.writeBytes(b, offset, len);
-            }
-
+        public void setMBPerSec(double mbPerSec) {
+            delegate.setMBPerSec(mbPerSec);
         }
 
         @Override
-        public long length() throws IOException {
-            return delegate.length();
+        public double getMBPerSec() {
+            return delegate.getMBPerSec();
         }
 
         @Override
-        public void seek(long pos) throws IOException {
-            flush();
-            delegate.seek(pos);
+        public long pause(long bytes) throws IOException {
+            long pause = delegate.pause(bytes);
+            rateListener.onPause(pause);
+            return pause;
         }
 
         @Override
-        public void flush() throws IOException {
-            try {
-                super.flush();
-            } finally {
-                delegate.flush();
-            }
-        }
-
-        @Override
-        public void close() throws IOException {
-            try {
-                super.close();
-            } finally {
-                delegate.close();
-            }
+        public long getMinPauseCheckBytes() {
+            return delegate.getMinPauseCheckBytes();
         }
     }
 }

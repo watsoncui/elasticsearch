@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,7 +23,8 @@ import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
-import org.elasticsearch.ElasticSearchException;
+import org.apache.lucene.index.IndexOptions;
+import org.elasticsearch.ElasticsearchException;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -56,13 +57,27 @@ public class AllField extends Field {
         return null;
     }
 
+    /** Returns the {@link AllEntries} containing the original text fields for the document. */
+    public AllEntries getAllEntries() {
+        return allEntries;
+    }
+
     @Override
-    public TokenStream tokenStream(Analyzer analyzer) throws IOException {
+    public TokenStream tokenStream(Analyzer analyzer, TokenStream previous) throws IOException {
         try {
             allEntries.reset(); // reset the all entries, just in case it was read already
-            return AllTokenStream.allTokenStream(name, allEntries, analyzer);
+            if (allEntries.customBoost() && fieldType().indexOptions().compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
+                // TODO: we should be able to reuse "previous" if its instanceof AllTokenStream?
+                // but we need to be careful this optimization is safe (and tested)...
+                
+                // AllTokenStream maps boost to 4-byte payloads, so we only need to use it any field had non-default (!= 1.0f) boost and if
+                // positions are indexed:
+                return AllTokenStream.allTokenStream(name, allEntries, analyzer);
+            } else {
+                return analyzer.tokenStream(name, allEntries);
+            }
         } catch (IOException e) {
-            throw new ElasticSearchException("Failed to create token stream");
+            throw new ElasticsearchException("Failed to create token stream");
         }
     }
 }

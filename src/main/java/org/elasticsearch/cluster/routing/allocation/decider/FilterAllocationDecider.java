@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -60,6 +60,8 @@ import static org.elasticsearch.cluster.node.DiscoveryNodeFilters.OpType.OR;
  */
 public class FilterAllocationDecider extends AllocationDecider {
 
+    public static final String NAME = "filter";
+
     public static final String INDEX_ROUTING_REQUIRE_GROUP = "index.routing.allocation.require.";
     public static final String INDEX_ROUTING_INCLUDE_GROUP = "index.routing.allocation.include.";
     public static final String INDEX_ROUTING_EXCLUDE_GROUP = "index.routing.allocation.exclude.";
@@ -98,49 +100,49 @@ public class FilterAllocationDecider extends AllocationDecider {
 
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
-        return shouldFilter(shardRouting, node, allocation) ? Decision.NO : Decision.YES;
+        return shouldFilter(shardRouting, node, allocation);
     }
 
     @Override
     public Decision canRemain(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
-        return shouldFilter(shardRouting, node, allocation) ? Decision.NO : Decision.YES;
+        return shouldFilter(shardRouting, node, allocation);
     }
 
-    private boolean shouldFilter(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
+    private Decision shouldFilter(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
         if (clusterRequireFilters != null) {
             if (!clusterRequireFilters.match(node.node())) {
-                return true;
+                return allocation.decision(Decision.NO, NAME, "node does not match global required filters [%s]", clusterRequireFilters);
             }
         }
         if (clusterIncludeFilters != null) {
             if (!clusterIncludeFilters.match(node.node())) {
-                return true;
+                return allocation.decision(Decision.NO, NAME, "node does not match global include filters [%s]", clusterIncludeFilters);
             }
         }
         if (clusterExcludeFilters != null) {
             if (clusterExcludeFilters.match(node.node())) {
-                return true;
+                return allocation.decision(Decision.NO, NAME, "node matches global exclude filters [%s]", clusterExcludeFilters);
             }
         }
 
         IndexMetaData indexMd = allocation.routingNodes().metaData().index(shardRouting.index());
         if (indexMd.requireFilters() != null) {
             if (!indexMd.requireFilters().match(node.node())) {
-                return true;
+                return allocation.decision(Decision.NO, NAME, "node does not match index required filters [%s]", indexMd.requireFilters());
             }
         }
         if (indexMd.includeFilters() != null) {
             if (!indexMd.includeFilters().match(node.node())) {
-                return true;
+                return allocation.decision(Decision.NO, NAME, "node does not match index include filters [%s]", indexMd.includeFilters());
             }
         }
         if (indexMd.excludeFilters() != null) {
             if (indexMd.excludeFilters().match(node.node())) {
-                return true;
+                return allocation.decision(Decision.NO, NAME, "node matches index exclude filters [%s]", indexMd.excludeFilters());
             }
         }
 
-        return false;
+        return allocation.decision(Decision.YES, NAME, "node passes include/exclude/require filters");
     }
 
     class ApplySettings implements NodeSettingsService.Listener {

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,21 +22,24 @@ package org.elasticsearch.rest.support;
 import com.google.common.base.Charsets;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.path.PathTrie;
+import org.elasticsearch.common.settings.Settings;
 
 import java.nio.charset.Charset;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  *
  */
 public class RestUtils {
 
-    public static PathTrie.Decoder REST_DECODER = new PathTrie.Decoder() {
+    public static final PathTrie.Decoder REST_DECODER = new PathTrie.Decoder() {
         @Override
         public String decode(String value) {
             return RestUtils.decodeComponent(value);
         }
     };
+    public static final String HTTP_CORS_ALLOW_ORIGIN_SETTING = "http.cors.allow-origin";
 
     public static boolean isBrowser(@Nullable String userAgent) {
         if (userAgent == null) {
@@ -215,5 +218,20 @@ public class RestUtils {
         } else {
             return Character.MAX_VALUE;
         }
+    }
+
+    /**
+     * Determine if CORS setting is a regex
+     */
+    public static Pattern getCorsSettingRegex(Settings settings) {
+        String corsSetting = settings.get(HTTP_CORS_ALLOW_ORIGIN_SETTING, "*");
+        int len = corsSetting.length();
+        boolean isRegex = len > 2 &&  corsSetting.startsWith("/") && corsSetting.endsWith("/");
+
+        if (isRegex) {
+            return Pattern.compile(corsSetting.substring(1, corsSetting.length()-1));
+        }
+
+        return null;
     }
 }

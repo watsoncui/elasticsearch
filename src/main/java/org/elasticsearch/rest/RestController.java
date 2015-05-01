@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,34 +19,36 @@
 
 package org.elasticsearch.rest;
 
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
-import org.elasticsearch.ElasticSearchIllegalStateException;
+import com.google.common.collect.ImmutableSet;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.path.PathTrie;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.rest.support.RestUtils;
 
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.elasticsearch.rest.RestStatus.BAD_REQUEST;
-import static org.elasticsearch.rest.RestStatus.OK;
+import static org.elasticsearch.rest.RestStatus.*;
 
 /**
  *
  */
 public class RestController extends AbstractLifecycleComponent<RestController> {
 
-    private final PathTrie<RestHandler> getHandlers = new PathTrie<RestHandler>(RestUtils.REST_DECODER);
-    private final PathTrie<RestHandler> postHandlers = new PathTrie<RestHandler>(RestUtils.REST_DECODER);
-    private final PathTrie<RestHandler> putHandlers = new PathTrie<RestHandler>(RestUtils.REST_DECODER);
-    private final PathTrie<RestHandler> deleteHandlers = new PathTrie<RestHandler>(RestUtils.REST_DECODER);
-    private final PathTrie<RestHandler> headHandlers = new PathTrie<RestHandler>(RestUtils.REST_DECODER);
-    private final PathTrie<RestHandler> optionsHandlers = new PathTrie<RestHandler>(RestUtils.REST_DECODER);
+    private ImmutableSet<String> relevantHeaders = ImmutableSet.of();
+
+    private final PathTrie<RestHandler> getHandlers = new PathTrie<>(RestUtils.REST_DECODER);
+    private final PathTrie<RestHandler> postHandlers = new PathTrie<>(RestUtils.REST_DECODER);
+    private final PathTrie<RestHandler> putHandlers = new PathTrie<>(RestUtils.REST_DECODER);
+    private final PathTrie<RestHandler> deleteHandlers = new PathTrie<>(RestUtils.REST_DECODER);
+    private final PathTrie<RestHandler> headHandlers = new PathTrie<>(RestUtils.REST_DECODER);
+    private final PathTrie<RestHandler> optionsHandlers = new PathTrie<>(RestUtils.REST_DECODER);
 
     private final RestHandlerFilter handlerFilter = new RestHandlerFilter();
 
@@ -59,18 +61,37 @@ public class RestController extends AbstractLifecycleComponent<RestController> {
     }
 
     @Override
-    protected void doStart() throws ElasticSearchException {
+    protected void doStart() {
     }
 
     @Override
-    protected void doStop() throws ElasticSearchException {
+    protected void doStop() {
     }
 
     @Override
-    protected void doClose() throws ElasticSearchException {
+    protected void doClose() {
         for (RestFilter filter : filters) {
             filter.close();
         }
+    }
+
+    /**
+     * Controls which REST headers get copied over from a {@link org.elasticsearch.rest.RestRequest} to
+     * its corresponding {@link org.elasticsearch.transport.TransportRequest}(s).
+     *
+     * By default no headers get copied but it is possible to extend this behaviour via plugins by calling this method.
+     */
+    public synchronized void registerRelevantHeaders(String... headers) {
+        relevantHeaders = new ImmutableSet.Builder<String>().addAll(relevantHeaders).add(headers).build();
+    }
+
+    /**
+     * Returns the REST headers that get copied over from a {@link org.elasticsearch.rest.RestRequest} to
+     * its corresponding {@link org.elasticsearch.transport.TransportRequest}(s).
+     * By default no headers get copied but it is possible to extend this behaviour via plugins by calling {@link #registerRelevantHeaders(String...)}.
+     */
+    public ImmutableSet<String> relevantHeaders() {
+        return relevantHeaders;
     }
 
     /**
@@ -83,7 +104,7 @@ public class RestController extends AbstractLifecycleComponent<RestController> {
         Arrays.sort(copy, new Comparator<RestFilter>() {
             @Override
             public int compare(RestFilter o1, RestFilter o2) {
-                return o2.order() - o1.order();
+                return Integer.compare(o1.order(), o2.order());
             }
         });
         filters = copy;
@@ -113,7 +134,7 @@ public class RestController extends AbstractLifecycleComponent<RestController> {
                 headHandlers.insert(path, handler);
                 break;
             default:
-                throw new ElasticSearchIllegalArgumentException("Can't handle [" + method + "] for path [" + path + "]");
+                throw new IllegalArgumentException("Can't handle [" + method + "] for path [" + path + "]");
         }
     }
 
@@ -137,14 +158,18 @@ public class RestController extends AbstractLifecycleComponent<RestController> {
     }
 
     public void dispatchRequest(final RestRequest request, final RestChannel channel) {
+        if (!checkRequestParameters(request, channel)) {
+            return;
+        }
+
         if (filters.length == 0) {
             try {
                 executeHandler(request, channel);
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 try {
-                    channel.sendResponse(new XContentThrowableRestResponse(request, e));
-                } catch (IOException e1) {
-                    logger.error("Failed to send failure response for uri [" + request.uri() + "]", e1);
+                    channel.sendResponse(new BytesRestResponse(channel, e));
+                } catch (Throwable e1) {
+                    logger.error("failed to send failure response for uri [" + request.uri() + "]", e1);
                 }
             }
         } else {
@@ -153,17 +178,40 @@ public class RestController extends AbstractLifecycleComponent<RestController> {
         }
     }
 
-    void executeHandler(RestRequest request, RestChannel channel) {
+    /**
+     * Checks the request parameters against enabled settings for error trace support
+     * @param request
+     * @param channel
+     * @return true if the request does not have any parameters that conflict with system settings
+     */
+    boolean checkRequestParameters(final RestRequest request, final RestChannel channel) {
+        // error_trace cannot be used when we disable detailed errors
+        if (channel.detailedErrorsEnabled() == false && request.paramAsBoolean("error_trace", false)) {
+            try {
+                XContentBuilder builder = channel.newBuilder();
+                builder.startObject().field("error","error traces in responses are disabled.").endObject().string();
+                RestResponse response = new BytesRestResponse(BAD_REQUEST, builder);
+                response.addHeader("Content-Type", "application/json");
+                channel.sendResponse(response);
+            } catch (IOException e) {
+                logger.warn("Failed to send response", e);
+            }
+            return false;
+        }
+
+        return true;
+    }
+
+    void executeHandler(RestRequest request, RestChannel channel) throws Exception {
         final RestHandler handler = getHandler(request);
         if (handler != null) {
             handler.handleRequest(request, channel);
         } else {
             if (request.method() == RestRequest.Method.OPTIONS) {
                 // when we have OPTIONS request, simply send OK by default (with the Access Control Origin header which gets automatically added)
-                StringRestResponse response = new StringRestResponse(OK);
-                channel.sendResponse(response);
+                channel.sendResponse(new BytesRestResponse(OK));
             } else {
-                channel.sendResponse(new StringRestResponse(BAD_REQUEST, "No handler found for uri [" + request.uri() + "] and method [" + request.method() + "]"));
+                channel.sendResponse(new BytesRestResponse(BAD_REQUEST, "No handler found for uri [" + request.uri() + "] and method [" + request.method() + "]"));
             }
         }
     }
@@ -199,7 +247,7 @@ public class RestController extends AbstractLifecycleComponent<RestController> {
 
         private final RestFilter executionFilter;
 
-        private volatile int index;
+        private final AtomicInteger index = new AtomicInteger();
 
         ControllerFilterChain(RestFilter executionFilter) {
             this.executionFilter = executionFilter;
@@ -208,10 +256,9 @@ public class RestController extends AbstractLifecycleComponent<RestController> {
         @Override
         public void continueProcessing(RestRequest request, RestChannel channel) {
             try {
-                int loc = index;
-                index++;
+                int loc = index.getAndIncrement();
                 if (loc > filters.length) {
-                    throw new ElasticSearchIllegalStateException("filter continueProcessing was called more than expected");
+                    throw new IllegalStateException("filter continueProcessing was called more than expected");
                 } else if (loc == filters.length) {
                     executionFilter.process(request, channel, this);
                 } else {
@@ -220,7 +267,7 @@ public class RestController extends AbstractLifecycleComponent<RestController> {
                 }
             } catch (Exception e) {
                 try {
-                    channel.sendResponse(new XContentThrowableRestResponse(request, e));
+                    channel.sendResponse(new BytesRestResponse(channel, e));
                 } catch (IOException e1) {
                     logger.error("Failed to send failure response for uri [" + request.uri() + "]", e1);
                 }
@@ -231,7 +278,7 @@ public class RestController extends AbstractLifecycleComponent<RestController> {
     class RestHandlerFilter extends RestFilter {
 
         @Override
-        public void process(RestRequest request, RestChannel channel, RestFilterChain filterChain) {
+        public void process(RestRequest request, RestChannel channel, RestFilterChain filterChain) throws Exception {
             executeHandler(request, channel);
         }
     }

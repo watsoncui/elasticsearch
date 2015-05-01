@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,13 +19,14 @@
 
 package org.elasticsearch.rest;
 
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.common.component.CloseableComponent;
+import org.elasticsearch.ElasticsearchException;
+
+import java.io.Closeable;
 
 /**
  * A filter allowing to filter rest operations.
  */
-public abstract class RestFilter implements CloseableComponent {
+public abstract class RestFilter implements Closeable {
 
     /**
      * Optionally, the order of the filter. Execution is done from lowest value to highest.
@@ -36,7 +37,7 @@ public abstract class RestFilter implements CloseableComponent {
     }
 
     @Override
-    public void close() throws ElasticSearchException {
+    public void close() {
         // a no op
     }
 
@@ -44,5 +45,5 @@ public abstract class RestFilter implements CloseableComponent {
      * Process the rest request. Using the channel to send a response, or the filter chain to continue
      * processing the request.
      */
-    public abstract void process(RestRequest request, RestChannel channel, RestFilterChain filterChain);
+    public abstract void process(RestRequest request, RestChannel channel, RestFilterChain filterChain) throws Exception;
 }

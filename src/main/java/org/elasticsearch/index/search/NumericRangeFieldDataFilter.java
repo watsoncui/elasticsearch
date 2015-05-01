@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,20 +19,23 @@
 
 package org.elasticsearch.index.search;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import java.io.IOException;
+
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.SortedNumericDocValues;
 import org.apache.lucene.search.DocIdSet;
+import org.apache.lucene.search.DocValuesDocIdSet;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.NumericUtils;
-import org.elasticsearch.common.lucene.docset.MatchDocIdSet;
-import org.elasticsearch.index.fielddata.*;
-
-import java.io.IOException;
+import org.elasticsearch.index.fielddata.IndexNumericFieldData;
+import org.elasticsearch.index.fielddata.SortedNumericDoubleValues;
 
 /**
  * A numeric filter that can be much faster than {@link org.apache.lucene.search.NumericRangeFilter} at the
  * expense of loading numeric values of the field to memory using {@link org.elasticsearch.index.cache.field.data.FieldDataCache}.
  */
+// TODO: these filters should not iterate over all values but be more selective like Lucene's DocTermOrdsRangeFilter
 public abstract class NumericRangeFieldDataFilter<T> extends Filter {
     final IndexNumericFieldData indexFieldData;
     final T lowerVal;
@@ -69,7 +72,7 @@ public abstract class NumericRangeFieldDataFilter<T> extends Filter {
     }
 
     @Override
-    public final String toString() {
+    public final String toString(String field) {
         final StringBuilder sb = new StringBuilder(indexFieldData.getFieldNames().indexName()).append(":");
         return sb.append(includeLower ? '[' : '{')
                 .append((lowerVal == null) ? "*" : lowerVal.toString())
@@ -82,7 +85,7 @@ public abstract class NumericRangeFieldDataFilter<T> extends Filter {
     @Override
     public final boolean equals(Object o) {
         if (this == o) return true;
-        if (!(o instanceof NumericRangeFieldDataFilter)) return false;
+        if (super.equals(o) == false) return false;
         NumericRangeFieldDataFilter other = (NumericRangeFieldDataFilter) o;
 
         if (!this.indexFieldData.getFieldNames().indexName().equals(other.indexFieldData.getFieldNames().indexName())
@@ -98,7 +101,8 @@ public abstract class NumericRangeFieldDataFilter<T> extends Filter {
 
     @Override
     public final int hashCode() {
-        int h = indexFieldData.getFieldNames().indexName().hashCode();
+        int h = super.hashCode();
+        h = 31 * h + indexFieldData.getFieldNames().indexName().hashCode();
         h ^= (lowerVal != null) ? lowerVal.hashCode() : 550356204;
         h = (h << 1) | (h >>> 31);  // rotate to distinguish lower from upper
         h ^= (upperVal != null) ? upperVal.hashCode() : -1674416163;
@@ -109,7 +113,7 @@ public abstract class NumericRangeFieldDataFilter<T> extends Filter {
     public static NumericRangeFieldDataFilter<Byte> newByteRange(IndexNumericFieldData indexFieldData, Byte lowerVal, Byte upperVal, boolean includeLower, boolean includeUpper) {
         return new NumericRangeFieldDataFilter<Byte>(indexFieldData, lowerVal, upperVal, includeLower, includeUpper) {
             @Override
-            public DocIdSet getDocIdSet(AtomicReaderContext ctx, Bits acceptedDocs) throws IOException {
+            public DocIdSet getDocIdSet(LeafReaderContext ctx, Bits acceptedDocs) throws IOException {
                 final byte inclusiveLowerPoint, inclusiveUpperPoint;
                 if (lowerVal != null) {
                     byte i = lowerVal.byteValue();
@@ -131,26 +135,8 @@ public abstract class NumericRangeFieldDataFilter<T> extends Filter {
                 if (inclusiveLowerPoint > inclusiveUpperPoint)
                     return null;
 
-                final LongValues values = indexFieldData.load(ctx).getLongValues();
-                return new MatchDocIdSet(ctx.reader().maxDoc(), acceptedDocs) {
-
-                    @Override
-                    public boolean isCacheable() {
-                        return true;
-                    }
-
-                    @Override
-                    protected boolean matchDoc(int doc) {
-                        LongValues.Iter iter = values.getIter(doc);
-                        while (iter.hasNext()) {
-                            long value = iter.next();
-                            if (value >= inclusiveLowerPoint && value <= inclusiveUpperPoint) {
-                                return true;
-                            }
-                        }
-                        return false;
-                    }
-                };
+                final SortedNumericDocValues values = indexFieldData.load(ctx).getLongValues();
+                return new LongRangeMatchDocIdSet(ctx.reader().maxDoc(), acceptedDocs, values, inclusiveLowerPoint, inclusiveUpperPoint);
             }
         };
     }
@@ -159,7 +145,7 @@ public abstract class NumericRangeFieldDataFilter<T> extends Filter {
     public static NumericRangeFieldDataFilter<Short> newShortRange(IndexNumericFieldData indexFieldData, Short lowerVal, Short upperVal, boolean includeLower, boolean includeUpper) {
         return new NumericRangeFieldDataFilter<Short>(indexFieldData, lowerVal, upperVal, includeLower, includeUpper) {
             @Override
-            public DocIdSet getDocIdSet(AtomicReaderContext ctx, Bits acceptedDocs) throws IOException {
+            public DocIdSet getDocIdSet(LeafReaderContext ctx, Bits acceptedDocs) throws IOException {
                 final short inclusiveLowerPoint, inclusiveUpperPoint;
                 if (lowerVal != null) {
                     short i = lowerVal.shortValue();
@@ -181,26 +167,8 @@ public abstract class NumericRangeFieldDataFilter<T> extends Filter {
                 if (inclusiveLowerPoint > inclusiveUpperPoint)
                     return null;
 
-                final LongValues values = indexFieldData.load(ctx).getLongValues();
-                return new MatchDocIdSet(ctx.reader().maxDoc(), acceptedDocs) {
-
-                    @Override
-                    public boolean isCacheable() {
-                        return true;
-                    }
-
-                    @Override
-                    protected boolean matchDoc(int doc) {
-                        LongValues.Iter iter = values.getIter(doc);
-                        while (iter.hasNext()) {
-                            long value = iter.next();
-                            if (value >= inclusiveLowerPoint && value <= inclusiveUpperPoint) {
-                                return true;
-                            }
-                        }
-                        return false;
-                    }
-                };
+                final SortedNumericDocValues values = indexFieldData.load(ctx).getLongValues();
+                return new LongRangeMatchDocIdSet(ctx.reader().maxDoc(), acceptedDocs, values, inclusiveLowerPoint, inclusiveUpperPoint);
             }
         };
     }
@@ -208,7 +176,7 @@ public abstract class NumericRangeFieldDataFilter<T> extends Filter {
     public static NumericRangeFieldDataFilter<Integer> newIntRange(IndexNumericFieldData indexFieldData, Integer lowerVal, Integer upperVal, boolean includeLower, boolean includeUpper) {
         return new NumericRangeFieldDataFilter<Integer>(indexFieldData, lowerVal, upperVal, includeLower, includeUpper) {
             @Override
-            public DocIdSet getDocIdSet(AtomicReaderContext ctx, Bits acceptedDocs) throws IOException {
+            public DocIdSet getDocIdSet(LeafReaderContext ctx, Bits acceptedDocs) throws IOException {
                 final int inclusiveLowerPoint, inclusiveUpperPoint;
                 if (lowerVal != null) {
                     int i = lowerVal.intValue();
@@ -230,26 +198,8 @@ public abstract class NumericRangeFieldDataFilter<T> extends Filter {
                 if (inclusiveLowerPoint > inclusiveUpperPoint)
                     return null;
 
-                final LongValues values = indexFieldData.load(ctx).getLongValues();
-                return new MatchDocIdSet(ctx.reader().maxDoc(), acceptedDocs) {
-
-                    @Override
-                    public boolean isCacheable() {
-                        return true;
-                    }
-
-                    @Override
-                    protected boolean matchDoc(int doc) {
-                        LongValues.Iter iter = values.getIter(doc);
-                        while (iter.hasNext()) {
-                            long value = iter.next();
-                            if (value >= inclusiveLowerPoint && value <= inclusiveUpperPoint) {
-                                return true;
-                            }
-                        }
-                        return false;
-                    }
-                };
+                final SortedNumericDocValues values = indexFieldData.load(ctx).getLongValues();
+                return new LongRangeMatchDocIdSet(ctx.reader().maxDoc(), acceptedDocs, values, inclusiveLowerPoint, inclusiveUpperPoint);
             }
         };
     }
@@ -257,7 +207,7 @@ public abstract class NumericRangeFieldDataFilter<T> extends Filter {
     public static NumericRangeFieldDataFilter<Long> newLongRange(IndexNumericFieldData indexFieldData, Long lowerVal, Long upperVal, boolean includeLower, boolean includeUpper) {
         return new NumericRangeFieldDataFilter<Long>(indexFieldData, lowerVal, upperVal, includeLower, includeUpper) {
             @Override
-            public DocIdSet getDocIdSet(AtomicReaderContext ctx, Bits acceptedDocs) throws IOException {
+            public DocIdSet getDocIdSet(LeafReaderContext ctx, Bits acceptedDocs) throws IOException {
                 final long inclusiveLowerPoint, inclusiveUpperPoint;
                 if (lowerVal != null) {
                     long i = lowerVal.longValue();
@@ -279,26 +229,9 @@ public abstract class NumericRangeFieldDataFilter<T> extends Filter {
                 if (inclusiveLowerPoint > inclusiveUpperPoint)
                     return null;
 
-                final LongValues values = indexFieldData.load(ctx).getLongValues();
-                return new MatchDocIdSet(ctx.reader().maxDoc(), acceptedDocs) {
+                final SortedNumericDocValues values = indexFieldData.load(ctx).getLongValues();
+                return new LongRangeMatchDocIdSet(ctx.reader().maxDoc(), acceptedDocs, values, inclusiveLowerPoint, inclusiveUpperPoint);
 
-                    @Override
-                    public boolean isCacheable() {
-                        return true;
-                    }
-
-                    @Override
-                    protected boolean matchDoc(int doc) {
-                        LongValues.Iter iter = values.getIter(doc);
-                        while (iter.hasNext()) {
-                            long value = iter.next();
-                            if (value >= inclusiveLowerPoint && value <= inclusiveUpperPoint) {
-                                return true;
-                            }
-                        }
-                        return false;
-                    }
-                };
             }
         };
     }
@@ -306,7 +239,7 @@ public abstract class NumericRangeFieldDataFilter<T> extends Filter {
     public static NumericRangeFieldDataFilter<Float> newFloatRange(IndexNumericFieldData indexFieldData, Float lowerVal, Float upperVal, boolean includeLower, boolean includeUpper) {
         return new NumericRangeFieldDataFilter<Float>(indexFieldData, lowerVal, upperVal, includeLower, includeUpper) {
             @Override
-            public DocIdSet getDocIdSet(AtomicReaderContext ctx, Bits acceptedDocs) throws IOException {
+            public DocIdSet getDocIdSet(LeafReaderContext ctx, Bits acceptedDocs) throws IOException {
                 // we transform the floating point numbers to sortable integers
                 // using NumericUtils to easier find the next bigger/lower value
                 final float inclusiveLowerPoint, inclusiveUpperPoint;
@@ -332,26 +265,8 @@ public abstract class NumericRangeFieldDataFilter<T> extends Filter {
                 if (inclusiveLowerPoint > inclusiveUpperPoint)
                     return null;
 
-                final DoubleValues values = indexFieldData.load(ctx).getDoubleValues();
-                return new MatchDocIdSet(ctx.reader().maxDoc(), acceptedDocs) {
-
-                    @Override
-                    public boolean isCacheable() {
-                        return true;
-                    }
-
-                    @Override
-                    protected boolean matchDoc(int doc) {
-                        DoubleValues.Iter iter = values.getIter(doc);
-                        while (iter.hasNext()) {
-                            double value = iter.next();
-                            if (value >= inclusiveLowerPoint && value <= inclusiveUpperPoint) {
-                                return true;
-                            }
-                        }
-                        return false;
-                    }
-                };
+                final SortedNumericDoubleValues values = indexFieldData.load(ctx).getDoubleValues();
+                return new DoubleRangeMatchDocIdSet(ctx.reader().maxDoc(), acceptedDocs, values, inclusiveLowerPoint, inclusiveUpperPoint);
             }
         };
     }
@@ -359,7 +274,7 @@ public abstract class NumericRangeFieldDataFilter<T> extends Filter {
     public static NumericRangeFieldDataFilter<Double> newDoubleRange(IndexNumericFieldData indexFieldData, Double lowerVal, Double upperVal, boolean includeLower, boolean includeUpper) {
         return new NumericRangeFieldDataFilter<Double>(indexFieldData, lowerVal, upperVal, includeLower, includeUpper) {
             @Override
-            public DocIdSet getDocIdSet(AtomicReaderContext ctx, Bits acceptedDocs) throws IOException {
+            public DocIdSet getDocIdSet(LeafReaderContext ctx, Bits acceptedDocs) throws IOException {
                 // we transform the floating point numbers to sortable integers
                 // using NumericUtils to easier find the next bigger/lower value
                 final double inclusiveLowerPoint, inclusiveUpperPoint;
@@ -385,27 +300,64 @@ public abstract class NumericRangeFieldDataFilter<T> extends Filter {
                 if (inclusiveLowerPoint > inclusiveUpperPoint)
                     return null;
 
-                final DoubleValues values = indexFieldData.load(ctx).getDoubleValues();
-                return new MatchDocIdSet(ctx.reader().maxDoc(), acceptedDocs) {
-
-                    @Override
-                    public boolean isCacheable() {
-                        return true;
-                    }
-
-                    @Override
-                    protected boolean matchDoc(int doc) {
-                        DoubleValues.Iter iter = values.getIter(doc);
-                        while (iter.hasNext()) {
-                            double value = iter.next();
-                            if (value >= inclusiveLowerPoint && value <= inclusiveUpperPoint) {
-                                return true;
-                            }
-                        }
-                        return false;
-                    }
-                };
+                final SortedNumericDoubleValues values = indexFieldData.load(ctx).getDoubleValues();
+                return new DoubleRangeMatchDocIdSet(ctx.reader().maxDoc(), acceptedDocs, values, inclusiveLowerPoint, inclusiveUpperPoint);
             }
         };
     }
+    
+    private static final class DoubleRangeMatchDocIdSet extends DocValuesDocIdSet {
+        private final SortedNumericDoubleValues values;
+        private final double inclusiveLowerPoint;
+        private final double inclusiveUpperPoint;
+
+        protected DoubleRangeMatchDocIdSet(int maxDoc, Bits acceptDocs, final SortedNumericDoubleValues values,final double inclusiveLowerPoint, final double inclusiveUpperPoint ) {
+            super(maxDoc, acceptDocs);
+            this.inclusiveLowerPoint = inclusiveLowerPoint;
+            this.inclusiveUpperPoint = inclusiveUpperPoint; 
+            this.values = values;
+        }
+
+        @Override
+        protected boolean matchDoc(int doc) {
+            values.setDocument(doc);
+            int numValues = values.count();
+            for (int i = 0; i < numValues; i++) {
+                double value = values.valueAt(i);
+                if (value >= inclusiveLowerPoint && value <= inclusiveUpperPoint) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+    }
+    
+    private static final class LongRangeMatchDocIdSet extends DocValuesDocIdSet {
+        private final SortedNumericDocValues values;
+        private final long inclusiveLowerPoint;
+        private final long inclusiveUpperPoint;
+
+        protected LongRangeMatchDocIdSet(int maxDoc, Bits acceptDocs, final SortedNumericDocValues values,final long inclusiveLowerPoint, final long inclusiveUpperPoint ) {
+            super(maxDoc, acceptDocs);
+            this.inclusiveLowerPoint = inclusiveLowerPoint;
+            this.inclusiveUpperPoint = inclusiveUpperPoint; 
+            this.values = values;
+        }
+
+        @Override
+        protected boolean matchDoc(int doc) {
+            values.setDocument(doc);
+            int numValues = values.count();
+            for (int i = 0; i < numValues; i++) {
+                long value = values.valueAt(i);
+                if (value >= inclusiveLowerPoint && value <= inclusiveUpperPoint) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+    }
+
 }

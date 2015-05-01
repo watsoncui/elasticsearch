@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,6 +20,7 @@
 package org.elasticsearch.indices.recovery;
 
 import com.google.common.collect.Maps;
+import org.elasticsearch.Version;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -29,14 +30,11 @@ import org.elasticsearch.transport.TransportRequest;
 
 import java.io.IOException;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  *
  */
 public class StartRecoveryRequest extends TransportRequest {
-
-    private static final AtomicLong recoveryIdGenerator = new AtomicLong();
 
     private long recoveryId;
 
@@ -50,6 +48,8 @@ public class StartRecoveryRequest extends TransportRequest {
 
     private Map<String, StoreFileMetaData> existingFiles;
 
+    private RecoveryState.Type recoveryType;
+
     StartRecoveryRequest() {
     }
 
@@ -58,17 +58,19 @@ public class StartRecoveryRequest extends TransportRequest {
      *
      * @param shardId
      * @param sourceNode      The node to recover from
-     * @param targetNode      Teh node to recover to
+     * @param targetNode      The node to recover to
      * @param markAsRelocated
      * @param existingFiles
      */
-    public StartRecoveryRequest(ShardId shardId, DiscoveryNode sourceNode, DiscoveryNode targetNode, boolean markAsRelocated, Map<String, StoreFileMetaData> existingFiles) {
-        this.recoveryId = recoveryIdGenerator.incrementAndGet();
+    public StartRecoveryRequest(ShardId shardId, DiscoveryNode sourceNode, DiscoveryNode targetNode, boolean markAsRelocated, Map<String,
+                                StoreFileMetaData> existingFiles, RecoveryState.Type recoveryType, long recoveryId) {
+        this.recoveryId = recoveryId;
         this.shardId = shardId;
         this.sourceNode = sourceNode;
         this.targetNode = targetNode;
         this.markAsRelocated = markAsRelocated;
         this.existingFiles = existingFiles;
+        this.recoveryType = recoveryType;
     }
 
     public long recoveryId() {
@@ -95,6 +97,10 @@ public class StartRecoveryRequest extends TransportRequest {
         return existingFiles;
     }
 
+    public RecoveryState.Type recoveryType() {
+        return recoveryType;
+    }
+
     @Override
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
@@ -109,6 +115,7 @@ public class StartRecoveryRequest extends TransportRequest {
             StoreFileMetaData md = StoreFileMetaData.readStoreFileMetaData(in);
             existingFiles.put(md.name(), md);
         }
+        recoveryType = RecoveryState.Type.fromId(in.readByte());
     }
 
     @Override
@@ -123,5 +130,6 @@ public class StartRecoveryRequest extends TransportRequest {
         for (StoreFileMetaData md : existingFiles.values()) {
             md.writeTo(out);
         }
+        out.writeByte(recoveryType.id());
     }
 }

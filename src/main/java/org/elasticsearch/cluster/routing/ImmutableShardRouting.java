@@ -1,11 +1,11 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this 
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -51,6 +51,8 @@ public class ImmutableShardRouting implements Streamable, Serializable, ShardRou
 
     private transient ShardId shardIdentifier;
 
+    protected RestoreSource restoreSource;
+
     private final transient ImmutableList<ShardRouting> asList;
 
     ImmutableShardRouting() {
@@ -60,18 +62,32 @@ public class ImmutableShardRouting implements Streamable, Serializable, ShardRou
     public ImmutableShardRouting(ShardRouting copy) {
         this(copy.index(), copy.id(), copy.currentNodeId(), copy.primary(), copy.state(), copy.version());
         this.relocatingNodeId = copy.relocatingNodeId();
+        this.restoreSource = copy.restoreSource();
+        if (copy instanceof ImmutableShardRouting) {
+            this.shardIdentifier = ((ImmutableShardRouting) copy).shardIdentifier;
+        }
     }
 
     public ImmutableShardRouting(ShardRouting copy, long version) {
         this(copy.index(), copy.id(), copy.currentNodeId(), copy.primary(), copy.state(), copy.version());
         this.relocatingNodeId = copy.relocatingNodeId();
+        this.restoreSource = copy.restoreSource();
         this.version = version;
+        if (copy instanceof ImmutableShardRouting) {
+            this.shardIdentifier = ((ImmutableShardRouting) copy).shardIdentifier;
+        }
     }
 
     public ImmutableShardRouting(String index, int shardId, String currentNodeId,
                                  String relocatingNodeId, boolean primary, ShardRoutingState state, long version) {
         this(index, shardId, currentNodeId, primary, state, version);
         this.relocatingNodeId = relocatingNodeId;
+    }
+
+    public ImmutableShardRouting(String index, int shardId, String currentNodeId,
+                                 String relocatingNodeId, RestoreSource restoreSource, boolean primary, ShardRoutingState state, long version) {
+        this(index, shardId, currentNodeId, relocatingNodeId, primary, state, version);
+        this.restoreSource = restoreSource;
     }
 
     public ImmutableShardRouting(String index, int shardId, String currentNodeId, boolean primary, ShardRoutingState state, long version) {
@@ -150,6 +166,19 @@ public class ImmutableShardRouting implements Streamable, Serializable, ShardRou
     }
 
     @Override
+    public ShardRouting targetRoutingIfRelocating() {
+        if (!relocating()) {
+            return null;
+        }
+        return new ImmutableShardRouting(index, shardId, relocatingNodeId, currentNodeId, primary, ShardRoutingState.INITIALIZING, version);
+    }
+
+    @Override
+    public RestoreSource restoreSource() {
+        return restoreSource;
+    }
+
+    @Override
     public boolean primary() {
         return this.primary;
     }
@@ -173,47 +202,18 @@ public class ImmutableShardRouting implements Streamable, Serializable, ShardRou
         return new PlainShardIterator(shardId(), asList);
     }
 
-    /**
-     * Reads a {@link ImmutableShardRouting} instance of a shard from an {@link InputStream}
-     * 
-     * @param in {@link InputStream} to read the entry from
-     * @return {@link ImmutableShardRouting} instances read from the given {@link InputStream}
-     * 
-     * @throws IOException if some exception occurs during the read operations
-     */
     public static ImmutableShardRouting readShardRoutingEntry(StreamInput in) throws IOException {
         ImmutableShardRouting entry = new ImmutableShardRouting();
         entry.readFrom(in);
         return entry;
     }
 
-    /**
-     * Reads a routingentry from an inputstream with given <code>index</code> and
-     * <code>shardId</code>.
-     * 
-     * @param in inputstream to read the entry from
-     * @param index shards index
-     * @param id id of the shard
-     * @return Shard routing entry read
-     * 
-     * @throws IOException if some exception occurs during the read operations
-     */
     public static ImmutableShardRouting readShardRoutingEntry(StreamInput in, String index, int shardId) throws IOException {
         ImmutableShardRouting entry = new ImmutableShardRouting();
         entry.readFrom(in, index, shardId);
         return entry;
     }
 
-    /**
-     * Read information from an inputstream with given <code>index</code> and
-     * <code>shardId</code>.
-     * 
-     * @param in inputstream to read the entry from
-     * @param index shards index
-     * @param id id of the shard
-     * 
-     * @throws IOException if some exception occurs during the read operations
-     */
     public void readFrom(StreamInput in, String index, int shardId) throws IOException {
         this.index = index;
         this.shardId = shardId;
@@ -233,18 +233,22 @@ public class ImmutableShardRouting implements Streamable, Serializable, ShardRou
 
         primary = in.readBoolean();
         state = ShardRoutingState.fromValue(in.readByte());
+
+        restoreSource = RestoreSource.readOptionalRestoreSource(in);
     }
 
     @Override
     public void readFrom(StreamInput in) throws IOException {
         readFrom(in, in.readString(), in.readVInt());
     }
-    
+
     /**
      * Writes shard information to {@link StreamOutput} without writing index name and shard id
+     *
      * @param out {@link StreamOutput} to write shard information to
      * @throws IOException if something happens during write
      */
+    @Override
     public void writeToThin(StreamOutput out) throws IOException {
         out.writeLong(version);
         if (currentNodeId != null) {
@@ -263,6 +267,13 @@ public class ImmutableShardRouting implements Streamable, Serializable, ShardRou
 
         out.writeBoolean(primary);
         out.writeByte(state.value());
+
+        if (restoreSource != null) {
+            out.writeBoolean(true);
+            restoreSource.writeTo(out);
+        } else {
+            out.writeBoolean(false);
+        }
     }
 
     @Override
@@ -274,21 +285,37 @@ public class ImmutableShardRouting implements Streamable, Serializable, ShardRou
 
     @Override
     public boolean equals(Object o) {
-        if (this == o) return true;
+        if (this == o) {
+            return true;
+        }
         // we check on instanceof so we also handle the MutableShardRouting case as well
-        if (o == null || !(o instanceof ImmutableShardRouting)) return false;
+        if (o == null || !(o instanceof ImmutableShardRouting)) {
+            return false;
+        }
 
         ImmutableShardRouting that = (ImmutableShardRouting) o;
 
-        if (primary != that.primary) return false;
-        if (shardId != that.shardId) return false;
-        if (currentNodeId != null ? !currentNodeId.equals(that.currentNodeId) : that.currentNodeId != null)
+        if (primary != that.primary) {
             return false;
-        if (index != null ? !index.equals(that.index) : that.index != null) return false;
-        if (relocatingNodeId != null ? !relocatingNodeId.equals(that.relocatingNodeId) : that.relocatingNodeId != null)
+        }
+        if (shardId != that.shardId) {
             return false;
-        if (state != that.state) return false;
-
+        }
+        if (currentNodeId != null ? !currentNodeId.equals(that.currentNodeId) : that.currentNodeId != null) {
+            return false;
+        }
+        if (index != null ? !index.equals(that.index) : that.index != null) {
+            return false;
+        }
+        if (relocatingNodeId != null ? !relocatingNodeId.equals(that.relocatingNodeId) : that.relocatingNodeId != null) {
+            return false;
+        }
+        if (state != that.state) {
+            return false;
+        }
+        if (restoreSource != null ? !restoreSource.equals(that.restoreSource) : that.restoreSource != null) {
+            return false;
+        }
         return true;
     }
 
@@ -300,6 +327,7 @@ public class ImmutableShardRouting implements Streamable, Serializable, ShardRou
         result = 31 * result + (relocatingNodeId != null ? relocatingNodeId.hashCode() : 0);
         result = 31 * result + (primary ? 1 : 0);
         result = 31 * result + (state != null ? state.hashCode() : 0);
+        result = 31 * result + (restoreSource != null ? restoreSource.hashCode() : 0);
         return result;
     }
 
@@ -321,19 +349,26 @@ public class ImmutableShardRouting implements Streamable, Serializable, ShardRou
         } else {
             sb.append("[R]");
         }
+        if (this.restoreSource != null) {
+            sb.append(", restoring[" + restoreSource + "]");
+        }
         sb.append(", s[").append(state).append("]");
         return sb.toString();
     }
 
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
-        return builder.startObject()
+        builder.startObject()
                 .field("state", state())
                 .field("primary", primary())
                 .field("node", currentNodeId())
                 .field("relocating_node", relocatingNodeId())
                 .field("shard", shardId().id())
-                .field("index", shardId().index().name())
-                .endObject();
+                .field("index", shardId().index().name());
+        if (restoreSource() != null) {
+            builder.field("restore_source");
+            restoreSource().toXContent(builder, params);
+        }
+        return builder.endObject();
     }
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -29,29 +29,42 @@ import org.elasticsearch.action.count.CountResponse;
 import org.elasticsearch.action.delete.DeleteRequest;
 import org.elasticsearch.action.delete.DeleteRequestBuilder;
 import org.elasticsearch.action.delete.DeleteResponse;
-import org.elasticsearch.action.deletebyquery.DeleteByQueryRequest;
-import org.elasticsearch.action.deletebyquery.DeleteByQueryRequestBuilder;
-import org.elasticsearch.action.deletebyquery.DeleteByQueryResponse;
+import org.elasticsearch.action.exists.ExistsRequest;
+import org.elasticsearch.action.exists.ExistsRequestBuilder;
+import org.elasticsearch.action.exists.ExistsResponse;
 import org.elasticsearch.action.explain.ExplainRequest;
 import org.elasticsearch.action.explain.ExplainRequestBuilder;
 import org.elasticsearch.action.explain.ExplainResponse;
+import org.elasticsearch.action.fieldstats.FieldStatsRequest;
+import org.elasticsearch.action.fieldstats.FieldStatsRequestBuilder;
+import org.elasticsearch.action.fieldstats.FieldStatsResponse;
 import org.elasticsearch.action.get.*;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.index.IndexResponse;
+import org.elasticsearch.action.indexedscripts.delete.DeleteIndexedScriptRequest;
+import org.elasticsearch.action.indexedscripts.delete.DeleteIndexedScriptRequestBuilder;
+import org.elasticsearch.action.indexedscripts.delete.DeleteIndexedScriptResponse;
+import org.elasticsearch.action.indexedscripts.get.GetIndexedScriptRequest;
+import org.elasticsearch.action.indexedscripts.get.GetIndexedScriptRequestBuilder;
+import org.elasticsearch.action.indexedscripts.get.GetIndexedScriptResponse;
+import org.elasticsearch.action.indexedscripts.put.PutIndexedScriptRequest;
+import org.elasticsearch.action.indexedscripts.put.PutIndexedScriptRequestBuilder;
+import org.elasticsearch.action.indexedscripts.put.PutIndexedScriptResponse;
 import org.elasticsearch.action.mlt.MoreLikeThisRequest;
 import org.elasticsearch.action.mlt.MoreLikeThisRequestBuilder;
-import org.elasticsearch.action.percolate.PercolateRequest;
-import org.elasticsearch.action.percolate.PercolateRequestBuilder;
-import org.elasticsearch.action.percolate.PercolateResponse;
+import org.elasticsearch.action.percolate.*;
 import org.elasticsearch.action.search.*;
 import org.elasticsearch.action.suggest.SuggestRequest;
 import org.elasticsearch.action.suggest.SuggestRequestBuilder;
 import org.elasticsearch.action.suggest.SuggestResponse;
+import org.elasticsearch.action.termvectors.*;
 import org.elasticsearch.action.update.UpdateRequest;
 import org.elasticsearch.action.update.UpdateRequestBuilder;
 import org.elasticsearch.action.update.UpdateResponse;
 import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.lease.Releasable;
+import org.elasticsearch.common.settings.Settings;
 
 /**
  * A client provides a one stop interface for performing actions/operations against the cluster.
@@ -66,52 +79,14 @@ import org.elasticsearch.common.Nullable;
  * @see org.elasticsearch.node.Node#client()
  * @see org.elasticsearch.client.transport.TransportClient
  */
-public interface Client {
+public interface Client extends ElasticsearchClient<Client>, Releasable {
 
-    /**
-     * Closes the client.
-     */
-    void close();
+    String CLIENT_TYPE_SETTING = "client.type";
 
     /**
      * The admin client that can be used to perform administrative operations.
      */
     AdminClient admin();
-
-    /**
-     * Executes a generic action, denoted by an {@link Action}.
-     *
-     * @param action           The action type to execute.
-     * @param request          The action request.
-     * @param <Request>        Teh request type.
-     * @param <Response>       the response type.
-     * @param <RequestBuilder> The request builder type.
-     * @return A future allowing to get back the response.
-     */
-    <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder>> ActionFuture<Response> execute(final Action<Request, Response, RequestBuilder> action, final Request request);
-
-    /**
-     * Executes a generic action, denoted by an {@link Action}.
-     *
-     * @param action           The action type to execute.
-     * @param request          Teh action request.
-     * @param listener         The listener to receive the response back.
-     * @param <Request>        The request type.
-     * @param <Response>       The response type.
-     * @param <RequestBuilder> The request builder type.
-     */
-    <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder>> void execute(final Action<Request, Response, RequestBuilder> action, final Request request, ActionListener<Response> listener);
-
-    /**
-     * Prepares a request builder to execute, specified by {@link Action}.
-     *
-     * @param action           The action type to execute.
-     * @param <Request>        The request type.
-     * @param <Response>       The response type.
-     * @param <RequestBuilder> The request builder.
-     * @return The request builder, that can, at a later stage, execute the request.
-     */
-    <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder>> RequestBuilder prepareExecute(final Action<Request, Response, RequestBuilder> action);
 
 
     /**
@@ -246,29 +221,6 @@ public interface Client {
     BulkRequestBuilder prepareBulk();
 
     /**
-     * Deletes all documents from one or more indices based on a query.
-     *
-     * @param request The delete by query request
-     * @return The result future
-     * @see Requests#deleteByQueryRequest(String...)
-     */
-    ActionFuture<DeleteByQueryResponse> deleteByQuery(DeleteByQueryRequest request);
-
-    /**
-     * Deletes all documents from one or more indices based on a query.
-     *
-     * @param request  The delete by query request
-     * @param listener A listener to be notified with a result
-     * @see Requests#deleteByQueryRequest(String...)
-     */
-    void deleteByQuery(DeleteByQueryRequest request, ActionListener<DeleteByQueryResponse> listener);
-
-    /**
-     * Deletes all documents from one or more indices based on a query.
-     */
-    DeleteByQueryRequestBuilder prepareDeleteByQuery(String... indices);
-
-    /**
      * Gets the document that was indexed from an index with a type and id.
      *
      * @param request The get request
@@ -295,6 +247,99 @@ public interface Client {
      * Gets the document that was indexed from an index with a type (optional) and id.
      */
     GetRequestBuilder prepareGet(String index, @Nullable String type, String id);
+
+
+    /**
+     * Put an indexed script
+     */
+    PutIndexedScriptRequestBuilder preparePutIndexedScript();
+
+    /**
+     * Put the indexed script
+     * @param scriptLang
+     * @param id
+     * @param source
+     * @return
+     */
+    PutIndexedScriptRequestBuilder preparePutIndexedScript(@Nullable String scriptLang, String id, String source);
+
+    /**
+     * delete an indexed script
+     *
+     * @param request
+     * @param listener
+     */
+    void deleteIndexedScript(DeleteIndexedScriptRequest request, ActionListener<DeleteIndexedScriptResponse> listener);
+
+    /**
+     * Delete an indexed script
+     *
+     * @param request The put request
+     * @return The result future
+     */
+    ActionFuture<DeleteIndexedScriptResponse> deleteIndexedScript(DeleteIndexedScriptRequest request);
+
+
+    /**
+     * Delete an indexed script
+     */
+    DeleteIndexedScriptRequestBuilder prepareDeleteIndexedScript();
+
+    /**
+     * Delete an indexed script
+     * @param scriptLang
+     * @param id
+     * @return
+     */
+    DeleteIndexedScriptRequestBuilder prepareDeleteIndexedScript(@Nullable String scriptLang, String id);
+
+    /**
+     * Put an indexed script
+     *
+     * @param request
+     * @param listener
+     */
+    void putIndexedScript(PutIndexedScriptRequest request, ActionListener<PutIndexedScriptResponse> listener);
+
+    /**
+     * Put an indexed script
+     *
+     * @param request The put request
+     * @return The result future
+     */
+    ActionFuture<PutIndexedScriptResponse> putIndexedScript(PutIndexedScriptRequest request);
+
+
+    /**
+     * Get an indexed script
+     */
+    GetIndexedScriptRequestBuilder prepareGetIndexedScript();
+
+    /**
+     * Get the indexed script
+     * @param scriptLang
+     * @param id
+     * @return
+     */
+    GetIndexedScriptRequestBuilder prepareGetIndexedScript(@Nullable String scriptLang, String id);
+
+    /**
+     * Get an indexed script
+     *
+     * @param request
+     * @param listener
+     */
+    void getIndexedScript(GetIndexedScriptRequest request, ActionListener<GetIndexedScriptResponse> listener);
+
+    /**
+     * Gets the document that was indexed from an index with a type and id.
+     *
+     * @param request The get request
+     * @return The result future
+     * @see Requests#getRequest(String)
+     */
+    ActionFuture<GetIndexedScriptResponse> getIndexedScript(GetIndexedScriptRequest request);
+
 
     /**
      * Multi get documents.
@@ -333,6 +378,29 @@ public interface Client {
      * A count of all the documents matching a specific query.
      */
     CountRequestBuilder prepareCount(String... indices);
+
+    /**
+     * Checks existence of any documents matching a specific query.
+     *
+     * @param request The exists request
+     * @return The result future
+     * @see Requests#existsRequest(String...)
+     */
+    ActionFuture<ExistsResponse> exists(ExistsRequest request);
+
+    /**
+     * Checks existence of any documents matching a specific query.
+     *
+     * @param request The exists request
+     * @param listener A listener to be notified of the result
+     * @see Requests#existsRequest(String...)
+     */
+    void exists(ExistsRequest request, ActionListener<ExistsResponse> listener);
+
+    /**
+     * Checks existence of any documents matching a specific query.
+     */
+    ExistsRequestBuilder prepareExists(String... indices);
 
     /**
      * Suggestion matching a specific phrase.
@@ -444,6 +512,85 @@ public interface Client {
     MoreLikeThisRequestBuilder prepareMoreLikeThis(String index, String type, String id);
 
     /**
+     * An action that returns the term vectors for a specific document.
+     *
+     * @param request The term vector request
+     * @return The response future
+     */
+    ActionFuture<TermVectorsResponse> termVectors(TermVectorsRequest request);
+
+    /**
+     * An action that returns the term vectors for a specific document.
+     *
+     * @param request The term vector request
+     * @return The response future
+     */
+    void termVectors(TermVectorsRequest request, ActionListener<TermVectorsResponse> listener);
+
+    /**
+     * Builder for the term vector request.
+     */
+    TermVectorsRequestBuilder prepareTermVectors();
+
+    /**
+     * Builder for the term vector request.
+     *
+     * @param index The index to load the document from
+     * @param type  The type of the document
+     * @param id    The id of the document
+     */
+    TermVectorsRequestBuilder prepareTermVectors(String index, String type, String id);
+
+    /**
+     * An action that returns the term vectors for a specific document.
+     *
+     * @param request The term vector request
+     * @return The response future
+     */
+    @Deprecated
+    ActionFuture<TermVectorsResponse> termVector(TermVectorsRequest request);
+
+    /**
+     * An action that returns the term vectors for a specific document.
+     *
+     * @param request The term vector request
+     * @return The response future
+     */
+    @Deprecated
+    void termVector(TermVectorsRequest request, ActionListener<TermVectorsResponse> listener);
+
+    /**
+     * Builder for the term vector request.
+     */
+    @Deprecated
+    TermVectorsRequestBuilder prepareTermVector();
+
+    /**
+     * Builder for the term vector request.
+     *
+     * @param index The index to load the document from
+     * @param type  The type of the document
+     * @param id    The id of the document
+     */
+    @Deprecated
+    TermVectorsRequestBuilder prepareTermVector(String index, String type, String id);
+
+    /**
+     * Multi get term vectors.
+     */
+    ActionFuture<MultiTermVectorsResponse> multiTermVectors(MultiTermVectorsRequest request);
+
+    /**
+     * Multi get term vectors.
+     */
+    void multiTermVectors(MultiTermVectorsRequest request, ActionListener<MultiTermVectorsResponse> listener);
+
+    /**
+     * Multi get term vectors.
+     */
+    MultiTermVectorsRequestBuilder prepareMultiTermVectors();
+
+    /**
      * Percolates a request returning the matches documents.
      */
     ActionFuture<PercolateResponse> percolate(PercolateRequest request);
@@ -455,11 +602,23 @@ public interface Client {
 
     /**
      * Percolates a request returning the matches documents.
-     *
-     * @param index The index to percolate the doc
-     * @param type  The type of the doc
      */
-    PercolateRequestBuilder preparePercolate(String index, String type);
+    PercolateRequestBuilder preparePercolate();
+
+    /**
+     * Performs multiple percolate requests.
+     */
+    ActionFuture<MultiPercolateResponse> multiPercolate(MultiPercolateRequest request);
+
+    /**
+     * Performs multiple percolate requests.
+     */
+    void multiPercolate(MultiPercolateRequest request, ActionListener<MultiPercolateResponse> listener);
+
+    /**
+     * Performs multiple percolate requests.
+     */
+    MultiPercolateRequestBuilder prepareMultiPercolate();
 
     /**
      * Computes a score explanation for the specified request.
@@ -484,5 +643,31 @@ public interface Client {
      * @param listener A listener to be notified of the result
      */
     void explain(ExplainRequest request, ActionListener<ExplainResponse> listener);
+
+    /**
+     * Clears the search contexts associated with specified scroll ids.
+     */
+    ClearScrollRequestBuilder prepareClearScroll();
+
+    /**
+     * Clears the search contexts associated with specified scroll ids.
+     */
+    ActionFuture<ClearScrollResponse> clearScroll(ClearScrollRequest request);
+
+    /**
+     * Clears the search contexts associated with specified scroll ids.
+     */
+    void clearScroll(ClearScrollRequest request, ActionListener<ClearScrollResponse> listener);
+
+    FieldStatsRequestBuilder prepareFieldStats();
+
+    ActionFuture<FieldStatsResponse> fieldStats(FieldStatsRequest request);
+
+    void fieldStats(FieldStatsRequest request, ActionListener<FieldStatsResponse> listener);
+
+    /**
+     * Returns this clients settings
+     */
+    Settings settings();
 
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,8 +21,8 @@ package org.elasticsearch.index.query;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
-import org.apache.lucene.queries.TermsFilter;
-import org.apache.lucene.search.ConstantScoreQuery;
+
+import org.apache.lucene.queries.TermsQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.inject.Inject;
@@ -56,10 +56,11 @@ public class IdsQueryParser implements QueryParser {
     public Query parse(QueryParseContext parseContext) throws IOException, QueryParsingException {
         XContentParser parser = parseContext.parser();
 
-        List<BytesRef> ids = new ArrayList<BytesRef>();
+        List<BytesRef> ids = new ArrayList<>();
         Collection<String> types = null;
         String currentFieldName = null;
         float boost = 1.0f;
+        String queryName = null;
         XContentParser.Token token;
         boolean idsProvided = false;
         while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
@@ -69,41 +70,49 @@ public class IdsQueryParser implements QueryParser {
                 if ("values".equals(currentFieldName)) {
                     idsProvided = true;
                     while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
-                        BytesRef value = parser.bytesOrNull();
-                        if (value == null) {
-                            throw new QueryParsingException(parseContext.index(), "No value specified for term filter");
+                        if ((token == XContentParser.Token.VALUE_STRING) ||
+                                (token == XContentParser.Token.VALUE_NUMBER)) {
+                            BytesRef value = parser.utf8BytesOrNull();
+                            if (value == null) {
+                                throw new QueryParsingException(parseContext, "No value specified for term filter");
+                            }
+                            ids.add(value);
+                        } else {
+                            throw new QueryParsingException(parseContext, "Illegal value for id, expecting a string or number, got: "
+                                    + token);
                         }
-                        ids.add(value);
                     }
                 } else if ("types".equals(currentFieldName) || "type".equals(currentFieldName)) {
-                    types = new ArrayList<String>();
+                    types = new ArrayList<>();
                     while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
                         String value = parser.textOrNull();
                         if (value == null) {
-                            throw new QueryParsingException(parseContext.index(), "No type specified for term filter");
+                            throw new QueryParsingException(parseContext, "No type specified for term filter");
                         }
                         types.add(value);
                     }
                 } else {
-                    throw new QueryParsingException(parseContext.index(), "[ids] query does not support [" + currentFieldName + "]");
+                    throw new QueryParsingException(parseContext, "[ids] query does not support [" + currentFieldName + "]");
                 }
             } else if (token.isValue()) {
                 if ("type".equals(currentFieldName) || "_type".equals(currentFieldName)) {
                     types = ImmutableList.of(parser.text());
                 } else if ("boost".equals(currentFieldName)) {
                     boost = parser.floatValue();
+                } else if ("_name".equals(currentFieldName)) {
+                    queryName = parser.text();
                 } else {
-                    throw new QueryParsingException(parseContext.index(), "[ids] query does not support [" + currentFieldName + "]");
+                    throw new QueryParsingException(parseContext, "[ids] query does not support [" + currentFieldName + "]");
                 }
             }
         }
 
         if (!idsProvided) {
-            throw new QueryParsingException(parseContext.index(), "[ids] query, no ids values provided");
+            throw new QueryParsingException(parseContext, "[ids] query, no ids values provided");
         }
 
         if (ids.isEmpty()) {
-            return Queries.NO_MATCH_QUERY;
+            return Queries.newMatchNoDocsQuery();
         }
 
         if (types == null || types.isEmpty()) {
@@ -112,11 +121,11 @@ public class IdsQueryParser implements QueryParser {
             types = parseContext.mapperService().types();
         }
 
-        TermsFilter filter = new TermsFilter(UidFieldMapper.NAME, Uid.createTypeUids(types, ids));
-        // no need for constant score filter, since we don't cache the filter, and it always takes deletes into account
-        ConstantScoreQuery query = new ConstantScoreQuery(filter);
+        TermsQuery query = new TermsQuery(UidFieldMapper.NAME, Uid.createTypeUids(types, ids));
         query.setBoost(boost);
+        if (queryName != null) {
+            parseContext.addNamedQuery(queryName, query);
+        }
         return query;
     }
 }
-

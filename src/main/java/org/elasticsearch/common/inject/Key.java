@@ -213,14 +213,14 @@ public class Key<T> {
      */
     static <T> Key<T> get(Class<T> type,
                           AnnotationStrategy annotationStrategy) {
-        return new Key<T>(type, annotationStrategy);
+        return new Key<>(type, annotationStrategy);
     }
 
     /**
      * Gets a key for an injection type.
      */
     public static <T> Key<T> get(Class<T> type) {
-        return new Key<T>(type, NullAnnotationStrategy.INSTANCE);
+        return new Key<>(type, NullAnnotationStrategy.INSTANCE);
     }
 
     /**
@@ -228,14 +228,14 @@ public class Key<T> {
      */
     public static <T> Key<T> get(Class<T> type,
                                  Class<? extends Annotation> annotationType) {
-        return new Key<T>(type, strategyFor(annotationType));
+        return new Key<>(type, strategyFor(annotationType));
     }
 
     /**
      * Gets a key for an injection type and an annotation.
      */
     public static <T> Key<T> get(Class<T> type, Annotation annotation) {
-        return new Key<T>(type, strategyFor(annotation));
+        return new Key<>(type, strategyFor(annotation));
     }
 
     /**
@@ -264,7 +264,7 @@ public class Key<T> {
      * Gets a key for an injection type.
      */
     public static <T> Key<T> get(TypeLiteral<T> typeLiteral) {
-        return new Key<T>(typeLiteral, NullAnnotationStrategy.INSTANCE);
+        return new Key<>(typeLiteral, NullAnnotationStrategy.INSTANCE);
     }
 
     /**
@@ -272,7 +272,7 @@ public class Key<T> {
      */
     public static <T> Key<T> get(TypeLiteral<T> typeLiteral,
                                  Class<? extends Annotation> annotationType) {
-        return new Key<T>(typeLiteral, strategyFor(annotationType));
+        return new Key<>(typeLiteral, strategyFor(annotationType));
     }
 
     /**
@@ -280,7 +280,7 @@ public class Key<T> {
      */
     public static <T> Key<T> get(TypeLiteral<T> typeLiteral,
                                  Annotation annotation) {
-        return new Key<T>(typeLiteral, strategyFor(annotation));
+        return new Key<>(typeLiteral, strategyFor(annotation));
     }
 
     /**
@@ -288,7 +288,7 @@ public class Key<T> {
      * key.
      */
     <T> Key<T> ofType(Class<T> type) {
-        return new Key<T>(type, annotationStrategy);
+        return new Key<>(type, annotationStrategy);
     }
 
     /**
@@ -304,7 +304,7 @@ public class Key<T> {
      * key.
      */
     <T> Key<T> ofType(TypeLiteral<T> type) {
-        return new Key<T>(type, annotationStrategy);
+        return new Key<>(type, annotationStrategy);
     }
 
     /**
@@ -319,7 +319,7 @@ public class Key<T> {
      * annotation type.
      */
     Key<T> withoutAttributes() {
-        return new Key<T>(typeLiteral, annotationStrategy.withoutAttributes());
+        return new Key<>(typeLiteral, annotationStrategy.withoutAttributes());
     }
 
     interface AnnotationStrategy {
@@ -382,18 +382,22 @@ public class Key<T> {
     static enum NullAnnotationStrategy implements AnnotationStrategy {
         INSTANCE;
 
+        @Override
         public boolean hasAttributes() {
             return false;
         }
 
+        @Override
         public AnnotationStrategy withoutAttributes() {
             throw new UnsupportedOperationException("Key already has no attributes.");
         }
 
+        @Override
         public Annotation getAnnotation() {
             return null;
         }
 
+        @Override
         public Class<? extends Annotation> getAnnotationType() {
             return null;
         }
@@ -413,18 +417,22 @@ public class Key<T> {
             this.annotation = checkNotNull(annotation, "annotation");
         }
 
+        @Override
         public boolean hasAttributes() {
             return true;
         }
 
+        @Override
         public AnnotationStrategy withoutAttributes() {
             return new AnnotationTypeStrategy(getAnnotationType(), annotation);
         }
 
+        @Override
         public Annotation getAnnotation() {
             return annotation;
         }
 
+        @Override
         public Class<? extends Annotation> getAnnotationType() {
             return annotation.annotationType();
         }
@@ -463,18 +471,22 @@ public class Key<T> {
             this.annotation = annotation;
         }
 
+        @Override
         public boolean hasAttributes() {
             return false;
         }
 
+        @Override
         public AnnotationStrategy withoutAttributes() {
             throw new UnsupportedOperationException("Key already has no attributes.");
         }
 
+        @Override
         public Annotation getAnnotation() {
             return annotation;
         }
 
+        @Override
         public Class<? extends Annotation> getAnnotationType() {
             return annotationType;
         }

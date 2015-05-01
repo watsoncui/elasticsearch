@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,54 +19,44 @@
 
 package org.elasticsearch.action.admin.cluster.health;
 
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.action.support.master.TransportMasterNodeOperationAction;
-import org.elasticsearch.cluster.ClusterName;
-import org.elasticsearch.cluster.ClusterService;
-import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.cluster.ProcessedClusterStateUpdateTask;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
-import org.elasticsearch.cluster.routing.IndexRoutingTable;
-import org.elasticsearch.cluster.routing.IndexShardRoutingTable;
-import org.elasticsearch.cluster.routing.RoutingTableValidation;
-import org.elasticsearch.cluster.routing.ShardRouting;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.support.ActionFilters;
+import org.elasticsearch.action.support.IndicesOptions;
+import org.elasticsearch.action.support.master.TransportMasterNodeReadOperationAction;
+import org.elasticsearch.cluster.*;
+import org.elasticsearch.cluster.block.ClusterBlockException;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.indices.IndexMissingException;
-import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
-
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 /**
  *
  */
-public class TransportClusterHealthAction extends TransportMasterNodeOperationAction<ClusterHealthRequest, ClusterHealthResponse> {
+public class TransportClusterHealthAction extends TransportMasterNodeReadOperationAction<ClusterHealthRequest, ClusterHealthResponse> {
 
     private final ClusterName clusterName;
 
     @Inject
     public TransportClusterHealthAction(Settings settings, TransportService transportService, ClusterService clusterService, ThreadPool threadPool,
-                                        ClusterName clusterName) {
-        super(settings, transportService, clusterService, threadPool);
+                                        ClusterName clusterName, ActionFilters actionFilters) {
+        super(settings, ClusterHealthAction.NAME, transportService, clusterService, threadPool, actionFilters, ClusterHealthRequest.class);
         this.clusterName = clusterName;
     }
 
     @Override
     protected String executor() {
-        return ThreadPool.Names.GENERIC;
+        // this should be executing quickly no need to fork off
+        return ThreadPool.Names.SAME;
     }
 
     @Override
-    protected String transportAction() {
-        return ClusterHealthAction.NAME;
-    }
-
-    @Override
-    protected ClusterHealthRequest newRequest() {
-        return new ClusterHealthRequest();
+    protected ClusterBlockException checkBlock(ClusterHealthRequest request, ClusterState state) {
+        return null; // we want users to be able to call this even when there are global blocks, just to check the health (are there blocks?)
     }
 
     @Override
@@ -75,16 +65,9 @@ public class TransportClusterHealthAction extends TransportMasterNodeOperationAc
     }
 
     @Override
-    protected boolean localExecute(ClusterHealthRequest request) {
-        return request.local();
-    }
-
-    @Override
-    protected ClusterHealthResponse masterOperation(ClusterHealthRequest request, ClusterState unusedState) throws ElasticSearchException {
-        long endTime = System.currentTimeMillis() + request.timeout().millis();
-
+    protected void masterOperation(final ClusterHealthRequest request, final ClusterState unusedState, final ActionListener<ClusterHealthResponse> listener) {
         if (request.waitForEvents() != null) {
-            final CountDownLatch latch = new CountDownLatch(1);
+            final long endTime = System.currentTimeMillis() + request.timeout().millis();
             clusterService.submitStateUpdateTask("cluster_health (wait_for_events [" + request.waitForEvents() + "])", request.waitForEvents(), new ProcessedClusterStateUpdateTask() {
                 @Override
                 public ClusterState execute(ClusterState currentState) {
@@ -92,19 +75,31 @@ public class TransportClusterHealthAction extends TransportMasterNodeOperationAc
                 }
 
                 @Override
-                public void clusterStateProcessed(ClusterState clusterState) {
-                    latch.countDown();
+                public void clusterStateProcessed(String source, ClusterState oldState, ClusterState newState) {
+                    final long timeoutInMillis = Math.max(0, endTime - System.currentTimeMillis());
+                    final TimeValue newTimeout = TimeValue.timeValueMillis(timeoutInMillis);
+                    request.timeout(newTimeout);
+                    executeHealth(request, listener);
+                }
+
+                @Override
+                public void onFailure(String source, Throwable t) {
+                    logger.error("unexpected failure during [{}]", t, source);
+                    listener.onFailure(t);
+                }
+
+                @Override
+                public boolean runOnlyOnMaster() {
+                    return !request.local();
                 }
             });
-
-            try {
-                latch.await(request.timeout().millis(), TimeUnit.MILLISECONDS);
-            } catch (InterruptedException e) {
-                // ignore
-            }
+        } else {
+            executeHealth(request, listener);
         }
 
+    }
 
+    private void executeHealth(final ClusterHealthRequest request, final ActionListener<ClusterHealthResponse> listener) {
         int waitFor = 5;
         if (request.waitForStatus() == null) {
             waitFor--;
@@ -121,200 +116,151 @@ public class TransportClusterHealthAction extends TransportMasterNodeOperationAc
         if (request.indices().length == 0) { // check that they actually exists in the meta data
             waitFor--;
         }
-        if (waitFor == 0) {
-            // no need to wait for anything
-            ClusterState clusterState = clusterService.state();
-            return clusterHealth(request, clusterState);
+
+        assert waitFor >= 0;
+        final ClusterStateObserver observer = new ClusterStateObserver(clusterService, logger);
+        final ClusterState state = observer.observedState();
+        if (waitFor == 0 || request.timeout().millis() == 0) {
+            listener.onResponse(getResponse(request, state, waitFor, request.timeout().millis() == 0));
+            return;
         }
-        while (true) {
-            int waitForCounter = 0;
-            ClusterState clusterState = clusterService.state();
-            ClusterHealthResponse response = clusterHealth(request, clusterState);
-            if (request.waitForStatus() != null && response.getStatus().value() <= request.waitForStatus().value()) {
-                waitForCounter++;
+        final int concreteWaitFor = waitFor;
+        final ClusterStateObserver.ChangePredicate validationPredicate = new ClusterStateObserver.ValidationPredicate() {
+            @Override
+            protected boolean validate(ClusterState newState) {
+                return newState.status() == ClusterState.ClusterStateStatus.APPLIED && validateRequest(request, newState, concreteWaitFor);
             }
-            if (request.waitForRelocatingShards() != -1 && response.getRelocatingShards() <= request.waitForRelocatingShards()) {
-                waitForCounter++;
+        };
+
+        final ClusterStateObserver.Listener stateListener = new ClusterStateObserver.Listener() {
+            @Override
+            public void onNewClusterState(ClusterState clusterState) {
+                listener.onResponse(getResponse(request, clusterState, concreteWaitFor, false));
             }
-            if (request.waitForActiveShards() != -1 && response.getActiveShards() >= request.waitForActiveShards()) {
-                waitForCounter++;
+
+            @Override
+            public void onClusterServiceClose() {
+                listener.onFailure(new IllegalStateException("ClusterService was close during health call"));
             }
-            if (request.indices().length > 0) {
-                try {
-                    clusterState.metaData().concreteIndices(request.indices());
-                    waitForCounter++;
-                } catch (IndexMissingException e) {
-                    response.status = ClusterHealthStatus.RED; // no indices, make sure its RED
-                    // missing indices, wait a bit more...
-                }
+
+            @Override
+            public void onTimeout(TimeValue timeout) {
+                final ClusterState clusterState = clusterService.state();
+                final ClusterHealthResponse response = getResponse(request, clusterState, concreteWaitFor, true);
+                listener.onResponse(response);
             }
-            if (!request.waitForNodes().isEmpty()) {
-                if (request.waitForNodes().startsWith(">=")) {
-                    int expected = Integer.parseInt(request.waitForNodes().substring(2));
-                    if (response.getNumberOfNodes() >= expected) {
-                        waitForCounter++;
-                    }
-                } else if (request.waitForNodes().startsWith("ge(")) {
-                    int expected = Integer.parseInt(request.waitForNodes().substring(3, request.waitForNodes().length() - 1));
-                    if (response.getNumberOfNodes() >= expected) {
-                        waitForCounter++;
-                    }
-                } else if (request.waitForNodes().startsWith("<=")) {
-                    int expected = Integer.parseInt(request.waitForNodes().substring(2));
-                    if (response.getNumberOfNodes() <= expected) {
-                        waitForCounter++;
-                    }
-                } else if (request.waitForNodes().startsWith("le(")) {
-                    int expected = Integer.parseInt(request.waitForNodes().substring(3, request.waitForNodes().length() - 1));
-                    if (response.getNumberOfNodes() <= expected) {
-                        waitForCounter++;
-                    }
-                } else if (request.waitForNodes().startsWith(">")) {
-                    int expected = Integer.parseInt(request.waitForNodes().substring(1));
-                    if (response.getNumberOfNodes() > expected) {
-                        waitForCounter++;
-                    }
-                } else if (request.waitForNodes().startsWith("gt(")) {
-                    int expected = Integer.parseInt(request.waitForNodes().substring(3, request.waitForNodes().length() - 1));
-                    if (response.getNumberOfNodes() > expected) {
-                        waitForCounter++;
-                    }
-                } else if (request.waitForNodes().startsWith("<")) {
-                    int expected = Integer.parseInt(request.waitForNodes().substring(1));
-                    if (response.getNumberOfNodes() < expected) {
-                        waitForCounter++;
-                    }
-                } else if (request.waitForNodes().startsWith("lt(")) {
-                    int expected = Integer.parseInt(request.waitForNodes().substring(3, request.waitForNodes().length() - 1));
-                    if (response.getNumberOfNodes() < expected) {
-                        waitForCounter++;
-                    }
-                } else {
-                    int expected = Integer.parseInt(request.waitForNodes());
-                    if (response.getNumberOfNodes() == expected) {
-                        waitForCounter++;
-                    }
-                }
-            }
-            if (waitForCounter == waitFor) {
-                return response;
-            }
-            if (System.currentTimeMillis() > endTime) {
-                response.timedOut = true;
-                return response;
-            }
-            try {
-                Thread.sleep(200);
-            } catch (InterruptedException e) {
-                response.timedOut = true;
-                // we got interrupted, bail
-                return response;
-            }
+        };
+        if (state.status() == ClusterState.ClusterStateStatus.APPLIED && validateRequest(request, state, concreteWaitFor)) {
+            stateListener.onNewClusterState(state);
+        } else {
+            observer.waitForNextChange(stateListener, validationPredicate, request.timeout());
         }
     }
 
-    private ClusterHealthResponse clusterHealth(ClusterHealthRequest request, ClusterState clusterState) {
+    private boolean validateRequest(final ClusterHealthRequest request, ClusterState clusterState, final int waitFor) {
+        ClusterHealthResponse response = clusterHealth(request, clusterState, clusterService.numberOfPendingTasks());
+        return prepareResponse(request, response, clusterState, waitFor);
+    }
+
+    private ClusterHealthResponse getResponse(final ClusterHealthRequest request, ClusterState clusterState, final int waitFor, boolean timedOut) {
+        ClusterHealthResponse response = clusterHealth(request, clusterState, clusterService.numberOfPendingTasks());
+        boolean valid = prepareResponse(request, response, clusterState, waitFor);
+        assert valid || timedOut;
+        // we check for a timeout here since this method might be called from the wait_for_events
+        // response handler which might have timed out already.
+        // if the state is sufficient for what we where waiting for we don't need to mark this as timedOut.
+        // We spend too much time in waiting for events such that we might already reached a valid state.
+        // this should not mark the request as timed out
+        response.timedOut = timedOut && valid == false;
+        return response;
+    }
+
+    private boolean prepareResponse(final ClusterHealthRequest request, final ClusterHealthResponse response, ClusterState clusterState, final int waitFor) {
+        int waitForCounter = 0;
+        if (request.waitForStatus() != null && response.getStatus().value() <= request.waitForStatus().value()) {
+            waitForCounter++;
+        }
+        if (request.waitForRelocatingShards() != -1 && response.getRelocatingShards() <= request.waitForRelocatingShards()) {
+            waitForCounter++;
+        }
+        if (request.waitForActiveShards() != -1 && response.getActiveShards() >= request.waitForActiveShards()) {
+            waitForCounter++;
+        }
+        if (request.indices().length > 0) {
+            try {
+                clusterState.metaData().concreteIndices(IndicesOptions.strictExpand(), request.indices());
+                waitForCounter++;
+            } catch (IndexMissingException e) {
+                response.status = ClusterHealthStatus.RED; // no indices, make sure its RED
+                // missing indices, wait a bit more...
+            }
+        }
+        if (!request.waitForNodes().isEmpty()) {
+            if (request.waitForNodes().startsWith(">=")) {
+                int expected = Integer.parseInt(request.waitForNodes().substring(2));
+                if (response.getNumberOfNodes() >= expected) {
+                    waitForCounter++;
+                }
+            } else if (request.waitForNodes().startsWith("ge(")) {
+                int expected = Integer.parseInt(request.waitForNodes().substring(3, request.waitForNodes().length() - 1));
+                if (response.getNumberOfNodes() >= expected) {
+                    waitForCounter++;
+                }
+            } else if (request.waitForNodes().startsWith("<=")) {
+                int expected = Integer.parseInt(request.waitForNodes().substring(2));
+                if (response.getNumberOfNodes() <= expected) {
+                    waitForCounter++;
+                }
+            } else if (request.waitForNodes().startsWith("le(")) {
+                int expected = Integer.parseInt(request.waitForNodes().substring(3, request.waitForNodes().length() - 1));
+                if (response.getNumberOfNodes() <= expected) {
+                    waitForCounter++;
+                }
+            } else if (request.waitForNodes().startsWith(">")) {
+                int expected = Integer.parseInt(request.waitForNodes().substring(1));
+                if (response.getNumberOfNodes() > expected) {
+                    waitForCounter++;
+                }
+            } else if (request.waitForNodes().startsWith("gt(")) {
+                int expected = Integer.parseInt(request.waitForNodes().substring(3, request.waitForNodes().length() - 1));
+                if (response.getNumberOfNodes() > expected) {
+                    waitForCounter++;
+                }
+            } else if (request.waitForNodes().startsWith("<")) {
+                int expected = Integer.parseInt(request.waitForNodes().substring(1));
+                if (response.getNumberOfNodes() < expected) {
+                    waitForCounter++;
+                }
+            } else if (request.waitForNodes().startsWith("lt(")) {
+                int expected = Integer.parseInt(request.waitForNodes().substring(3, request.waitForNodes().length() - 1));
+                if (response.getNumberOfNodes() < expected) {
+                    waitForCounter++;
+                }
+            } else {
+                int expected = Integer.parseInt(request.waitForNodes());
+                if (response.getNumberOfNodes() == expected) {
+                    waitForCounter++;
+                }
+            }
+        }
+        return waitForCounter == waitFor;
+    }
+
+
+    private ClusterHealthResponse clusterHealth(ClusterHealthRequest request, ClusterState clusterState, int numberOfPendingTasks) {
         if (logger.isTraceEnabled()) {
             logger.trace("Calculating health based on state version [{}]", clusterState.version());
         }
-        RoutingTableValidation validation = clusterState.routingTable().validate(clusterState.metaData());
-        ClusterHealthResponse response = new ClusterHealthResponse(clusterName.value(), validation.failures());
-        response.numberOfNodes = clusterState.nodes().size();
-        response.numberOfDataNodes = clusterState.nodes().dataNodes().size();
-
-        for (String index : clusterState.metaData().concreteIndicesIgnoreMissing(request.indices())) {
-            IndexRoutingTable indexRoutingTable = clusterState.routingTable().index(index);
-            IndexMetaData indexMetaData = clusterState.metaData().index(index);
-            if (indexRoutingTable == null) {
-                continue;
-            }
-            ClusterIndexHealth indexHealth = new ClusterIndexHealth(index, indexMetaData.numberOfShards(), indexMetaData.numberOfReplicas(), validation.indexFailures(indexMetaData.index()));
-
-            for (IndexShardRoutingTable shardRoutingTable : indexRoutingTable) {
-                ClusterShardHealth shardHealth = new ClusterShardHealth(shardRoutingTable.shardId().id());
-                for (ShardRouting shardRouting : shardRoutingTable) {
-                    if (shardRouting.active()) {
-                        shardHealth.activeShards++;
-                        if (shardRouting.relocating()) {
-                            // the shard is relocating, the one he is relocating to will be in initializing state, so we don't count it
-                            shardHealth.relocatingShards++;
-                        }
-                        if (shardRouting.primary()) {
-                            shardHealth.primaryActive = true;
-                        }
-                    } else if (shardRouting.initializing()) {
-                        shardHealth.initializingShards++;
-                    } else if (shardRouting.unassigned()) {
-                        shardHealth.unassignedShards++;
-                    }
-                }
-                if (shardHealth.primaryActive) {
-                    if (shardHealth.activeShards == shardRoutingTable.size()) {
-                        shardHealth.status = ClusterHealthStatus.GREEN;
-                    } else {
-                        shardHealth.status = ClusterHealthStatus.YELLOW;
-                    }
-                } else {
-                    shardHealth.status = ClusterHealthStatus.RED;
-                }
-                indexHealth.shards.put(shardHealth.getId(), shardHealth);
-            }
-
-            for (ClusterShardHealth shardHealth : indexHealth) {
-                if (shardHealth.isPrimaryActive()) {
-                    indexHealth.activePrimaryShards++;
-                }
-                indexHealth.activeShards += shardHealth.activeShards;
-                indexHealth.relocatingShards += shardHealth.relocatingShards;
-                indexHealth.initializingShards += shardHealth.initializingShards;
-                indexHealth.unassignedShards += shardHealth.unassignedShards;
-            }
-            // update the index status
-            indexHealth.status = ClusterHealthStatus.GREEN;
-            if (!indexHealth.getValidationFailures().isEmpty()) {
-                indexHealth.status = ClusterHealthStatus.RED;
-            } else if (indexHealth.getShards().isEmpty()) { // might be since none has been created yet (two phase index creation)
-                indexHealth.status = ClusterHealthStatus.RED;
-            } else {
-                for (ClusterShardHealth shardHealth : indexHealth) {
-                    if (shardHealth.getStatus() == ClusterHealthStatus.RED) {
-                        indexHealth.status = ClusterHealthStatus.RED;
-                        break;
-                    }
-                    if (shardHealth.getStatus() == ClusterHealthStatus.YELLOW) {
-                        indexHealth.status = ClusterHealthStatus.YELLOW;
-                    }
-                }
-            }
-
-            response.indices.put(indexHealth.getIndex(), indexHealth);
-        }
-
-        for (ClusterIndexHealth indexHealth : response) {
-            response.activePrimaryShards += indexHealth.activePrimaryShards;
-            response.activeShards += indexHealth.activeShards;
-            response.relocatingShards += indexHealth.relocatingShards;
-            response.initializingShards += indexHealth.initializingShards;
-            response.unassignedShards += indexHealth.unassignedShards;
-        }
-
-        response.status = ClusterHealthStatus.GREEN;
-        if (!response.getValidationFailures().isEmpty()) {
+        String[] concreteIndices;
+        try {
+            concreteIndices = clusterState.metaData().concreteIndices(request.indicesOptions(), request.indices());
+        } catch (IndexMissingException e) {
+            // one of the specified indices is not there - treat it as RED.
+            ClusterHealthResponse response = new ClusterHealthResponse(clusterName.value(), Strings.EMPTY_ARRAY, clusterState, numberOfPendingTasks);
             response.status = ClusterHealthStatus.RED;
-        } else if (clusterState.blocks().hasGlobalBlock(RestStatus.SERVICE_UNAVAILABLE)) {
-            response.status = ClusterHealthStatus.RED;
-        } else {
-            for (ClusterIndexHealth indexHealth : response) {
-                if (indexHealth.getStatus() == ClusterHealthStatus.RED) {
-                    response.status = ClusterHealthStatus.RED;
-                    break;
-                }
-                if (indexHealth.getStatus() == ClusterHealthStatus.YELLOW) {
-                    response.status = ClusterHealthStatus.YELLOW;
-                }
-            }
+            return response;
         }
 
-        return response;
+        return new ClusterHealthResponse(clusterName.value(), concreteIndices, clusterState, numberOfPendingTasks);
     }
 }

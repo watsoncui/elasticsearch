@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -40,21 +40,21 @@ class RecoveryFilesInfoRequest extends TransportRequest {
     List<Long> phase1FileSizes;
     List<String> phase1ExistingFileNames;
     List<Long> phase1ExistingFileSizes;
-    long phase1TotalSize;
-    long phase1ExistingTotalSize;
+
+    int totalTranslogOps;
 
     RecoveryFilesInfoRequest() {
     }
 
-    RecoveryFilesInfoRequest(long recoveryId, ShardId shardId, List<String> phase1FileNames, List<Long> phase1FileSizes, List<String> phase1ExistingFileNames, List<Long> phase1ExistingFileSizes, long phase1TotalSize, long phase1ExistingTotalSize) {
+    RecoveryFilesInfoRequest(long recoveryId, ShardId shardId, List<String> phase1FileNames, List<Long> phase1FileSizes,
+                             List<String> phase1ExistingFileNames, List<Long> phase1ExistingFileSizes, int totalTranslogOps) {
         this.recoveryId = recoveryId;
         this.shardId = shardId;
         this.phase1FileNames = phase1FileNames;
         this.phase1FileSizes = phase1FileSizes;
         this.phase1ExistingFileNames = phase1ExistingFileNames;
         this.phase1ExistingFileSizes = phase1ExistingFileSizes;
-        this.phase1TotalSize = phase1TotalSize;
-        this.phase1ExistingTotalSize = phase1ExistingTotalSize;
+        this.totalTranslogOps = totalTranslogOps;
     }
 
     public long recoveryId() {
@@ -71,31 +71,29 @@ class RecoveryFilesInfoRequest extends TransportRequest {
         recoveryId = in.readLong();
         shardId = ShardId.readShardId(in);
         int size = in.readVInt();
-        phase1FileNames = new ArrayList<String>(size);
+        phase1FileNames = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             phase1FileNames.add(in.readString());
         }
 
         size = in.readVInt();
-        phase1FileSizes = new ArrayList<Long>(size);
+        phase1FileSizes = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             phase1FileSizes.add(in.readVLong());
         }
 
         size = in.readVInt();
-        phase1ExistingFileNames = new ArrayList<String>(size);
+        phase1ExistingFileNames = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             phase1ExistingFileNames.add(in.readString());
         }
 
         size = in.readVInt();
-        phase1ExistingFileSizes = new ArrayList<Long>(size);
+        phase1ExistingFileSizes = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             phase1ExistingFileSizes.add(in.readVLong());
         }
-
-        phase1TotalSize = in.readVLong();
-        phase1ExistingTotalSize = in.readVLong();
+        totalTranslogOps = in.readVInt();
     }
 
     @Override
@@ -123,8 +121,6 @@ class RecoveryFilesInfoRequest extends TransportRequest {
         for (Long phase1ExistingFileSize : phase1ExistingFileSizes) {
             out.writeVLong(phase1ExistingFileSize);
         }
-
-        out.writeVLong(phase1TotalSize);
-        out.writeVLong(phase1ExistingTotalSize);
+        out.writeVInt(totalTranslogOps);
     }
 }

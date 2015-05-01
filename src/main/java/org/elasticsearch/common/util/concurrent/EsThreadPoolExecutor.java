@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,6 @@
 
 package org.elasticsearch.common.util.concurrent;
 
-import org.elasticsearch.ElasticSearchIllegalStateException;
 
 import java.util.concurrent.*;
 
@@ -32,26 +31,26 @@ public class EsThreadPoolExecutor extends ThreadPoolExecutor {
 
     private final Object monitor = new Object();
 
-    public EsThreadPoolExecutor(int corePoolSize, int maximumPoolSize, long keepAliveTime, TimeUnit unit, BlockingQueue<Runnable> workQueue, ThreadFactory threadFactory) {
-        super(corePoolSize, maximumPoolSize, keepAliveTime, unit, workQueue, threadFactory, new EsAbortPolicy());
+    EsThreadPoolExecutor(int corePoolSize, int maximumPoolSize, long keepAliveTime, TimeUnit unit, BlockingQueue<Runnable> workQueue, ThreadFactory threadFactory) {
+        this(corePoolSize, maximumPoolSize, keepAliveTime, unit, workQueue, threadFactory, new EsAbortPolicy());
     }
 
-    public EsThreadPoolExecutor(int corePoolSize, int maximumPoolSize, long keepAliveTime, TimeUnit unit, BlockingQueue<Runnable> workQueue, ThreadFactory threadFactory, RejectedExecutionHandler handler) {
+    EsThreadPoolExecutor(int corePoolSize, int maximumPoolSize, long keepAliveTime, TimeUnit unit, BlockingQueue<Runnable> workQueue, ThreadFactory threadFactory, XRejectedExecutionHandler handler) {
         super(corePoolSize, maximumPoolSize, keepAliveTime, unit, workQueue, threadFactory, handler);
     }
 
     public void shutdown(ShutdownListener listener) {
         synchronized (monitor) {
             if (this.listener != null) {
-                throw new ElasticSearchIllegalStateException("Shutdown was already called on this thread pool");
+                throw new IllegalStateException("Shutdown was already called on this thread pool");
             }
             if (isTerminated()) {
                 listener.onTerminated();
             } else {
                 this.listener = listener;
             }
-            shutdown();
         }
+        shutdown();
     }
 
     @Override
@@ -72,4 +71,23 @@ public class EsThreadPoolExecutor extends ThreadPoolExecutor {
         public void onTerminated();
     }
 
+    @Override
+    public void execute(Runnable command) {
+        try {
+            super.execute(command);
+        } catch (EsRejectedExecutionException ex) {
+            if (command instanceof AbstractRunnable) {
+                // If we are an abstract runnable we can handle the rejection
+                // directly and don't need to rethrow it.
+                try {
+                    ((AbstractRunnable) command).onRejection(ex);
+                } finally {
+                    ((AbstractRunnable) command).onAfter();
+
+                }
+            } else {
+                throw ex;
+            }
+        }
+    }
 }

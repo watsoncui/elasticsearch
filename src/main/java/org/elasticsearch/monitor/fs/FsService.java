@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,6 +23,10 @@ import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.common.util.SingleObjectCache;
+import org.elasticsearch.monitor.os.OsStats;
+
+import java.io.IOException;
 
 /**
  */
@@ -30,26 +34,35 @@ public class FsService extends AbstractComponent {
 
     private final FsProbe probe;
 
-    private final TimeValue refreshInterval;
-
-    private FsStats cachedStats;
+    private final SingleObjectCache<FsStats> fsStatsCache;
 
     @Inject
-    public FsService(Settings settings, FsProbe probe) {
+    public FsService(Settings settings, FsProbe probe) throws IOException {
         super(settings);
         this.probe = probe;
-        this.cachedStats = probe.stats();
-
-        this.refreshInterval = componentSettings.getAsTime("refresh_interval", TimeValue.timeValueSeconds(1));
-
+        TimeValue refreshInterval = settings.getAsTime("monitor.fs.refresh_interval", TimeValue.timeValueSeconds(1));
+        fsStatsCache = new FsStatsCache(refreshInterval, probe.stats());
         logger.debug("Using probe [{}] with refresh_interval [{}]", probe, refreshInterval);
     }
 
-    public synchronized FsStats stats() {
-        if ((System.currentTimeMillis() - cachedStats.getTimestamp()) > refreshInterval.millis()) {
-            cachedStats = probe.stats();
+    public FsStats stats() {
+        return fsStatsCache.getOrRefresh();
+    }
+
+    private class FsStatsCache extends SingleObjectCache<FsStats> {
+        public FsStatsCache(TimeValue interval, FsStats initValue) {
+            super(interval, initValue);
         }
-        return cachedStats;
+
+        @Override
+        protected FsStats refresh() {
+            try {
+                return probe.stats();
+            } catch (IOException ex) {
+                logger.warn("Failed to fetch fs stats - returning empty instance");
+                return new FsStats();
+            }
+        }
     }
 
 }

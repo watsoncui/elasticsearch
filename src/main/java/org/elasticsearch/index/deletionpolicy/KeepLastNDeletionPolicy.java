@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -33,22 +33,24 @@ import java.util.List;
 /**
  *
  */
-public class KeepLastNDeletionPolicy extends AbstractIndexShardComponent implements IndexDeletionPolicy {
+public class KeepLastNDeletionPolicy extends AbstractESDeletionPolicy {
 
     private final int numToKeep;
 
     @Inject
     public KeepLastNDeletionPolicy(ShardId shardId, @IndexSettings Settings indexSettings) {
         super(shardId, indexSettings);
-        this.numToKeep = componentSettings.getAsInt("num_to_keep", 5);
+        this.numToKeep = indexSettings.getAsInt("index.deletionpolicy.num_to_keep", 5);
         logger.debug("Using [keep_last_n] deletion policy with num_to_keep[{}]", numToKeep);
     }
 
+    @Override
     public void onInit(List<? extends IndexCommit> commits) throws IOException {
         // do no deletions on init
         doDeletes(commits);
     }
 
+    @Override
     public void onCommit(List<? extends IndexCommit> commits) throws IOException {
         doDeletes(commits);
     }

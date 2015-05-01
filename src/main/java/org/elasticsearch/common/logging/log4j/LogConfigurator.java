@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,14 +19,24 @@
 
 package org.elasticsearch.common.logging.log4j;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+
 import org.apache.log4j.PropertyConfigurator;
+import org.apache.log4j.rolling.SizeBasedTriggeringPolicy;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.env.Environment;
 import org.elasticsearch.env.FailedToResolveConfigException;
 
+import java.io.IOException;
+import java.net.MalformedURLException;
+import java.nio.file.*;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.EnumSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 
@@ -36,6 +46,8 @@ import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilde
  *
  */
 public class LogConfigurator {
+
+    static final List<String> ALLOWED_SUFFIXES = ImmutableList.of(".yml", ".yaml", ".json", ".properties");
 
     private static boolean loaded;
 
@@ -51,16 +63,21 @@ public class LogConfigurator {
             .put("ntevent", "org.apache.log4j.nt.NTEventLogAppender")
             .put("null", "org.apache.log4j.NullAppender")
             .put("rollingFile", "org.apache.log4j.RollingFileAppender")
+            .put("extrasRollingFile", "org.apache.log4j.rolling.RollingFileAppender")
             .put("smtp", "org.apache.log4j.net.SMTPAppender")
             .put("socket", "org.apache.log4j.net.SocketAppender")
             .put("socketHub", "org.apache.log4j.net.SocketHubAppender")
             .put("syslog", "org.apache.log4j.net.SyslogAppender")
             .put("telnet", "org.apache.log4j.net.TelnetAppender")
+                    // policies
+            .put("timeBased", "org.apache.log4j.rolling.TimeBasedRollingPolicy")
+            .put("sizeBased", "org.apache.log4j.rolling.SizeBasedTriggeringPolicy")
                     // layouts
             .put("simple", "org.apache.log4j.SimpleLayout")
             .put("html", "org.apache.log4j.HTMLLayout")
             .put("pattern", "org.apache.log4j.PatternLayout")
             .put("consolePattern", "org.apache.log4j.PatternLayout")
+            .put("enhancedPattern", "org.apache.log4j.EnhancedPatternLayout")
             .put("ttcc", "org.apache.log4j.TTCCLayout")
             .put("xml", "org.apache.log4j.XMLLayout")
             .immutableMap();
@@ -72,23 +89,7 @@ public class LogConfigurator {
         loaded = true;
         Environment environment = new Environment(settings);
         ImmutableSettings.Builder settingsBuilder = settingsBuilder().put(settings);
-        try {
-            settingsBuilder.loadFromUrl(environment.resolveConfig("logging.yml"));
-        } catch (FailedToResolveConfigException e) {
-            // ignore
-        } catch (NoClassDefFoundError e) {
-            // ignore, no yaml
-        }
-        try {
-            settingsBuilder.loadFromUrl(environment.resolveConfig("logging.json"));
-        } catch (FailedToResolveConfigException e) {
-            // ignore
-        }
-        try {
-            settingsBuilder.loadFromUrl(environment.resolveConfig("logging.properties"));
-        } catch (FailedToResolveConfigException e) {
-            // ignore
-        }
+        resolveConfig(environment, settingsBuilder);
         settingsBuilder
                 .putProperties("elasticsearch.", System.getProperties())
                 .putProperties("es.", System.getProperties())
@@ -109,5 +110,44 @@ public class LogConfigurator {
             }
         }
         PropertyConfigurator.configure(props);
+    }
+
+    /**
+     * sets the loaded flag to false so that logging configuration can be
+     * overridden. Should only be used in tests.
+     */
+    public static void reset() {
+        loaded = false;
+    }
+
+    public static void resolveConfig(Environment env, final ImmutableSettings.Builder settingsBuilder) {
+
+        try {
+            Files.walkFileTree(env.configFile(), EnumSet.of(FileVisitOption.FOLLOW_LINKS), Integer.MAX_VALUE, new SimpleFileVisitor<Path>() {
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                    String fileName = file.getFileName().toString();
+                    if (fileName.startsWith("logging.")) {
+                        for (String allowedSuffix : ALLOWED_SUFFIXES) {
+                            if (fileName.endsWith(allowedSuffix)) {
+                                loadConfig(file, settingsBuilder);
+                                break;
+                            }
+                        }
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (IOException ioe) {
+            throw new ElasticsearchException("Failed to load logging configuration", ioe);
+        }
+    }
+
+    public static void loadConfig(Path file, ImmutableSettings.Builder settingsBuilder) {
+        try {
+            settingsBuilder.loadFromUrl(file.toUri().toURL());
+        } catch (FailedToResolveConfigException | NoClassDefFoundError | MalformedURLException e) {
+            // ignore
+        }
     }
 }

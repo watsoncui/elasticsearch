@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,43 +22,52 @@ package org.elasticsearch.common.blobstore;
 import com.google.common.collect.ImmutableMap;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 
 /**
  *
  */
 public interface BlobContainer {
 
-    interface BlobNameFilter {
-        /**
-         * Return <tt>false</tt> if the blob should be filtered.
-         */
-        boolean accept(String blobName);
-    }
-
-    interface ReadBlobListener {
-
-        void onPartial(byte[] data, int offset, int size) throws IOException;
-
-        void onCompleted();
-
-        void onFailure(Throwable t);
-    }
-
     BlobPath path();
 
     boolean blobExists(String blobName);
 
-    void readBlob(String blobName, ReadBlobListener listener);
+    /**
+     * Creates a new {@link InputStream} for the given blob name
+     */
+    InputStream openInput(String blobName) throws IOException;
 
-    byte[] readBlobFully(String blobName) throws IOException;
+    /**
+     * Creates a new OutputStream for the given blob name
+     */
+    OutputStream createOutput(String blobName) throws IOException;
 
-    boolean deleteBlob(String blobName) throws IOException;
+    /**
+     * Deletes a blob with giving name.
+     *
+     * If blob exist but cannot be deleted an exception has to be thrown.
+     */
+    void deleteBlob(String blobName) throws IOException;
 
+    /**
+     * Deletes all blobs in the container that match the specified prefix.
+     */
     void deleteBlobsByPrefix(String blobNamePrefix) throws IOException;
 
-    void deleteBlobsByFilter(BlobNameFilter filter) throws IOException;
-
+    /**
+     * Lists all blobs in the container
+     */
     ImmutableMap<String, BlobMetaData> listBlobs() throws IOException;
 
+    /**
+     * Lists all blobs in the container that match specified prefix
+     */
     ImmutableMap<String, BlobMetaData> listBlobsByPrefix(String blobNamePrefix) throws IOException;
+
+    /**
+     * Atomically renames source blob into target blob
+     */
+    void move(String sourceBlobName, String targetBlobName) throws IOException;
 }

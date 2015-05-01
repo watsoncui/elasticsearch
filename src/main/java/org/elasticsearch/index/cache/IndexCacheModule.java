@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,10 +21,8 @@ package org.elasticsearch.index.cache;
 
 import org.elasticsearch.common.inject.AbstractModule;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.index.cache.docset.DocSetCacheModule;
+import org.elasticsearch.index.cache.bitset.BitsetFilterCacheModule;
 import org.elasticsearch.index.cache.filter.FilterCacheModule;
-import org.elasticsearch.index.cache.id.IdCacheModule;
-import org.elasticsearch.index.cache.query.parser.QueryParserCacheModule;
 
 /**
  *
@@ -40,9 +38,7 @@ public class IndexCacheModule extends AbstractModule {
     @Override
     protected void configure() {
         new FilterCacheModule(settings).configure(binder());
-        new IdCacheModule(settings).configure(binder());
-        new QueryParserCacheModule(settings).configure(binder());
-        new DocSetCacheModule(settings).configure(binder());
+        new BitsetFilterCacheModule(settings).configure(binder());
 
         bind(IndexCache.class).asEagerSingleton();
     }

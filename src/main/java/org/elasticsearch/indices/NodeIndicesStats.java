@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,104 +19,151 @@
 
 package org.elasticsearch.indices;
 
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import org.elasticsearch.action.admin.indices.stats.CommonStats;
+import org.elasticsearch.action.admin.indices.stats.IndexShardStats;
+import org.elasticsearch.action.admin.indices.stats.ShardStats;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentBuilderString;
-import org.elasticsearch.index.cache.CacheStats;
+import org.elasticsearch.index.Index;
+import org.elasticsearch.index.cache.filter.FilterCacheStats;
+import org.elasticsearch.index.cache.id.IdCacheStats;
+import org.elasticsearch.index.cache.query.QueryCacheStats;
+import org.elasticsearch.index.engine.SegmentsStats;
 import org.elasticsearch.index.fielddata.FieldDataStats;
 import org.elasticsearch.index.flush.FlushStats;
 import org.elasticsearch.index.get.GetStats;
 import org.elasticsearch.index.indexing.IndexingStats;
 import org.elasticsearch.index.merge.MergeStats;
+import org.elasticsearch.index.percolator.stats.PercolateStats;
+import org.elasticsearch.index.recovery.RecoveryStats;
 import org.elasticsearch.index.refresh.RefreshStats;
 import org.elasticsearch.index.search.stats.SearchStats;
 import org.elasticsearch.index.shard.DocsStats;
 import org.elasticsearch.index.store.StoreStats;
+import org.elasticsearch.index.suggest.stats.SuggestStats;
+import org.elasticsearch.search.suggest.completion.CompletionStats;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Global information on indices stats running on a specific node.
  */
 public class NodeIndicesStats implements Streamable, Serializable, ToXContent {
 
-    private StoreStats storeStats;
-
-    private DocsStats docsStats;
-
-    private IndexingStats indexingStats;
-
-    private GetStats getStats;
-
-    private SearchStats searchStats;
-
-    private CacheStats cacheStats;
-
-    private FieldDataStats fieldDataStats;
-
-    private MergeStats mergeStats;
-
-    private RefreshStats refreshStats;
-
-    private FlushStats flushStats;
+    private CommonStats stats;
+    private Map<Index, List<IndexShardStats>> statsByShard;
 
     NodeIndicesStats() {
     }
 
-    public NodeIndicesStats(StoreStats storeStats, DocsStats docsStats, IndexingStats indexingStats, GetStats getStats, SearchStats searchStats, CacheStats cacheStats, FieldDataStats fieldDataStats, MergeStats mergeStats, RefreshStats refreshStats, FlushStats flushStats) {
-        this.storeStats = storeStats;
-        this.docsStats = docsStats;
-        this.indexingStats = indexingStats;
-        this.getStats = getStats;
-        this.searchStats = searchStats;
-        this.cacheStats = cacheStats;
-        this.fieldDataStats = fieldDataStats;
-        this.mergeStats = mergeStats;
-        this.refreshStats = refreshStats;
-        this.flushStats = flushStats;
+    public NodeIndicesStats(CommonStats oldStats, Map<Index, List<IndexShardStats>> statsByShard) {
+        //this.stats = stats;
+        this.statsByShard = statsByShard;
+
+        // make a total common stats from old ones and current ones
+        this.stats = oldStats;
+        for (List<IndexShardStats> shardStatsList : statsByShard.values()) {
+            for (IndexShardStats indexShardStats : shardStatsList) {
+                for (ShardStats shardStats : indexShardStats.getShards()) {
+                    stats.add(shardStats.getStats());
+                }
+            }
+        }
     }
 
-    /**
-     * The size of the index storage taken on the node.
-     */
+    @Nullable
     public StoreStats getStore() {
-        return storeStats;
+        return stats.getStore();
     }
 
+    @Nullable
     public DocsStats getDocs() {
-        return this.docsStats;
+        return stats.getDocs();
     }
 
+    @Nullable
     public IndexingStats getIndexing() {
-        return indexingStats;
+        return stats.getIndexing();
     }
 
+    @Nullable
     public GetStats getGet() {
-        return this.getStats;
+        return stats.getGet();
     }
 
+    @Nullable
     public SearchStats getSearch() {
-        return this.searchStats;
+        return stats.getSearch();
     }
 
-    public CacheStats getCache() {
-        return this.cacheStats;
+    @Nullable
+    public PercolateStats getPercolate() {
+        return stats.getPercolate();
     }
 
+    @Nullable
     public MergeStats getMerge() {
-        return this.mergeStats;
+        return stats.getMerge();
     }
 
+    @Nullable
     public RefreshStats getRefresh() {
-        return refreshStats;
+        return stats.getRefresh();
     }
 
+    @Nullable
     public FlushStats getFlush() {
-        return this.flushStats;
+        return stats.getFlush();
+    }
+
+    @Nullable
+    public FieldDataStats getFieldData() {
+        return stats.getFieldData();
+    }
+
+    @Nullable
+    public FilterCacheStats getFilterCache() {
+        return stats.getFilterCache();
+    }
+
+    @Nullable
+    public QueryCacheStats getQueryCache() {
+        return stats.getQueryCache();
+    }
+
+    @Nullable
+    public IdCacheStats getIdCache() {
+        return stats.getIdCache();
+    }
+
+    @Nullable
+    public CompletionStats getCompletion() {
+        return stats.getCompletion();
+    }
+
+    @Nullable
+    public SegmentsStats getSegments() {
+        return stats.getSegments();
+    }
+
+    @Nullable
+    public SuggestStats getSuggest() {
+        return stats.getSuggest();
+    }
+
+    @Nullable
+    public RecoveryStats getRecoveryStats() {
+        return stats.getRecoveryStats();
     }
 
     public static NodeIndicesStats readIndicesStats(StreamInput in) throws IOException {
@@ -127,49 +174,94 @@ public class NodeIndicesStats implements Streamable, Serializable, ToXContent {
 
     @Override
     public void readFrom(StreamInput in) throws IOException {
-        storeStats = StoreStats.readStoreStats(in);
-        docsStats = DocsStats.readDocStats(in);
-        indexingStats = IndexingStats.readIndexingStats(in);
-        getStats = GetStats.readGetStats(in);
-        searchStats = SearchStats.readSearchStats(in);
-        cacheStats = CacheStats.readCacheStats(in);
-        fieldDataStats = FieldDataStats.readFieldDataStats(in);
-        mergeStats = MergeStats.readMergeStats(in);
-        refreshStats = RefreshStats.readRefreshStats(in);
-        flushStats = FlushStats.readFlushStats(in);
+        stats = CommonStats.readCommonStats(in);
+        if (in.readBoolean()) {
+            int entries = in.readVInt();
+            statsByShard = Maps.newHashMap();
+            for (int i = 0; i < entries; i++) {
+                Index index = Index.readIndexName(in);
+                int indexShardListSize = in.readVInt();
+                List<IndexShardStats> indexShardStats = Lists.newArrayListWithCapacity(indexShardListSize);
+                for (int j = 0; j < indexShardListSize; j++) {
+                    indexShardStats.add(IndexShardStats.readIndexShardStats(in));
+                }
+                statsByShard.put(index, indexShardStats);
+            }
+        }
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
-        storeStats.writeTo(out);
-        docsStats.writeTo(out);
-        indexingStats.writeTo(out);
-        getStats.writeTo(out);
-        searchStats.writeTo(out);
-        cacheStats.writeTo(out);
-        fieldDataStats.writeTo(out);
-        mergeStats.writeTo(out);
-        refreshStats.writeTo(out);
-        flushStats.writeTo(out);
+        stats.writeTo(out);
+        out.writeBoolean(statsByShard != null);
+        if (statsByShard != null) {
+            out.writeVInt(statsByShard.size());
+            for (Map.Entry<Index, List<IndexShardStats>> entry : statsByShard.entrySet()) {
+                entry.getKey().writeTo(out);
+                out.writeVInt(entry.getValue().size());
+                for (IndexShardStats indexShardStats : entry.getValue()) {
+                    indexShardStats.writeTo(out);
+                }
+            }
+        }
     }
 
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
-        builder.startObject(Fields.INDICES);
+        String level = params.param("level", "node");
+        boolean isLevelValid = "node".equalsIgnoreCase(level) || "indices".equalsIgnoreCase(level) || "shards".equalsIgnoreCase(level);
+        if (!isLevelValid) {
+            return builder;
+        }
 
-        storeStats.toXContent(builder, params);
-        docsStats.toXContent(builder, params);
-        indexingStats.toXContent(builder, params);
-        getStats.toXContent(builder, params);
-        searchStats.toXContent(builder, params);
-        cacheStats.toXContent(builder, params);
-        fieldDataStats.toXContent(builder, params);
-        mergeStats.toXContent(builder, params);
-        refreshStats.toXContent(builder, params);
-        flushStats.toXContent(builder, params);
+        // "node" level
+        builder.startObject(Fields.INDICES);
+        stats.toXContent(builder, params);
+
+        if ("indices".equals(level)) {
+            Map<Index, CommonStats> indexStats = createStatsByIndex();
+            builder.startObject(Fields.INDICES);
+            for (Map.Entry<Index, CommonStats> entry : indexStats.entrySet()) {
+                builder.startObject(entry.getKey().name());
+                entry.getValue().toXContent(builder, params);
+                builder.endObject();
+            }
+            builder.endObject();
+        } else if ("shards".equals(level)) {
+            builder.startObject("shards");
+            for (Map.Entry<Index, List<IndexShardStats>> entry : statsByShard.entrySet()) {
+                builder.startArray(entry.getKey().name());
+                for (IndexShardStats indexShardStats : entry.getValue()) {
+                    builder.startObject().startObject(String.valueOf(indexShardStats.getShardId().getId()));
+                    for (ShardStats shardStats : indexShardStats.getShards()) {
+                        shardStats.toXContent(builder, params);
+                    }
+                    builder.endObject().endObject();
+                }
+                builder.endArray();
+            }
+            builder.endObject();
+        }
 
         builder.endObject();
         return builder;
+    }
+
+    private Map<Index, CommonStats> createStatsByIndex() {
+        Map<Index, CommonStats> statsMap = Maps.newHashMap();
+        for (Map.Entry<Index, List<IndexShardStats>> entry : statsByShard.entrySet()) {
+            if (!statsMap.containsKey(entry.getKey())) {
+                statsMap.put(entry.getKey(), new CommonStats());
+            }
+
+            for (IndexShardStats indexShardStats : entry.getValue()) {
+                for (ShardStats shardStats : indexShardStats.getShards()) {
+                    statsMap.get(entry.getKey()).add(shardStats.getStats());
+                }
+            }
+        }
+
+        return statsMap;
     }
 
     static final class Fields {

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,7 +20,9 @@
 package org.elasticsearch.common.util.concurrent;
 
 import com.google.common.annotations.Beta;
+
 import org.elasticsearch.common.Nullable;
+import org.elasticsearch.transport.Transports;
 
 import java.util.concurrent.*;
 import java.util.concurrent.locks.AbstractQueuedSynchronizer;
@@ -62,13 +64,14 @@ import static com.google.common.base.Preconditions.checkNotNull;
  * @author Sven Mawson
  * @since 1.0
  */
-// Same as AbstractFuture from Guava, but without the listeners
+// Same as AbstractFuture from Guava, but without the listeners and with
+// additional assertions
 public abstract class BaseFuture<V> implements Future<V> {
 
     /**
      * Synchronization control for AbstractFutures.
      */
-    private final Sync<V> sync = new Sync<V>();
+    private final Sync<V> sync = new Sync<>();
 
     /*
     * Improve the documentation of when InterruptedException is thrown. Our
@@ -89,6 +92,7 @@ public abstract class BaseFuture<V> implements Future<V> {
     @Override
     public V get(long timeout, TimeUnit unit) throws InterruptedException,
             TimeoutException, ExecutionException {
+        Transports.assertNotTransportThread("Blocking operation");
         return sync.get(unit.toNanos(timeout));
     }
 
@@ -110,6 +114,7 @@ public abstract class BaseFuture<V> implements Future<V> {
      */
     @Override
     public V get() throws InterruptedException, ExecutionException {
+        Transports.assertNotTransportThread("Blocking operation");
         return sync.get();
     }
 
@@ -182,9 +187,12 @@ public abstract class BaseFuture<V> implements Future<V> {
 
         // If it's an Error, we want to make sure it reaches the top of the
         // call stack, so we rethrow it.
-        if (throwable instanceof Error) {
-            throw (Error) throwable;
-        }
+
+        // we want to notify the listeners we have with errors as well, as it breaks
+        // how we work in ES in terms of using assertions
+//        if (throwable instanceof Error) {
+//            throw (Error) throwable;
+//        }
         return result;
     }
 

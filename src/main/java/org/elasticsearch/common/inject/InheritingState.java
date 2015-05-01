@@ -16,11 +16,11 @@
 
 package org.elasticsearch.common.inject;
 
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import org.elasticsearch.common.inject.internal.BindingImpl;
-import org.elasticsearch.common.inject.internal.Errors;
-import org.elasticsearch.common.inject.internal.MatcherAndConverter;
+import org.elasticsearch.common.inject.internal.*;
+import org.elasticsearch.common.inject.spi.InjectionPoint;
 import org.elasticsearch.common.inject.spi.TypeListenerBinding;
 
 import java.lang.annotation.Annotation;
@@ -53,41 +53,50 @@ class InheritingState implements State {
         this.lock = (parent == State.NONE) ? this : parent.lock();
     }
 
+    @Override
     public State parent() {
         return parent;
     }
 
+    @Override
     @SuppressWarnings("unchecked") // we only put in BindingImpls that match their key types
     public <T> BindingImpl<T> getExplicitBinding(Key<T> key) {
         Binding<?> binding = explicitBindings.get(key);
         return binding != null ? (BindingImpl<T>) binding : parent.getExplicitBinding(key);
     }
 
+    @Override
     public Map<Key<?>, Binding<?>> getExplicitBindingsThisLevel() {
         return explicitBindings;
     }
 
+    @Override
     public void putBinding(Key<?> key, BindingImpl<?> binding) {
         explicitBindingsMutable.put(key, binding);
     }
 
+    @Override
     public Scope getScope(Class<? extends Annotation> annotationType) {
         Scope scope = scopes.get(annotationType);
         return scope != null ? scope : parent.getScope(annotationType);
     }
 
+    @Override
     public void putAnnotation(Class<? extends Annotation> annotationType, Scope scope) {
         scopes.put(annotationType, scope);
     }
 
+    @Override
     public Iterable<MatcherAndConverter> getConvertersThisLevel() {
         return converters;
     }
 
+    @Override
     public void addConverter(MatcherAndConverter matcherAndConverter) {
         converters.add(matcherAndConverter);
     }
 
+    @Override
     public MatcherAndConverter getConverter(
             String stringValue, TypeLiteral<?> type, Errors errors, Object source) {
         MatcherAndConverter matchingConverter = null;
@@ -104,24 +113,28 @@ class InheritingState implements State {
         return matchingConverter;
     }
 
+    @Override
     public void addTypeListener(TypeListenerBinding listenerBinding) {
         listenerBindings.add(listenerBinding);
     }
 
+    @Override
     public List<TypeListenerBinding> getTypeListenerBindings() {
         List<TypeListenerBinding> parentBindings = parent.getTypeListenerBindings();
         List<TypeListenerBinding> result
-                = new ArrayList<TypeListenerBinding>(parentBindings.size() + 1);
+                = new ArrayList<>(parentBindings.size() + 1);
         result.addAll(parentBindings);
         result.addAll(listenerBindings);
         return result;
     }
 
+    @Override
     public void blacklist(Key<?> key) {
         parent.blacklist(key);
         blacklistedKeys.add(key);
     }
 
+    @Override
     public boolean isBlacklisted(Key<?> key) {
         return blacklistedKeys.contains(key);
     }
@@ -131,6 +144,20 @@ class InheritingState implements State {
         blacklistedKeys = new WeakKeySet();
     }
 
+    @Override
+    public void makeAllBindingsToEagerSingletons(Injector injector) {
+        Map<Key<?>, Binding<?>> x = Maps.newLinkedHashMap();
+        for (Map.Entry<Key<?>, Binding<?>> entry : this.explicitBindingsMutable.entrySet()) {
+            Key key = entry.getKey();
+            BindingImpl<?> binding = (BindingImpl<?>) entry.getValue();
+            Object value = binding.getProvider().get();
+            x.put(key, new InstanceBindingImpl<Object>(injector, key, SourceProvider.UNKNOWN_SOURCE, new InternalFactory.Instance(value), ImmutableSet.<InjectionPoint>of(), value));
+        }
+        this.explicitBindingsMutable.clear();
+        this.explicitBindingsMutable.putAll(x);
+    }
+
+    @Override
     public Object lock() {
         return lock;
     }

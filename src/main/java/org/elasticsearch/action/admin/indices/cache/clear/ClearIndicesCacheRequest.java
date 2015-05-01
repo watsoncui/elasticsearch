@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,8 +19,8 @@
 
 package org.elasticsearch.action.admin.indices.cache.clear;
 
+import org.elasticsearch.Version;
 import org.elasticsearch.action.support.broadcast.BroadcastOperationRequest;
-import org.elasticsearch.action.support.broadcast.BroadcastOperationThreading;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 
@@ -34,16 +34,17 @@ public class ClearIndicesCacheRequest extends BroadcastOperationRequest<ClearInd
     private boolean filterCache = false;
     private boolean fieldDataCache = false;
     private boolean idCache = false;
+    private boolean recycler = false;
+    private boolean queryCache = false;
     private String[] fields = null;
     private String[] filterKeys = null;
+    
 
     ClearIndicesCacheRequest() {
     }
 
     public ClearIndicesCacheRequest(String... indices) {
         super(indices);
-        // we want to do the refresh in parallel on local shards...
-        operationThreading(BroadcastOperationThreading.THREAD_PER_SHARD);
     }
 
     public boolean filterCache() {
@@ -52,6 +53,15 @@ public class ClearIndicesCacheRequest extends BroadcastOperationRequest<ClearInd
 
     public ClearIndicesCacheRequest filterCache(boolean filterCache) {
         this.filterCache = filterCache;
+        return this;
+    }
+
+    public boolean queryCache() {
+        return this.queryCache;
+    }
+
+    public ClearIndicesCacheRequest queryCache(boolean queryCache) {
+        this.queryCache = queryCache;
         return this;
     }
 
@@ -85,27 +95,42 @@ public class ClearIndicesCacheRequest extends BroadcastOperationRequest<ClearInd
     public boolean idCache() {
         return this.idCache;
     }
+    
+    public ClearIndicesCacheRequest recycler(boolean recycler) {
+        this.recycler = recycler;
+        return this;
+    }
+    
+    public boolean recycler() {
+        return this.recycler;
+    }
 
     public ClearIndicesCacheRequest idCache(boolean idCache) {
         this.idCache = idCache;
         return this;
     }
 
+    @Override
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
         filterCache = in.readBoolean();
         fieldDataCache = in.readBoolean();
         idCache = in.readBoolean();
+        recycler = in.readBoolean();
         fields = in.readStringArray();
         filterKeys = in.readStringArray();
+        queryCache = in.readBoolean();
     }
 
+    @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
         out.writeBoolean(filterCache);
         out.writeBoolean(fieldDataCache);
         out.writeBoolean(idCache);
+        out.writeBoolean(recycler);
         out.writeStringArrayNullable(fields);
         out.writeStringArrayNullable(filterKeys);
+        out.writeBoolean(queryCache);
     }
 }

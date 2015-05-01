@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -25,7 +25,7 @@ package org.elasticsearch.common.collect;
 public class Tuple<V1, V2> {
 
     public static <V1, V2> Tuple<V1, V2> tuple(V1 v1, V2 v2) {
-        return new Tuple<V1, V2>(v1, v2);
+        return new Tuple<>(v1, v2);
     }
 
     private final V1 v1;
@@ -62,5 +62,10 @@ public class Tuple<V1, V2> {
         int result = v1 != null ? v1.hashCode() : 0;
         result = 31 * result + (v2 != null ? v2.hashCode() : 0);
         return result;
+    }
+
+    @Override
+    public String toString() {
+        return "Tuple [v1=" + v1 + ", v2=" + v2 + "]";
     }
 }

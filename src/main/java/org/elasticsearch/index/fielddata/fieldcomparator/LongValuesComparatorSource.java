@@ -1,13 +1,13 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,29 +16,37 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.index.fielddata.fieldcomparator;
 
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.NumericDocValues;
+import org.apache.lucene.index.SortedNumericDocValues;
+import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.FieldComparator;
 import org.apache.lucene.search.SortField;
+import org.apache.lucene.util.BitSet;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.index.fielddata.IndexFieldData;
 import org.elasticsearch.index.fielddata.IndexNumericFieldData;
+import org.elasticsearch.search.MultiValueMode;
 
 import java.io.IOException;
 
 /**
+ * Comparator source for long values.
  */
 public class LongValuesComparatorSource extends IndexFieldData.XFieldComparatorSource {
 
-    private final IndexNumericFieldData<?> indexFieldData;
+    private final IndexNumericFieldData indexFieldData;
     private final Object missingValue;
-    private final SortMode sortMode;
+    private final MultiValueMode sortMode;
+    private final Nested nested;
 
-    public LongValuesComparatorSource(IndexNumericFieldData<?> indexFieldData, @Nullable Object missingValue, SortMode sortMode) {
+    public LongValuesComparatorSource(IndexNumericFieldData indexFieldData, @Nullable Object missingValue, MultiValueMode sortMode, Nested nested) {
         this.indexFieldData = indexFieldData;
         this.missingValue = missingValue;
         this.sortMode = sortMode;
+        this.nested = nested;
     }
 
     @Override
@@ -48,17 +56,26 @@ public class LongValuesComparatorSource extends IndexFieldData.XFieldComparatorS
 
     @Override
     public FieldComparator<?> newComparator(String fieldname, int numHits, int sortPos, boolean reversed) throws IOException {
-        assert fieldname.equals(indexFieldData.getFieldNames().indexName());
+        assert indexFieldData == null || fieldname.equals(indexFieldData.getFieldNames().indexName());
 
-        long dMissingValue;
-        if (missingValue == null || "_last".equals(missingValue)) {
-            dMissingValue = reversed ? Long.MIN_VALUE : Long.MAX_VALUE;
-        } else if ("_first".equals(missingValue)) {
-            dMissingValue = reversed ? Long.MAX_VALUE : Long.MIN_VALUE;
-        } else {
-            dMissingValue = missingValue instanceof Number ? ((Number) missingValue).longValue() : Long.parseLong(missingValue.toString());
-        }
+        final Long dMissingValue = (Long) missingObject(missingValue, reversed);
+        // NOTE: it's important to pass null as a missing value in the constructor so that
+        // the comparator doesn't check docsWithField since we replace missing values in select()
+        return new FieldComparator.LongComparator(numHits, null, null) {
+            @Override
+            protected NumericDocValues getNumericDocValues(LeafReaderContext context, String field) throws IOException {
+                final SortedNumericDocValues values = indexFieldData.load(context).getLongValues();
+                final NumericDocValues selectedValues;
+                if (nested == null) {
+                    selectedValues = sortMode.select(values, dMissingValue);
+                } else {
+                    final BitSet rootDocs = nested.rootDocs(context).bits();
+                    final DocIdSet innerDocs = nested.innerDocs(context);
+                    selectedValues = sortMode.select(values, dMissingValue, rootDocs, innerDocs, context.reader().maxDoc());
+                }
+                return selectedValues;
+            }
 
-        return new LongValuesComparator(indexFieldData, dMissingValue, numHits, sortMode);
+        };
     }
 }

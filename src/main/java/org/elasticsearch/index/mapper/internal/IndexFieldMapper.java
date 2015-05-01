@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,18 +22,27 @@ package org.elasticsearch.index.mapper.internal;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.index.IndexOptions;
+import org.elasticsearch.Version;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.index.codec.postingsformat.PostingsFormatProvider;
 import org.elasticsearch.index.fielddata.FieldDataType;
-import org.elasticsearch.index.mapper.*;
+import org.elasticsearch.index.mapper.InternalMapper;
+import org.elasticsearch.index.mapper.Mapper;
+import org.elasticsearch.index.mapper.MapperBuilders;
+import org.elasticsearch.index.mapper.MapperParsingException;
+import org.elasticsearch.index.mapper.MergeResult;
+import org.elasticsearch.index.mapper.MergeMappingException;
+import org.elasticsearch.index.mapper.ParseContext;
+import org.elasticsearch.index.mapper.RootMapper;
 import org.elasticsearch.index.mapper.core.AbstractFieldMapper;
 
 import java.io.IOException;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 
 import static org.elasticsearch.common.xcontent.support.XContentMapValues.nodeBooleanValue;
@@ -50,39 +59,37 @@ public class IndexFieldMapper extends AbstractFieldMapper<String> implements Int
 
     public static class Defaults extends AbstractFieldMapper.Defaults {
         public static final String NAME = IndexFieldMapper.NAME;
-        public static final String INDEX_NAME = IndexFieldMapper.NAME;
 
         public static final FieldType FIELD_TYPE = new FieldType(AbstractFieldMapper.Defaults.FIELD_TYPE);
 
         static {
-            FIELD_TYPE.setIndexed(true);
+            FIELD_TYPE.setIndexOptions(IndexOptions.DOCS);
             FIELD_TYPE.setTokenized(false);
             FIELD_TYPE.setStored(false);
             FIELD_TYPE.setOmitNorms(true);
-            FIELD_TYPE.setIndexOptions(IndexOptions.DOCS_ONLY);
             FIELD_TYPE.freeze();
         }
 
-        public static final boolean ENABLED = false;
+        public static final EnabledAttributeMapper ENABLED_STATE = EnabledAttributeMapper.UNSET_DISABLED;
     }
 
     public static class Builder extends AbstractFieldMapper.Builder<Builder, IndexFieldMapper> {
 
-        private boolean enabled = Defaults.ENABLED;
+        private EnabledAttributeMapper enabledState = EnabledAttributeMapper.UNSET_DISABLED;
 
         public Builder() {
             super(Defaults.NAME, new FieldType(Defaults.FIELD_TYPE));
-            indexName = Defaults.INDEX_NAME;
+            indexName = Defaults.NAME;
         }
 
-        public Builder enabled(boolean enabled) {
-            this.enabled = enabled;
+        public Builder enabled(EnabledAttributeMapper enabledState) {
+            this.enabledState = enabledState;
             return this;
         }
 
         @Override
         public IndexFieldMapper build(BuilderContext context) {
-            return new IndexFieldMapper(name, indexName, boost, fieldType, enabled, provider, fieldDataSettings);
+            return new IndexFieldMapper(name, indexName, boost, fieldType, enabledState, fieldDataSettings, context.indexSettings());
         }
     }
 
@@ -90,38 +97,39 @@ public class IndexFieldMapper extends AbstractFieldMapper<String> implements Int
         @Override
         public Mapper.Builder parse(String name, Map<String, Object> node, ParserContext parserContext) throws MapperParsingException {
             IndexFieldMapper.Builder builder = MapperBuilders.index();
-            parseField(builder, builder.name, node, parserContext);
+            if (parserContext.indexVersionCreated().before(Version.V_2_0_0)) {
+                parseField(builder, builder.name, node, parserContext);
+            }
 
-            for (Map.Entry<String, Object> entry : node.entrySet()) {
+            for (Iterator<Map.Entry<String, Object>> iterator = node.entrySet().iterator(); iterator.hasNext();) {
+                Map.Entry<String, Object> entry = iterator.next();
                 String fieldName = Strings.toUnderscoreCase(entry.getKey());
                 Object fieldNode = entry.getValue();
                 if (fieldName.equals("enabled")) {
-                    builder.enabled(nodeBooleanValue(fieldNode));
+                    EnabledAttributeMapper mapper = nodeBooleanValue(fieldNode) ? EnabledAttributeMapper.ENABLED : EnabledAttributeMapper.DISABLED;
+                    builder.enabled(mapper);
+                    iterator.remove();
                 }
             }
             return builder;
         }
     }
 
-    private final boolean enabled;
+    private EnabledAttributeMapper enabledState;
 
-    public IndexFieldMapper() {
-        this(Defaults.NAME, Defaults.INDEX_NAME);
+    public IndexFieldMapper(Settings indexSettings) {
+        this(Defaults.NAME, Defaults.NAME, Defaults.BOOST, new FieldType(Defaults.FIELD_TYPE), Defaults.ENABLED_STATE, null, indexSettings);
     }
 
-    protected IndexFieldMapper(String name, String indexName) {
-        this(name, indexName, Defaults.BOOST, new FieldType(Defaults.FIELD_TYPE), Defaults.ENABLED, null, null);
-    }
-
-    public IndexFieldMapper(String name, String indexName, float boost, FieldType fieldType, boolean enabled,
-                            PostingsFormatProvider provider, @Nullable Settings fieldDataSettings) {
-        super(new Names(name, indexName, indexName, name), boost, fieldType, Lucene.KEYWORD_ANALYZER,
-                Lucene.KEYWORD_ANALYZER, provider, null, fieldDataSettings);
-        this.enabled = enabled;
+    public IndexFieldMapper(String name, String indexName, float boost, FieldType fieldType, EnabledAttributeMapper enabledState,
+                            @Nullable Settings fieldDataSettings, Settings indexSettings) {
+        super(new Names(name, indexName, indexName, name), boost, fieldType, false, Lucene.KEYWORD_ANALYZER,
+                Lucene.KEYWORD_ANALYZER, null, null, fieldDataSettings, indexSettings);
+        this.enabledState = enabledState;
     }
 
     public boolean enabled() {
-        return this.enabled;
+        return this.enabledState.enabled;
     }
 
     @Override
@@ -131,7 +139,7 @@ public class IndexFieldMapper extends AbstractFieldMapper<String> implements Int
 
     @Override
     public FieldDataType defaultFieldDataType() {
-        return new FieldDataType("string");
+        return new FieldDataType(IndexFieldMapper.NAME);
     }
 
     public String value(Document document) {
@@ -158,12 +166,8 @@ public class IndexFieldMapper extends AbstractFieldMapper<String> implements Int
     }
 
     @Override
-    public void parse(ParseContext context) throws IOException {
-
-    }
-
-    @Override
-    public void validate(ParseContext context) throws MapperParsingException {
+    public Mapper parse(ParseContext context) throws IOException {
+        return null;
     }
 
     @Override
@@ -172,11 +176,11 @@ public class IndexFieldMapper extends AbstractFieldMapper<String> implements Int
     }
 
     @Override
-    protected Field parseCreateField(ParseContext context) throws IOException {
-        if (!enabled) {
-            return null;
+    protected void parseCreateField(ParseContext context, List<Field> fields) throws IOException {
+        if (!enabledState.enabled) {
+            return;
         }
-        return new Field(names.indexName(), context.index(), fieldType);
+        fields.add(new Field(names.indexName(), context.index(), fieldType));
     }
 
     @Override
@@ -186,23 +190,39 @@ public class IndexFieldMapper extends AbstractFieldMapper<String> implements Int
 
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
+        boolean includeDefaults = params.paramAsBoolean("include_defaults", false);
+
         // if all defaults, no need to write it at all
-        if (fieldType().stored() == Defaults.FIELD_TYPE.stored() && enabled == Defaults.ENABLED) {
+        if (!includeDefaults && fieldType().stored() == Defaults.FIELD_TYPE.stored() && enabledState == Defaults.ENABLED_STATE && customFieldDataSettings == null) {
             return builder;
         }
         builder.startObject(CONTENT_TYPE);
-        if (fieldType().stored() != Defaults.FIELD_TYPE.stored()) {
+        if (indexCreatedBefore2x && (includeDefaults || fieldType().stored() != Defaults.FIELD_TYPE.stored())) {
             builder.field("store", fieldType().stored());
         }
-        if (enabled != Defaults.ENABLED) {
-            builder.field("enabled", enabled);
+        if (includeDefaults || enabledState != Defaults.ENABLED_STATE) {
+            builder.field("enabled", enabledState.enabled);
+        }
+
+        if (indexCreatedBefore2x) {
+            if (customFieldDataSettings != null) {
+                builder.field("fielddata", (Map) customFieldDataSettings.getAsMap());
+            } else if (includeDefaults) {
+                builder.field("fielddata", (Map) fieldDataType.getSettings().getAsMap());
+            }
         }
         builder.endObject();
         return builder;
     }
 
     @Override
-    public void merge(Mapper mergeWith, MergeContext mergeContext) throws MergeMappingException {
-        // do nothing here, no merging, but also no exception
+    public void merge(Mapper mergeWith, MergeResult mergeResult) throws MergeMappingException {
+        IndexFieldMapper indexFieldMapperMergeWith = (IndexFieldMapper) mergeWith;
+        if (!mergeResult.simulate()) {
+            if (indexFieldMapperMergeWith.enabledState != enabledState && !indexFieldMapperMergeWith.enabledState.unset()) {
+                this.enabledState = indexFieldMapperMergeWith.enabledState;
+            }
+        }
     }
+
 }

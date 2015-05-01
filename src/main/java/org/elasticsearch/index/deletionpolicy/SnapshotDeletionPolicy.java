@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -24,14 +24,12 @@ import org.apache.lucene.index.IndexDeletionPolicy;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.name.Named;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
-import org.elasticsearch.index.shard.AbstractIndexShardComponent;
 import org.elasticsearch.index.shard.IndexShardComponent;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
@@ -41,11 +39,11 @@ import java.util.concurrent.ConcurrentMap;
  *
  *
  */
-public class SnapshotDeletionPolicy extends AbstractIndexShardComponent implements IndexDeletionPolicy {
+public class SnapshotDeletionPolicy extends AbstractESDeletionPolicy {
 
     private final IndexDeletionPolicy primary;
 
-    private ConcurrentMap<Long, SnapshotHolder> snapshots = ConcurrentCollections.newConcurrentMap();
+    private final ConcurrentMap<Long, SnapshotHolder> snapshots = ConcurrentCollections.newConcurrentMap();
 
     private volatile List<SnapshotIndexCommit> commits;
 
@@ -65,15 +63,21 @@ public class SnapshotDeletionPolicy extends AbstractIndexShardComponent implemen
     /**
      * Called by Lucene. Same as {@link #onCommit(java.util.List)}.
      */
+    @Override
     public void onInit(List<? extends IndexCommit> commits) throws IOException {
-        onCommit(commits);
+        if (!commits.isEmpty()) { // this might be empty if we create a new index. 
+            // the behavior has changed in Lucene 4.4 that calls onInit even with an empty commits list.
+            onCommit(commits);
+        }
     }
 
     /**
      * Called by Lucene.. Wraps the provided commits with {@link SnapshotIndexCommit}
      * and delegates to the wrapped deletion policy.
      */
+    @Override
     public void onCommit(List<? extends IndexCommit> commits) throws IOException {
+        assert !commits.isEmpty() : "Commits must not be empty";
         synchronized (mutex) {
             List<SnapshotIndexCommit> snapshotCommits = wrapCommits(commits);
             primary.onCommit(snapshotCommits);
@@ -86,7 +90,7 @@ public class SnapshotDeletionPolicy extends AbstractIndexShardComponent implemen
                 }
             }
             // build the current commits list (all the ones that are not deleted by the primary)
-            List<SnapshotIndexCommit> newCommits = new ArrayList<SnapshotIndexCommit>();
+            List<SnapshotIndexCommit> newCommits = new ArrayList<>();
             for (SnapshotIndexCommit commit : snapshotCommits) {
                 if (!commit.isDeleted()) {
                     newCommits.add(commit);
@@ -94,20 +98,21 @@ public class SnapshotDeletionPolicy extends AbstractIndexShardComponent implemen
             }
             this.commits = newCommits;
             // the last commit that is not deleted
-            this.lastCommit = newCommits.get(newCommits.size() - 1);
+            this.lastCommit = newCommits.get(newCommits.size() - 1);     
+           
         }
     }
 
     /**
      * Snapshots all the current commits in the index. Make sure to call
-     * {@link SnapshotIndexCommits#release()} to release it.
+     * {@link SnapshotIndexCommits#close()} to release it.
      */
     public SnapshotIndexCommits snapshots() throws IOException {
         synchronized (mutex) {
             if (snapshots == null) {
                 throw new IllegalStateException("Snapshot deletion policy has not been init yet...");
             }
-            List<SnapshotIndexCommit> result = new ArrayList<SnapshotIndexCommit>(commits.size());
+            List<SnapshotIndexCommit> result = new ArrayList<>(commits.size());
             for (SnapshotIndexCommit commit : commits) {
                 result.add(snapshot(commit));
             }
@@ -117,7 +122,7 @@ public class SnapshotDeletionPolicy extends AbstractIndexShardComponent implemen
 
     /**
      * Returns a snapshot of the index (for the last commit point). Make
-     * sure to call {@link SnapshotIndexCommit#release()} in order to release it.
+     * sure to call {@link SnapshotIndexCommit#close()} in order to release it.
      */
     public SnapshotIndexCommit snapshot() throws IOException {
         synchronized (mutex) {
@@ -126,6 +131,13 @@ public class SnapshotDeletionPolicy extends AbstractIndexShardComponent implemen
             }
             return snapshot(lastCommit);
         }
+    }
+
+    @Override
+    public IndexDeletionPolicy clone() {
+       // Lucene IW makes a clone internally but since we hold on to this instance 
+       // the clone will just be the identity. See InternalEngine recovery why we need this.
+       return this;
     }
 
     /**
@@ -152,7 +164,7 @@ public class SnapshotDeletionPolicy extends AbstractIndexShardComponent implemen
     /**
      * Releases the version provided. Returns <tt>true</tt> if the release was successful.
      */
-    boolean release(long version) {
+    boolean close(long version) {
         synchronized (mutex) {
             SnapshotDeletionPolicy.SnapshotHolder holder = snapshots.get(version);
             if (holder == null) {
@@ -181,12 +193,12 @@ public class SnapshotDeletionPolicy extends AbstractIndexShardComponent implemen
         }
 
         @Override
-        public boolean release() {
+        public void close() {
             if (released) {
-                return false;
+                return;
             }
             released = true;
-            return ((SnapshotIndexCommit) delegate).release();
+            ((SnapshotIndexCommit) delegate).close();
         }
     }
 
@@ -200,7 +212,7 @@ public class SnapshotDeletionPolicy extends AbstractIndexShardComponent implemen
 
     private List<SnapshotIndexCommit> wrapCommits(List<? extends IndexCommit> commits) throws IOException {
         final int count = commits.size();
-        List<SnapshotIndexCommit> snapshotCommits = new ArrayList<SnapshotIndexCommit>(count);
+        List<SnapshotIndexCommit> snapshotCommits = new ArrayList<>(count);
         for (int i = 0; i < count; i++)
             snapshotCommits.add(new SnapshotIndexCommit(this, commits.get(i)));
         return snapshotCommits;

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,6 +23,7 @@ import org.apache.lucene.index.Term;
 import org.apache.lucene.search.MultiTermQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.RegexpQuery;
+import org.apache.lucene.util.automaton.Operations;
 import org.apache.lucene.util.automaton.RegExp;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.lucene.BytesRefs;
@@ -31,8 +32,6 @@ import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.query.support.QueryParsers;
 
 import java.io.IOException;
-
-import static org.elasticsearch.index.query.support.QueryParsers.wrapSmartNameQuery;
 
 /**
  *
@@ -56,7 +55,7 @@ public class RegexpQueryParser implements QueryParser {
 
         XContentParser.Token token = parser.nextToken();
         if (token != XContentParser.Token.FIELD_NAME) {
-            throw new QueryParsingException(parseContext.index(), "[regexp] query malformed, no field");
+            throw new QueryParsingException(parseContext, "[regexp] query malformed, no field");
         }
         String fieldName = parser.currentName();
         String rewriteMethod = null;
@@ -64,6 +63,8 @@ public class RegexpQueryParser implements QueryParser {
         Object value = null;
         float boost = 1.0f;
         int flagsValue = -1;
+        int maxDeterminizedStates = Operations.DEFAULT_MAX_DETERMINIZED_STATES;
+        String queryName = null;
         token = parser.nextToken();
         if (token == XContentParser.Token.START_OBJECT) {
             String currentFieldName = null;
@@ -85,9 +86,13 @@ public class RegexpQueryParser implements QueryParser {
                         if (flagsValue < 0) {
                             flagsValue = RegExp.ALL;
                         }
+                    } else if ("maxDeterminizedStates".equals(currentFieldName)) {
+                        maxDeterminizedStates = parser.intValue();
+                    } else if ("_name".equals(currentFieldName)) {
+                        queryName = parser.text();
                     }
                 } else {
-                    throw new QueryParsingException(parseContext.index(), "[regexp] query does not support [" + currentFieldName + "]");
+                    throw new QueryParsingException(parseContext, "[regexp] query does not support [" + currentFieldName + "]");
                 }
             }
             parser.nextToken();
@@ -97,7 +102,7 @@ public class RegexpQueryParser implements QueryParser {
         }
 
         if (value == null) {
-            throw new QueryParsingException(parseContext.index(), "No value specified for regexp query");
+            throw new QueryParsingException(parseContext, "No value specified for regexp query");
         }
 
         MultiTermQuery.RewriteMethod method = QueryParsers.parseRewriteMethod(rewriteMethod, null);
@@ -105,26 +110,20 @@ public class RegexpQueryParser implements QueryParser {
         Query query = null;
         MapperService.SmartNameFieldMappers smartNameFieldMappers = parseContext.smartFieldMappers(fieldName);
         if (smartNameFieldMappers != null && smartNameFieldMappers.hasMapper()) {
-            if (smartNameFieldMappers.explicitTypeInNameWithDocMapper()) {
-                String[] previousTypes = QueryParseContext.setTypesWithPrevious(new String[]{smartNameFieldMappers.docMapper().type()});
-                try {
-                    query = smartNameFieldMappers.mapper().regexpQuery(value, flagsValue, method, parseContext);
-                } finally {
-                    QueryParseContext.setTypes(previousTypes);
-                }
-            } else {
-                query = smartNameFieldMappers.mapper().regexpQuery(value, flagsValue, method, parseContext);
-            }
+            query = smartNameFieldMappers.mapper().regexpQuery(value, flagsValue, maxDeterminizedStates, method, parseContext);
         }
         if (query == null) {
-            RegexpQuery regexpQuery = new RegexpQuery(new Term(fieldName, BytesRefs.toBytesRef(value)), flagsValue);
+            RegexpQuery regexpQuery = new RegexpQuery(new Term(fieldName, BytesRefs.toBytesRef(value)), flagsValue, maxDeterminizedStates);
             if (method != null) {
                 regexpQuery.setRewriteMethod(method);
             }
             query = regexpQuery;
         }
         query.setBoost(boost);
-        return wrapSmartNameQuery(query, smartNameFieldMappers, parseContext);
+        if (queryName != null) {
+            parseContext.addNamedQuery(queryName, query);
+        }
+        return query;
     }
 
 

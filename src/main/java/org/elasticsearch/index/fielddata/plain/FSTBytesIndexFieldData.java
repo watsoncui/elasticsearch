@@ -1,13 +1,13 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,110 +16,100 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.index.fielddata.plain;
 
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
-import org.apache.lucene.index.DocsEnum;
-import org.apache.lucene.index.Terms;
-import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.index.*;
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.IntsRef;
+import org.apache.lucene.util.IntsRefBuilder;
 import org.apache.lucene.util.fst.FST;
 import org.apache.lucene.util.fst.FST.INPUT_TYPE;
 import org.apache.lucene.util.fst.PositiveIntOutputs;
 import org.apache.lucene.util.fst.Util;
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.Index;
-import org.elasticsearch.index.fielddata.AbstractIndexFieldData;
-import org.elasticsearch.index.fielddata.FieldDataType;
-import org.elasticsearch.index.fielddata.IndexFieldData;
-import org.elasticsearch.index.fielddata.IndexFieldDataCache;
-import org.elasticsearch.index.fielddata.fieldcomparator.BytesRefFieldComparatorSource;
-import org.elasticsearch.index.fielddata.fieldcomparator.SortMode;
+import org.elasticsearch.index.fielddata.*;
 import org.elasticsearch.index.fielddata.ordinals.Ordinals;
 import org.elasticsearch.index.fielddata.ordinals.OrdinalsBuilder;
 import org.elasticsearch.index.mapper.FieldMapper;
+import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.settings.IndexSettings;
+import org.elasticsearch.indices.breaker.CircuitBreakerService;
 
 /**
  */
-public class FSTBytesIndexFieldData extends AbstractIndexFieldData<FSTBytesAtomicFieldData> implements IndexFieldData.WithOrdinals<FSTBytesAtomicFieldData> {
+public class FSTBytesIndexFieldData extends AbstractIndexOrdinalsFieldData {
+
+    private final CircuitBreakerService breakerService;
 
     public static class Builder implements IndexFieldData.Builder {
 
         @Override
-        public IndexFieldData build(Index index, @IndexSettings Settings indexSettings, FieldMapper.Names fieldNames, FieldDataType type, IndexFieldDataCache cache) {
-            return new FSTBytesIndexFieldData(index, indexSettings, fieldNames, type, cache);
+        public IndexOrdinalsFieldData build(Index index, @IndexSettings Settings indexSettings, FieldMapper<?> mapper,
+                                                             IndexFieldDataCache cache, CircuitBreakerService breakerService, MapperService mapperService) {
+            return new FSTBytesIndexFieldData(index, indexSettings, mapper.names(), mapper.fieldDataType(), cache, breakerService);
         }
     }
 
-    public FSTBytesIndexFieldData(Index index, @IndexSettings Settings indexSettings, FieldMapper.Names fieldNames, FieldDataType fieldDataType, IndexFieldDataCache cache) {
-        super(index, indexSettings, fieldNames, fieldDataType, cache);
+    FSTBytesIndexFieldData(Index index, @IndexSettings Settings indexSettings, FieldMapper.Names fieldNames, FieldDataType fieldDataType,
+                           IndexFieldDataCache cache, CircuitBreakerService breakerService) {
+        super(index, indexSettings, fieldNames, fieldDataType, cache, breakerService);
+        this.breakerService = breakerService;
     }
 
     @Override
-    public boolean valuesOrdered() {
-        return true;
-    }
-
-    @Override
-    public FSTBytesAtomicFieldData load(AtomicReaderContext context) {
-        try {
-            return cache.load(context, this);
-        } catch (Throwable e) {
-            if (e instanceof ElasticSearchException) {
-                throw (ElasticSearchException) e;
-            } else {
-                throw new ElasticSearchException(e.getMessage(), e);
-            }
-        }
-    }
-
-    @Override
-    public FSTBytesAtomicFieldData loadDirect(AtomicReaderContext context) throws Exception {
-        AtomicReader reader = context.reader();
+    public AtomicOrdinalsFieldData loadDirect(LeafReaderContext context) throws Exception {
+        LeafReader reader = context.reader();
 
         Terms terms = reader.terms(getFieldNames().indexName());
+        AtomicOrdinalsFieldData data = null;
+        // TODO: Use an actual estimator to estimate before loading.
+        NonEstimatingEstimator estimator = new NonEstimatingEstimator(breakerService.getBreaker(CircuitBreaker.FIELDDATA));
         if (terms == null) {
-            return FSTBytesAtomicFieldData.empty(reader.maxDoc());
+            data = AbstractAtomicOrdinalsFieldData.empty();
+            estimator.afterLoad(null, data.ramBytesUsed());
+            return data;
         }
-        PositiveIntOutputs outputs = PositiveIntOutputs.getSingleton(true);
-        org.apache.lucene.util.fst.Builder<Long> fstBuilder = new org.apache.lucene.util.fst.Builder<Long>(INPUT_TYPE.BYTE1, outputs);
-        final IntsRef scratch = new IntsRef();
-        
-        OrdinalsBuilder builder = new OrdinalsBuilder(terms, reader.maxDoc());
-        try {
-            
-            // 0 is reserved for "unset"
-            fstBuilder.add(Util.toIntsRef(new BytesRef(), scratch), 0l);
-            TermsEnum termsEnum = terms.iterator(null);
-            DocsEnum docsEnum = null;
+        PositiveIntOutputs outputs = PositiveIntOutputs.getSingleton();
+        org.apache.lucene.util.fst.Builder<Long> fstBuilder = new org.apache.lucene.util.fst.Builder<>(INPUT_TYPE.BYTE1, outputs);
+        final IntsRefBuilder scratch = new IntsRefBuilder();
+
+        final long numTerms;
+        if (regex == null && frequency == null) {
+            numTerms = terms.size();
+        } else {
+            numTerms = -1;
+        }
+        final float acceptableTransientOverheadRatio = fieldDataType.getSettings().getAsFloat("acceptable_transient_overhead_ratio", OrdinalsBuilder.DEFAULT_ACCEPTABLE_OVERHEAD_RATIO);
+        boolean success = false;
+        try (OrdinalsBuilder builder = new OrdinalsBuilder(numTerms, reader.maxDoc(), acceptableTransientOverheadRatio)) {
+
+            // we don't store an ord 0 in the FST since we could have an empty string in there and FST don't support
+            // empty strings twice. ie. them merge fails for long output.
+            TermsEnum termsEnum = filter(terms, reader);
+            PostingsEnum docsEnum = null;
             for (BytesRef term = termsEnum.next(); term != null; term = termsEnum.next()) {
-                final int termOrd = builder.nextOrdinal();
-                fstBuilder.add(Util.toIntsRef(term, scratch), (long)termOrd);
-                docsEnum = termsEnum.docs(reader.getLiveDocs(), docsEnum, DocsEnum.FLAG_NONE);
-                for (int docId = docsEnum.nextDoc(); docId != DocsEnum.NO_MORE_DOCS; docId = docsEnum.nextDoc()) {
+                final long termOrd = builder.nextOrdinal();
+                fstBuilder.add(Util.toIntsRef(term, scratch), (long) termOrd);
+                docsEnum = termsEnum.postings(null, docsEnum, PostingsEnum.NONE);
+                for (int docId = docsEnum.nextDoc(); docId != DocIdSetIterator.NO_MORE_DOCS; docId = docsEnum.nextDoc()) {
                     builder.addDoc(docId);
                 }
             }
-            
+
             FST<Long> fst = fstBuilder.finish();
 
             final Ordinals ordinals = builder.build(fieldDataType.getSettings());
 
-            return new FSTBytesAtomicFieldData(fst, ordinals);
+            data = new FSTBytesAtomicFieldData(fst, ordinals);
+            success = true;
+            return data;
         } finally {
-            builder.close();
-        }
-    }
+            if (success) {
+                estimator.afterLoad(null, data.ramBytesUsed());
+            }
 
-    @Override
-    public XFieldComparatorSource comparatorSource(@Nullable Object missingValue, SortMode sortMode) {
-        // TODO support "missingValue" for sortMissingValue options here...
-        return new BytesRefFieldComparatorSource(this, sortMode);
+        }
     }
 }

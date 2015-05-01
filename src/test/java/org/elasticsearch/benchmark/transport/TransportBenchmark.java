@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,12 +19,15 @@
 
 package org.elasticsearch.benchmark.transport;
 
+import org.elasticsearch.Version;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.StopWatch;
+import org.elasticsearch.common.network.NetworkService;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.*;
 import org.elasticsearch.transport.local.LocalTransport;
@@ -42,13 +45,13 @@ public class TransportBenchmark {
         LOCAL {
             @Override
             public Transport newTransport(Settings settings, ThreadPool threadPool) {
-                return new LocalTransport(settings, threadPool);
+                return new LocalTransport(settings, threadPool, Version.CURRENT);
             }
         },
         NETTY {
             @Override
             public Transport newTransport(Settings settings, ThreadPool threadPool) {
-                return new NettyTransport(settings, threadPool);
+                return new NettyTransport(settings, threadPool, new NetworkService(ImmutableSettings.EMPTY), BigArrays.NON_RECYCLING_INSTANCE, Version.CURRENT);
             }
         };
 
@@ -69,25 +72,15 @@ public class TransportBenchmark {
         Settings settings = ImmutableSettings.settingsBuilder()
                 .build();
 
-        final ThreadPool serverThreadPool = new ThreadPool();
+        final ThreadPool serverThreadPool = new ThreadPool("server");
         final TransportService serverTransportService = new TransportService(type.newTransport(settings, serverThreadPool), serverThreadPool).start();
 
-        final ThreadPool clientThreadPool = new ThreadPool();
+        final ThreadPool clientThreadPool = new ThreadPool("client");
         final TransportService clientTransportService = new TransportService(type.newTransport(settings, clientThreadPool), clientThreadPool).start();
 
-        final DiscoveryNode node = new DiscoveryNode("server", serverTransportService.boundAddress().publishAddress());
+        final DiscoveryNode node = new DiscoveryNode("server", serverTransportService.boundAddress().publishAddress(), Version.CURRENT);
 
-        serverTransportService.registerHandler("benchmark", new BaseTransportRequestHandler<BenchmarkMessageRequest>() {
-            @Override
-            public BenchmarkMessageRequest newInstance() {
-                return new BenchmarkMessageRequest();
-            }
-
-            @Override
-            public String executor() {
-                return executor;
-            }
-
+        serverTransportService.registerRequestHandler("benchmark", BenchmarkMessageRequest.class, executor, new TransportRequestHandler<BenchmarkMessageRequest>() {
             @Override
             public void messageReceived(BenchmarkMessageRequest request, TransportChannel channel) throws Exception {
                 channel.sendResponse(new BenchmarkMessageResponse(request));

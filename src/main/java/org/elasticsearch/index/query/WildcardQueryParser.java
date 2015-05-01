@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -30,8 +30,6 @@ import org.elasticsearch.index.query.support.QueryParsers;
 
 import java.io.IOException;
 
-import static org.elasticsearch.index.query.support.QueryParsers.wrapSmartNameQuery;
-
 /**
  *
  */
@@ -54,13 +52,14 @@ public class WildcardQueryParser implements QueryParser {
 
         XContentParser.Token token = parser.nextToken();
         if (token != XContentParser.Token.FIELD_NAME) {
-            throw new QueryParsingException(parseContext.index(), "[wildcard] query malformed, no field");
+            throw new QueryParsingException(parseContext, "[wildcard] query malformed, no field");
         }
         String fieldName = parser.currentName();
         String rewriteMethod = null;
 
         String value = null;
         float boost = 1.0f;
+        String queryName = null;
         token = parser.nextToken();
         if (token == XContentParser.Token.START_OBJECT) {
             String currentFieldName = null;
@@ -76,8 +75,10 @@ public class WildcardQueryParser implements QueryParser {
                         boost = parser.floatValue();
                     } else if ("rewrite".equals(currentFieldName)) {
                         rewriteMethod = parser.textOrNull();
+                    } else if ("_name".equals(currentFieldName)) {
+                        queryName = parser.text();
                     } else {
-                        throw new QueryParsingException(parseContext.index(), "[wildcard] query does not support [" + currentFieldName + "]");
+                        throw new QueryParsingException(parseContext, "[wildcard] query does not support [" + currentFieldName + "]");
                     }
                 }
             }
@@ -88,7 +89,7 @@ public class WildcardQueryParser implements QueryParser {
         }
 
         if (value == null) {
-            throw new QueryParsingException(parseContext.index(), "No value specified for prefix query");
+            throw new QueryParsingException(parseContext, "No value specified for prefix query");
         }
 
         BytesRef valueBytes;
@@ -100,10 +101,13 @@ public class WildcardQueryParser implements QueryParser {
             valueBytes = new BytesRef(value);
         }
 
-        WildcardQuery query = new WildcardQuery(new Term(fieldName, valueBytes));
-        QueryParsers.setRewriteMethod(query, rewriteMethod);
-        query.setRewriteMethod(QueryParsers.parseRewriteMethod(rewriteMethod));
-        query.setBoost(boost);
-        return wrapSmartNameQuery(query, smartNameFieldMappers, parseContext);
+        WildcardQuery wildcardQuery = new WildcardQuery(new Term(fieldName, valueBytes));
+        QueryParsers.setRewriteMethod(wildcardQuery, rewriteMethod);
+        wildcardQuery.setRewriteMethod(QueryParsers.parseRewriteMethod(rewriteMethod));
+        wildcardQuery.setBoost(boost);
+        if (queryName != null) {
+            parseContext.addNamedQuery(queryName, wildcardQuery);
+        }
+        return wildcardQuery;
     }
 }

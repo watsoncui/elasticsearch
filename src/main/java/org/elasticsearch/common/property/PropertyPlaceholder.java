@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,7 @@
 
 package org.elasticsearch.common.property;
 
-import org.elasticsearch.common.Preconditions;
+import com.google.common.base.Preconditions;
 import org.elasticsearch.common.Strings;
 
 import java.util.HashSet;
@@ -33,15 +33,11 @@ import java.util.Set;
  * <p/>
  * <p> Values for substitution can be supplied using a {@link Properties} instance or using a
  * {@link PlaceholderResolver}.
- *
- *
  */
 public class PropertyPlaceholder {
 
     private final String placeholderPrefix;
-
     private final String placeholderSuffix;
-
     private final boolean ignoreUnresolvablePlaceholders;
 
     /**
@@ -70,24 +66,6 @@ public class PropertyPlaceholder {
         this.placeholderPrefix = placeholderPrefix;
         this.placeholderSuffix = placeholderSuffix;
         this.ignoreUnresolvablePlaceholders = ignoreUnresolvablePlaceholders;
-    }
-
-    /**
-     * Replaces all placeholders of format <code>${name}</code> with the corresponding property from the supplied {@link
-     * Properties}.
-     *
-     * @param value      the value containing the placeholders to be replaced.
-     * @param properties the <code>Properties</code> to use for replacement.
-     * @return the supplied value with placeholders replaced inline.
-     */
-    public String replacePlaceholders(String value, final Properties properties) {
-        Preconditions.checkNotNull(properties, "Argument 'properties' must not be null.");
-        return replacePlaceholders(value, new PlaceholderResolver() {
-
-            public String resolvePlaceholder(String placeholderName) {
-                return properties.getProperty(placeholderName);
-            }
-        });
     }
 
     /**
@@ -130,6 +108,9 @@ public class PropertyPlaceholder {
                 if (propVal == null) {
                     propVal = defaultValue;
                 }
+                if (propVal == null && placeholderResolver.shouldIgnoreMissing(placeholder)) {
+                    propVal = "";
+                }
                 if (propVal != null) {
                     // Recursive invocation, parsing placeholders contained in the
                     // previously resolved placeholder value.
@@ -159,7 +140,7 @@ public class PropertyPlaceholder {
             if (Strings.substringMatch(buf, index, this.placeholderSuffix)) {
                 if (withinNestedPlaceholder > 0) {
                     withinNestedPlaceholder--;
-                    index = index + this.placeholderPrefix.length() - 1;
+                    index = index + this.placeholderSuffix.length();
                 } else {
                     return index;
                 }
@@ -178,7 +159,7 @@ public class PropertyPlaceholder {
      *
      * @see PropertyPlaceholder
      */
-    public static interface PlaceholderResolver {
+    public interface PlaceholderResolver {
 
         /**
          * Resolves the supplied placeholder name into the replacement value.
@@ -187,5 +168,7 @@ public class PropertyPlaceholder {
          * @return the replacement value or <code>null</code> if no replacement is to be made.
          */
         String resolvePlaceholder(String placeholderName);
+
+        boolean shouldIgnoreMissing(String placeholderName);
     }
 }

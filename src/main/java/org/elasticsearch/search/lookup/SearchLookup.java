@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,8 +20,7 @@
 package org.elasticsearch.search.lookup;
 
 import com.google.common.collect.ImmutableMap;
-import org.apache.lucene.index.AtomicReaderContext;
-import org.apache.lucene.search.Scorer;
+import org.apache.lucene.index.LeafReaderContext;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.index.fielddata.IndexFieldDataService;
 import org.elasticsearch.index.mapper.MapperService;
@@ -37,44 +36,33 @@ public class SearchLookup {
 
     final FieldsLookup fieldsLookup;
 
+    final IndexLookup indexLookup;
+
     final ImmutableMap<String, Object> asMap;
 
     public SearchLookup(MapperService mapperService, IndexFieldDataService fieldDataService, @Nullable String[] types) {
+        ImmutableMap.Builder<String, Object> builder = ImmutableMap.builder();
         docMap = new DocLookup(mapperService, fieldDataService, types);
         sourceLookup = new SourceLookup();
         fieldsLookup = new FieldsLookup(mapperService, types);
-        asMap = ImmutableMap.<String, Object>of("doc", docMap, "_doc", docMap, "_source", sourceLookup, "_fields", fieldsLookup);
+        indexLookup = new IndexLookup(builder);
+        asMap = builder.build();
     }
 
-    public ImmutableMap<String, Object> asMap() {
-        return this.asMap;
-    }
-
-    public SourceLookup source() {
-        return this.sourceLookup;
-    }
-
-    public FieldsLookup fields() {
-        return this.fieldsLookup;
+    public LeafSearchLookup getLeafSearchLookup(LeafReaderContext context) {
+        return new LeafSearchLookup(context,
+                docMap.getLeafDocLookup(context),
+                sourceLookup,
+                fieldsLookup.getLeafFieldsLookup(context),
+                indexLookup.getLeafIndexLookup(context),
+                asMap);
     }
 
     public DocLookup doc() {
-        return this.docMap;
+        return docMap;
     }
 
-    public void setScorer(Scorer scorer) {
-        docMap.setScorer(scorer);
-    }
-
-    public void setNextReader(AtomicReaderContext context) {
-        docMap.setNextReader(context);
-        sourceLookup.setNextReader(context);
-        fieldsLookup.setNextReader(context);
-    }
-
-    public void setNextDocId(int docId) {
-        docMap.setNextDocId(docId);
-        sourceLookup.setNextDocId(docId);
-        fieldsLookup.setNextDocId(docId);
+    public SourceLookup source() {
+        return sourceLookup;
     }
 }

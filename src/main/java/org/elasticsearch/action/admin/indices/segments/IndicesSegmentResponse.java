@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,17 +22,21 @@ package org.elasticsearch.action.admin.indices.segments;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import org.apache.lucene.util.Accountable;
 import org.elasticsearch.action.ShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.BroadcastOperationResponse;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentBuilderString;
 import org.elasticsearch.index.engine.Segment;
 
 import java.io.IOException;
+import java.util.Collection;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -126,8 +130,8 @@ public class IndicesSegmentResponse extends BroadcastOperationResponse implement
                         builder.field(Fields.GENERATION, segment.getGeneration());
                         builder.field(Fields.NUM_DOCS, segment.getNumDocs());
                         builder.field(Fields.DELETED_DOCS, segment.getDeletedDocs());
-                        builder.field(Fields.SIZE, segment.getSize().toString());
-                        builder.field(Fields.SIZE_IN_BYTES, segment.getSizeInBytes());
+                        builder.byteSizeField(Fields.SIZE_IN_BYTES, Fields.SIZE, segment.getSizeInBytes());
+                        builder.byteSizeField(Fields.MEMORY_IN_BYTES, Fields.MEMORY, segment.getMemoryInBytes());
                         builder.field(Fields.COMMITTED, segment.isCommitted());
                         builder.field(Fields.SEARCH, segment.isSearch());
                         if (segment.getVersion() != null) {
@@ -135,6 +139,16 @@ public class IndicesSegmentResponse extends BroadcastOperationResponse implement
                         }
                         if (segment.isCompound() != null) {
                             builder.field(Fields.COMPOUND, segment.isCompound());
+                        }
+                        if (segment.getMergeId() != null) {
+                            builder.field(Fields.MERGE_ID, segment.getMergeId());
+                        }
+                        if (segment.ramTree != null) {
+                            builder.startArray(Fields.RAM_TREE);
+                            for (Accountable child : segment.ramTree.getChildResources()) {
+                                toXContent(builder, child);
+                            }
+                            builder.endArray();
                         }
                         builder.endObject();
                     }
@@ -151,6 +165,21 @@ public class IndicesSegmentResponse extends BroadcastOperationResponse implement
 
         builder.endObject();
         return builder;
+    }
+    
+    static void toXContent(XContentBuilder builder, Accountable tree) throws IOException {
+        builder.startObject();
+        builder.field(Fields.DESCRIPTION, tree.toString());
+        builder.byteSizeField(Fields.SIZE_IN_BYTES, Fields.SIZE, new ByteSizeValue(tree.ramBytesUsed()));
+        Collection<Accountable> children = tree.getChildResources();
+        if (children.isEmpty() == false) {
+            builder.startArray(Fields.CHILDREN);
+            for (Accountable child : children) {
+                toXContent(builder, child);
+            }
+            builder.endArray();
+        }
+        builder.endObject();
     }
 
     static final class Fields {
@@ -174,5 +203,11 @@ public class IndicesSegmentResponse extends BroadcastOperationResponse implement
         static final XContentBuilderString SEARCH = new XContentBuilderString("search");
         static final XContentBuilderString VERSION = new XContentBuilderString("version");
         static final XContentBuilderString COMPOUND = new XContentBuilderString("compound");
+        static final XContentBuilderString MERGE_ID = new XContentBuilderString("merge_id");
+        static final XContentBuilderString MEMORY = new XContentBuilderString("memory");
+        static final XContentBuilderString MEMORY_IN_BYTES = new XContentBuilderString("memory_in_bytes");
+        static final XContentBuilderString RAM_TREE = new XContentBuilderString("ram_tree");
+        static final XContentBuilderString DESCRIPTION = new XContentBuilderString("description");
+        static final XContentBuilderString CHILDREN = new XContentBuilderString("children");
     }
 }

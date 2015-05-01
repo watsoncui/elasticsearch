@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -50,12 +50,21 @@ import org.elasticsearch.node.settings.NodeSettingsService;
  * {@link RoutingAllocation#ignoreDisable()}. Which is set if allocation are
  * explicit.
  * </p>
+ *
+ * @deprecated In favour for {@link EnableAllocationDecider}.
  */
+@Deprecated
 public class DisableAllocationDecider extends AllocationDecider {
+
+    public static final String NAME = "disable";
 
     public static final String CLUSTER_ROUTING_ALLOCATION_DISABLE_NEW_ALLOCATION = "cluster.routing.allocation.disable_new_allocation";
     public static final String CLUSTER_ROUTING_ALLOCATION_DISABLE_ALLOCATION = "cluster.routing.allocation.disable_allocation";
     public static final String CLUSTER_ROUTING_ALLOCATION_DISABLE_REPLICA_ALLOCATION = "cluster.routing.allocation.disable_replica_allocation";
+
+    public static final String INDEX_ROUTING_ALLOCATION_DISABLE_NEW_ALLOCATION = "index.routing.allocation.disable_new_allocation";
+    public static final String INDEX_ROUTING_ALLOCATION_DISABLE_ALLOCATION = "index.routing.allocation.disable_allocation";
+    public static final String INDEX_ROUTING_ALLOCATION_DISABLE_REPLICA_ALLOCATION = "index.routing.allocation.disable_replica_allocation";
 
     class ApplySettings implements NodeSettingsService.Listener {
         @Override
@@ -96,17 +105,29 @@ public class DisableAllocationDecider extends AllocationDecider {
 
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
+        if (allocation.ignoreDisable()) {
+            return allocation.decision(Decision.YES, NAME, "allocation disabling is ignored");
+        }
+        Settings indexSettings = allocation.routingNodes().metaData().index(shardRouting.index()).settings();
         if (shardRouting.primary() && !allocation.routingNodes().routingTable().index(shardRouting.index()).shard(shardRouting.id()).primaryAllocatedPostApi()) {
             // if its primary, and it hasn't been allocated post API (meaning its a "fresh newly created shard"), only disable allocation
             // on a special disable allocation flag
-            return allocation.ignoreDisable() ? Decision.YES : disableNewAllocation ? Decision.NO : Decision.YES;
+            if (indexSettings.getAsBoolean(INDEX_ROUTING_ALLOCATION_DISABLE_NEW_ALLOCATION, disableNewAllocation)) {
+                return allocation.decision(Decision.NO, NAME, "new primary allocation is disabled");
+            } else {
+                return allocation.decision(Decision.YES, NAME, "new primary allocation is enabled");
+            }
         }
-        if (disableAllocation) {
-            return allocation.ignoreDisable() ? Decision.YES : Decision.NO;
+        if (indexSettings.getAsBoolean(INDEX_ROUTING_ALLOCATION_DISABLE_ALLOCATION, disableAllocation)) {
+            return allocation.decision(Decision.NO, NAME, "all allocation is disabled");
         }
-        if (disableReplicaAllocation) {
-            return shardRouting.primary() ? Decision.YES : allocation.ignoreDisable() ? Decision.YES : Decision.NO;
+        if (indexSettings.getAsBoolean(INDEX_ROUTING_ALLOCATION_DISABLE_REPLICA_ALLOCATION, disableReplicaAllocation)) {
+            if (shardRouting.primary()) {
+                return allocation.decision(Decision.YES, NAME, "primary allocation is enabled");
+            } else {
+                return allocation.decision(Decision.NO, NAME, "replica allocation is disabled");
+            }
         }
-        return Decision.YES;
+        return allocation.decision(Decision.YES, NAME, "all allocation is enabled");
     }
 }

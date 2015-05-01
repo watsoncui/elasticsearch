@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,18 +21,20 @@ package org.elasticsearch.index.mapper.object;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
+
+import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.joda.FormatDateTimeFormatter;
 import org.elasticsearch.common.joda.Joda;
+import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.index.mapper.*;
 import org.elasticsearch.index.mapper.core.DateFieldMapper;
+import org.elasticsearch.index.settings.IndexSettings;
 
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 import static com.google.common.collect.Lists.newArrayList;
 import static org.elasticsearch.common.xcontent.support.XContentMapValues.nodeBooleanValue;
@@ -98,7 +100,7 @@ public class RootObjectMapper extends ObjectMapper {
 
 
         @Override
-        protected ObjectMapper createMapper(String name, String fullPath, boolean enabled, Nested nested, Dynamic dynamic, ContentPath.Type pathType, Map<String, Mapper> mappers) {
+        protected ObjectMapper createMapper(String name, String fullPath, boolean enabled, Nested nested, Dynamic dynamic, ContentPath.Type pathType, Map<String, Mapper> mappers, @Nullable @IndexSettings Settings settings) {
             assert !nested.isNested();
             FormatDateTimeFormatter[] dates = null;
             if (dynamicDateTimeFormatters == null) {
@@ -108,10 +110,6 @@ public class RootObjectMapper extends ObjectMapper {
                 dates = Defaults.DYNAMIC_DATE_TIME_FORMATTERS;
             } else {
                 dates = dynamicDateTimeFormatters.toArray(new FormatDateTimeFormatter[dynamicDateTimeFormatters.size()]);
-            }
-            // root dynamic must not be null, since its the default
-            if (dynamic == null) {
-                dynamic = Dynamic.TRUE;
             }
             return new RootObjectMapper(name, enabled, dynamic, pathType, mappers,
                     dates,
@@ -128,23 +126,40 @@ public class RootObjectMapper extends ObjectMapper {
         }
 
         @Override
-        protected void processField(ObjectMapper.Builder builder, String fieldName, Object fieldNode) {
+        public Mapper.Builder parse(String name, Map<String, Object> node, ParserContext parserContext) throws MapperParsingException {
+
+            ObjectMapper.Builder builder = createBuilder(name);
+            Iterator<Map.Entry<String, Object>> iterator = node.entrySet().iterator();
+            while (iterator.hasNext()) {
+                Map.Entry<String, Object> entry = iterator.next();
+                String fieldName = Strings.toUnderscoreCase(entry.getKey());
+                Object fieldNode = entry.getValue();
+                if (parseObjectOrDocumentTypeProperties(fieldName, fieldNode, parserContext, builder)
+                        || processField(builder, fieldName, fieldNode)) {
+                    iterator.remove();
+                }
+            }
+            return builder;
+        }
+
+        protected boolean processField(ObjectMapper.Builder builder, String fieldName, Object fieldNode) {
             if (fieldName.equals("date_formats") || fieldName.equals("dynamic_date_formats")) {
                 List<FormatDateTimeFormatter> dateTimeFormatters = newArrayList();
                 if (fieldNode instanceof List) {
                     for (Object node1 : (List) fieldNode) {
-                        dateTimeFormatters.add(parseDateTimeFormatter(fieldName, node1));
+                        dateTimeFormatters.add(parseDateTimeFormatter(node1));
                     }
                 } else if ("none".equals(fieldNode.toString())) {
                     dateTimeFormatters = null;
                 } else {
-                    dateTimeFormatters.add(parseDateTimeFormatter(fieldName, fieldNode));
+                    dateTimeFormatters.add(parseDateTimeFormatter(fieldNode));
                 }
                 if (dateTimeFormatters == null) {
                     ((Builder) builder).noDynamicDateTimeFormatter();
                 } else {
                     ((Builder) builder).dynamicDateTimeFormatter(dateTimeFormatters);
                 }
+                return true;
             } else if (fieldName.equals("dynamic_templates")) {
                 //  "dynamic_templates" : [
                 //      {
@@ -164,11 +179,15 @@ public class RootObjectMapper extends ObjectMapper {
                     Map.Entry<String, Object> entry = tmpl.entrySet().iterator().next();
                     ((Builder) builder).add(DynamicTemplate.parse(entry.getKey(), (Map<String, Object>) entry.getValue()));
                 }
+                return true;
             } else if (fieldName.equals("date_detection")) {
                 ((Builder) builder).dateDetection = nodeBooleanValue(fieldNode);
+                return true;
             } else if (fieldName.equals("numeric_detection")) {
                 ((Builder) builder).numericDetection = nodeBooleanValue(fieldNode);
+                return true;
             }
+            return false;
         }
     }
 
@@ -186,6 +205,14 @@ public class RootObjectMapper extends ObjectMapper {
         this.dynamicDateTimeFormatters = dynamicDateTimeFormatters;
         this.dateDetection = dateDetection;
         this.numericDetection = numericDetection;
+    }
+
+    @Override
+    public ObjectMapper mappingUpdate(Mapper mapper) {
+        RootObjectMapper update = (RootObjectMapper) super.mappingUpdate(mapper);
+        // dynamic templates are irrelevant for dynamic mappings updates
+        update.dynamicTemplates = new DynamicTemplate[0];
+        return update;
     }
 
     public boolean dateDetection() {
@@ -228,14 +255,9 @@ public class RootObjectMapper extends ObjectMapper {
     }
 
     @Override
-    protected boolean allowValue() {
-        return true;
-    }
-
-    @Override
-    protected void doMerge(ObjectMapper mergeWith, MergeContext mergeContext) {
+    protected void doMerge(ObjectMapper mergeWith, MergeResult mergeResult) {
         RootObjectMapper mergeWithObject = (RootObjectMapper) mergeWith;
-        if (!mergeContext.mergeFlags().simulate()) {
+        if (!mergeResult.simulate()) {
             // merge them
             List<DynamicTemplate> mergedTemplates = Lists.newArrayList(Arrays.asList(this.dynamicTemplates));
             for (DynamicTemplate template : mergeWithObject.dynamicTemplates) {

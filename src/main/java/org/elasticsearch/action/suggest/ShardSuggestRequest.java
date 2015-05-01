@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,12 +19,13 @@
 
 package org.elasticsearch.action.suggest;
 
-import java.io.IOException;
-
 import org.elasticsearch.action.support.broadcast.BroadcastShardOperationRequest;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.index.shard.ShardId;
+
+import java.io.IOException;
 
 /**
  * Internal suggest request executed directly against a specific index shard.
@@ -36,8 +37,8 @@ final class ShardSuggestRequest extends BroadcastShardOperationRequest {
     ShardSuggestRequest() {
     }
 
-    public ShardSuggestRequest(String index, int shardId, SuggestRequest request) {
-        super(index, shardId, request);
+    ShardSuggestRequest(ShardId shardId, SuggestRequest request) {
+        super(shardId, request);
         this.suggestSource = request.suggest();
     }
 

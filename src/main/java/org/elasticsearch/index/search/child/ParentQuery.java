@@ -1,13 +1,13 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,150 +16,186 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.index.search.child;
 
-import gnu.trove.map.hash.TObjectFloatHashMap;
-import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.SortedDocValues;
+import org.apache.lucene.index.SortedSetDocValues;
 import org.apache.lucene.index.Term;
-import org.apache.lucene.search.*;
+import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.DocIdSet;
+import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.search.Explanation;
+import org.apache.lucene.search.Filter;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.Query;
+import org.apache.lucene.search.Scorer;
+import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.ToStringUtils;
-import org.elasticsearch.ElasticSearchIllegalStateException;
-import org.elasticsearch.common.CacheRecycler;
-import org.elasticsearch.common.bytes.BytesReference;
-import org.elasticsearch.common.bytes.HashedBytesArray;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.common.lease.Releasable;
+import org.elasticsearch.common.lease.Releasables;
+import org.elasticsearch.common.lucene.docset.DocIdSets;
 import org.elasticsearch.common.lucene.search.NoopCollector;
-import org.elasticsearch.index.cache.id.IdReaderTypeCache;
+import org.elasticsearch.common.util.BigArrays;
+import org.elasticsearch.common.util.FloatArray;
+import org.elasticsearch.common.util.LongHash;
+import org.elasticsearch.index.fielddata.IndexParentChildFieldData;
+import org.elasticsearch.index.fielddata.plain.ParentChildIndexFieldData;
 import org.elasticsearch.search.internal.SearchContext;
+import org.elasticsearch.search.internal.SearchContext.Lifetime;
 
 import java.io.IOException;
-import java.util.List;
 import java.util.Set;
 
 /**
  * A query implementation that executes the wrapped parent query and
  * connects the matching parent docs to the related child documents
- * using the {@link IdReaderTypeCache}.
+ * using the {@link ParentChildIndexFieldData}.
  */
-// TODO We use a score of 0 to indicate a doc was not scored in uidToScore, this means score of 0 can be problematic, if we move to HPCC, we can use lset/...
-public class ParentQuery extends Query implements SearchContext.Rewrite {
+public class ParentQuery extends Query {
 
-    private final SearchContext searchContext;
-    private final Query originalParentQuery;
+    private final ParentChildIndexFieldData parentChildIndexFieldData;
+    private Query originalParentQuery;
     private final String parentType;
     private final Filter childrenFilter;
-    private final List<String> childTypes;
 
     private Query rewrittenParentQuery;
-    private TObjectFloatHashMap<HashedBytesArray> uidToScore;
+    private IndexReader rewriteIndexReader;
 
-    public ParentQuery(SearchContext searchContext, Query parentQuery, String parentType, List<String> childTypes, Filter childrenFilter) {
-        this.searchContext = searchContext;
+    public ParentQuery(ParentChildIndexFieldData parentChildIndexFieldData, Query parentQuery, String parentType, Filter childrenFilter) {
+        this.parentChildIndexFieldData = parentChildIndexFieldData;
         this.originalParentQuery = parentQuery;
         this.parentType = parentType;
-        this.childTypes = childTypes;
         this.childrenFilter = childrenFilter;
     }
 
-    private ParentQuery(ParentQuery unwritten, Query rewrittenParentQuery) {
-        this.searchContext = unwritten.searchContext;
-        this.originalParentQuery = unwritten.originalParentQuery;
-        this.parentType = unwritten.parentType;
-        this.childrenFilter = unwritten.childrenFilter;
-        this.childTypes = unwritten.childTypes;
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj == null || obj.getClass() != this.getClass()) {
+            return false;
+        }
 
-        this.rewrittenParentQuery = rewrittenParentQuery;
-        this.uidToScore = unwritten.uidToScore;
+        ParentQuery that = (ParentQuery) obj;
+        if (!originalParentQuery.equals(that.originalParentQuery)) {
+            return false;
+        }
+        if (!parentType.equals(that.parentType)) {
+            return false;
+        }
+        if (getBoost() != that.getBoost()) {
+            return false;
+        }
+        return true;
     }
 
     @Override
-    public void contextRewrite(SearchContext searchContext) throws Exception {
-        searchContext.idCache().refresh(searchContext.searcher().getTopReaderContext().leaves());
-        uidToScore = CacheRecycler.popObjectFloatMap();
-        ParentUidCollector collector = new ParentUidCollector(uidToScore, searchContext, parentType);
-        Query parentQuery;
-        if (rewrittenParentQuery == null) {
-            parentQuery = rewrittenParentQuery = searchContext.searcher().rewrite(originalParentQuery);
-        } else {
-            parentQuery = rewrittenParentQuery;
-        }
-        searchContext.searcher().search(parentQuery, collector);
-    }
-
-    @Override
-    public void contextClear() {
-        if (uidToScore != null) {
-            CacheRecycler.pushObjectFloatMap(uidToScore);
-        }
-        uidToScore = null;
+    public int hashCode() {
+        int result = originalParentQuery.hashCode();
+        result = 31 * result + parentType.hashCode();
+        result = 31 * result + Float.floatToIntBits(getBoost());
+        return result;
     }
 
     @Override
     public String toString(String field) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("ParentQuery[").append(parentType).append("/").append(childTypes)
-                .append("](").append(originalParentQuery.toString(field)).append(')')
-                .append(ToStringUtils.boost(getBoost()));
-        return sb.toString();
+        return "ParentQuery[" + parentType + "](" + originalParentQuery.toString(field) + ')' + ToStringUtils.boost(getBoost());
     }
 
     @Override
+    // See TopChildrenQuery#rewrite
     public Query rewrite(IndexReader reader) throws IOException {
-        Query rewritten;
         if (rewrittenParentQuery == null) {
-            rewritten = originalParentQuery.rewrite(reader);
-        } else {
-            rewritten = rewrittenParentQuery;
+            rewriteIndexReader = reader;
+            rewrittenParentQuery = originalParentQuery.rewrite(reader);
         }
-        if (rewritten == rewrittenParentQuery) {
-            return this;
-        }
-
-        // See TopChildrenQuery#rewrite
-        ParentQuery rewrite = new ParentQuery(this, rewritten);
-        int index = searchContext.rewrites().indexOf(this);
-        searchContext.rewrites().set(index, rewrite);
-        return rewrite;
+        return this;
     }
 
     @Override
-    public void extractTerms(Set<Term> terms) {
-        rewrittenParentQuery.extractTerms(terms);
+    public Query clone() {
+        ParentQuery q = (ParentQuery) super.clone();
+        q.originalParentQuery = originalParentQuery.clone();
+        if (q.rewrittenParentQuery != null) {
+            q.rewrittenParentQuery = rewrittenParentQuery.clone();
+        }
+        return q;
     }
 
     @Override
-    public Weight createWeight(IndexSearcher searcher) throws IOException {
-        if (uidToScore == null) {
-            throw new ElasticSearchIllegalStateException("has_parent query hasn't executed properly");
+    public Weight createWeight(IndexSearcher searcher, boolean needsScores) throws IOException {
+        SearchContext sc = SearchContext.current();
+        ChildWeight childWeight;
+        boolean releaseCollectorResource = true;
+        ParentOrdAndScoreCollector collector = null;
+        IndexParentChildFieldData globalIfd = parentChildIndexFieldData.loadGlobal(searcher.getIndexReader());
+        if (globalIfd == null) {
+            // No docs of the specified type don't exist on this shard
+            return new BooleanQuery().createWeight(searcher, needsScores);
         }
-        return new ChildWeight(rewrittenParentQuery.createWeight(searcher));
+
+        try {
+            assert rewrittenParentQuery != null;
+            assert rewriteIndexReader == searcher.getIndexReader() : "not equal, rewriteIndexReader=" + rewriteIndexReader + " searcher.getIndexReader()=" + searcher.getIndexReader();
+            final Query  parentQuery = rewrittenParentQuery;
+            collector = new ParentOrdAndScoreCollector(sc, globalIfd, parentType);
+            IndexSearcher indexSearcher = new IndexSearcher(sc.searcher().getIndexReader());
+            indexSearcher.setSimilarity(searcher.getSimilarity());
+            indexSearcher.search(parentQuery, collector);
+            if (collector.parentCount() == 0) {
+                return new BooleanQuery().createWeight(searcher, needsScores);
+            }
+            childWeight = new ChildWeight(this, parentQuery.createWeight(searcher, needsScores), childrenFilter, collector, globalIfd);
+            releaseCollectorResource = false;
+        } finally {
+            if (releaseCollectorResource) {
+                // either if we run into an exception or if we return early
+                Releasables.close(collector);
+            }
+        }
+        sc.addReleasable(collector, Lifetime.COLLECTION);
+        return childWeight;
     }
 
-    static class ParentUidCollector extends NoopCollector {
+    private static class ParentOrdAndScoreCollector extends NoopCollector implements Releasable {
 
-        final TObjectFloatHashMap<HashedBytesArray> uidToScore;
-        final SearchContext searchContext;
-        final String parentType;
+        private final LongHash parentIdxs;
+        private FloatArray scores;
+        private final IndexParentChildFieldData globalIfd;
+        private final BigArrays bigArrays;
+        private final String parentType;
 
-        Scorer scorer;
-        IdReaderTypeCache typeCache;
+        private Scorer scorer;
+        private SortedDocValues values;
 
-        ParentUidCollector(TObjectFloatHashMap<HashedBytesArray> uidToScore, SearchContext searchContext, String parentType) {
-            this.uidToScore = uidToScore;
-            this.searchContext = searchContext;
+        ParentOrdAndScoreCollector(SearchContext searchContext, IndexParentChildFieldData globalIfd, String parentType) {
+            this.bigArrays = searchContext.bigArrays();
+            this.parentIdxs = new LongHash(512, bigArrays);
+            this.scores = bigArrays.newFloatArray(512, false);
+            this.globalIfd = globalIfd;
             this.parentType = parentType;
         }
 
         @Override
         public void collect(int doc) throws IOException {
-            if (typeCache == null) {
-                return;
+            // It can happen that for particular segment no document exist for an specific type. This prevents NPE
+            if (values != null) {
+                long globalOrdinal = values.getOrd(doc);
+                if (globalOrdinal != SortedSetDocValues.NO_MORE_ORDS) {
+                    long parentIdx = parentIdxs.add(globalOrdinal);
+                    if (parentIdx >= 0) {
+                        scores = bigArrays.grow(scores, parentIdx + 1);
+                        scores.set(parentIdx, scorer.score());
+                    } else {
+                        assert false : "parent id should only match once, since there can only be one parent doc";
+                    }
+                }
             }
-
-            HashedBytesArray parentUid = typeCache.idByDoc(doc);
-            uidToScore.put(parentUid, scorer.score());
         }
 
         @Override
@@ -168,27 +204,45 @@ public class ParentQuery extends Query implements SearchContext.Rewrite {
         }
 
         @Override
-        public void setNextReader(AtomicReaderContext context) throws IOException {
-            typeCache = searchContext.idCache().reader(context.reader()).type(parentType);
+        protected void doSetNextReader(LeafReaderContext context) throws IOException {
+            values = globalIfd.load(context).getOrdinalsValues(parentType);
         }
+
+        @Override
+        public void close() {
+            Releasables.close(parentIdxs, scores);
+        }
+
+        public long parentCount() {
+            return parentIdxs.size();
+        }
+
     }
 
-    class ChildWeight extends Weight {
+    private class ChildWeight extends Weight {
 
         private final Weight parentWeight;
+        private final Filter childrenFilter;
+        private final LongHash parentIdxs;
+        private final FloatArray scores;
+        private final IndexParentChildFieldData globalIfd;
 
-        ChildWeight(Weight parentWeight) {
+        private ChildWeight(Query query, Weight parentWeight, Filter childrenFilter, ParentOrdAndScoreCollector collector, IndexParentChildFieldData globalIfd) {
+            super(query);
             this.parentWeight = parentWeight;
+            this.childrenFilter = childrenFilter;
+            this.parentIdxs = collector.parentIdxs;
+            this.scores = collector.scores;
+            this.globalIfd = globalIfd;
         }
 
         @Override
-        public Explanation explain(AtomicReaderContext context, int doc) throws IOException {
-            return new Explanation(getBoost(), "not implemented yet...");
+        public void extractTerms(Set<Term> terms) {
         }
 
         @Override
-        public Query getQuery() {
-            return ParentQuery.this;
+        public Explanation explain(LeafReaderContext context, int doc) throws IOException {
+            return Explanation.match(getBoost(), "not implemented yet...");
         }
 
         @Override
@@ -203,30 +257,37 @@ public class ParentQuery extends Query implements SearchContext.Rewrite {
         }
 
         @Override
-        public Scorer scorer(AtomicReaderContext context, boolean scoreDocsInOrder, boolean topScorer, Bits acceptDocs) throws IOException {
+        public Scorer scorer(LeafReaderContext context, Bits acceptDocs) throws IOException {
             DocIdSet childrenDocSet = childrenFilter.getDocIdSet(context, acceptDocs);
-            if (childrenDocSet == null || childrenDocSet == DocIdSet.EMPTY_DOCIDSET) {
+            if (DocIdSets.isEmpty(childrenDocSet)) {
                 return null;
             }
-            IdReaderTypeCache idTypeCache = searchContext.idCache().reader(context.reader()).type(parentType);
-            return new ChildScorer(this, uidToScore, childrenDocSet.iterator(), idTypeCache);
+            SortedDocValues bytesValues = globalIfd.load(context).getOrdinalsValues(parentType);
+            if (bytesValues == null) {
+                return null;
+            }
+
+            return new ChildScorer(this, parentIdxs, scores, childrenDocSet.iterator(), bytesValues);
         }
+
     }
 
-    static class ChildScorer extends Scorer {
+    private static class ChildScorer extends Scorer {
 
-        final TObjectFloatHashMap<HashedBytesArray> uidToScore;
-        final DocIdSetIterator childrenIterator;
-        final IdReaderTypeCache typeCache;
+        private final LongHash parentIdxs;
+        private final FloatArray scores;
+        private final DocIdSetIterator childrenIterator;
+        private final SortedDocValues ordinals;
 
-        int currentChildDoc = -1;
-        float currentScore;
+        private int currentChildDoc = -1;
+        private float currentScore;
 
-        ChildScorer(Weight weight, TObjectFloatHashMap<HashedBytesArray> uidToScore, DocIdSetIterator childrenIterator, IdReaderTypeCache typeCache) {
+        ChildScorer(Weight weight, LongHash parentIdxs, FloatArray scores, DocIdSetIterator childrenIterator, SortedDocValues ordinals) {
             super(weight);
-            this.uidToScore = uidToScore;
+            this.parentIdxs = parentIdxs;
+            this.scores = scores;
             this.childrenIterator = childrenIterator;
-            this.typeCache = typeCache;
+            this.ordinals = ordinals;
         }
 
         @Override
@@ -254,12 +315,14 @@ public class ParentQuery extends Query implements SearchContext.Rewrite {
                     return currentChildDoc;
                 }
 
-                BytesReference uid = typeCache.parentIdByDoc(currentChildDoc);
-                if (uid == null) {
+                int globalOrdinal = (int) ordinals.getOrd(currentChildDoc);
+                if (globalOrdinal < 0) {
                     continue;
                 }
-                currentScore = uidToScore.get(uid);
-                if (currentScore != 0) {
+
+                final long parentIdx = parentIdxs.find(globalOrdinal);
+                if (parentIdx != -1) {
+                    currentScore = scores.get(parentIdx);
                     return currentChildDoc;
                 }
             }
@@ -271,15 +334,24 @@ public class ParentQuery extends Query implements SearchContext.Rewrite {
             if (currentChildDoc == DocIdSetIterator.NO_MORE_DOCS) {
                 return currentChildDoc;
             }
-            BytesReference uid = typeCache.idByDoc(currentChildDoc);
-            if (uid == null) {
+
+            int globalOrdinal = (int) ordinals.getOrd(currentChildDoc);
+            if (globalOrdinal < 0) {
                 return nextDoc();
             }
-            currentScore = uidToScore.get(uid);
-            if (currentScore == 0) {
+
+            final long parentIdx = parentIdxs.find(globalOrdinal);
+            if (parentIdx != -1) {
+                currentScore = scores.get(parentIdx);
+                return currentChildDoc;
+            } else {
                 return nextDoc();
             }
-            return currentChildDoc;
+        }
+
+        @Override
+        public long cost() {
+            return childrenIterator.cost();
         }
     }
 }

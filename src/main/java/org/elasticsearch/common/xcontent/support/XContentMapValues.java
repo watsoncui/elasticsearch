@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,6 +21,7 @@ package org.elasticsearch.common.xcontent.support;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.regex.Regex;
 import org.elasticsearch.common.unit.TimeValue;
@@ -136,11 +137,15 @@ public class XContentMapValues {
 
     public static Map<String, Object> filter(Map<String, Object> map, String[] includes, String[] excludes) {
         Map<String, Object> result = Maps.newHashMap();
-        filter(map, result, includes, excludes, new StringBuilder());
+        filter(map, result, includes == null ? Strings.EMPTY_ARRAY : includes, excludes == null ? Strings.EMPTY_ARRAY : excludes, new StringBuilder());
         return result;
     }
 
     private static void filter(Map<String, Object> map, Map<String, Object> into, String[] includes, String[] excludes, StringBuilder sb) {
+        if (includes.length == 0 && excludes.length == 0) {
+            into.putAll(map);
+            return;
+        }
         for (Map.Entry<String, Object> entry : map.entrySet()) {
             String key = entry.getKey();
             int mark = sb.length();
@@ -149,46 +154,67 @@ public class XContentMapValues {
             }
             sb.append(key);
             String path = sb.toString();
-            boolean excluded = false;
-            for (String exclude : excludes) {
-                if (Regex.simpleMatch(exclude, path)) {
-                    excluded = true;
-                    break;
-                }
-            }
-            if (excluded) {
+
+            if (Regex.simpleMatch(excludes, path)) {
                 sb.setLength(mark);
                 continue;
             }
-            if (includes.length > 0) {
-                boolean atLeastOnOneIncludeMatched = false;
+
+            boolean exactIncludeMatch = false; // true if the current position was specifically mentioned
+            boolean pathIsPrefixOfAnInclude = false; // true if potentially a sub scope can be included
+            if (includes.length == 0) {
+                // implied match anything
+                exactIncludeMatch = true;
+            } else {
                 for (String include : includes) {
-                    // check for prefix as well, something like: obj1.arr1.*
+                    // check for prefix matches as well to see if we need to zero in, something like: obj1.arr1.* or *.field
                     // note, this does not work well with middle matches, like obj1.*.obj3
-                    if (include.startsWith(path) || Regex.simpleMatch(include, path)) {
-                        atLeastOnOneIncludeMatched = true;
+                    if (include.charAt(0) == '*') {
+                        if (Regex.simpleMatch(include, path)) {
+                            exactIncludeMatch = true;
+                            break;
+                        }
+                        pathIsPrefixOfAnInclude = true;
+                        continue;
+                    }
+                    if (include.startsWith(path)) {
+                        if (include.length() == path.length()) {
+                            exactIncludeMatch = true;
+                            break;
+                        } else if (include.length() > path.length() && include.charAt(path.length()) == '.') {
+                            // include might may match deeper paths. Dive deeper.
+                            pathIsPrefixOfAnInclude = true;
+                            continue;
+                        }
+                    }
+                    if (Regex.simpleMatch(include, path)) {
+                        exactIncludeMatch = true;
                         break;
                     }
                 }
-                if (!atLeastOnOneIncludeMatched) {
-                    sb.setLength(mark);
-                    continue;
-                }
+            }
+
+            if (!(pathIsPrefixOfAnInclude || exactIncludeMatch)) {
+                // skip subkeys, not interesting.
+                sb.setLength(mark);
+                continue;
             }
 
 
             if (entry.getValue() instanceof Map) {
                 Map<String, Object> innerInto = Maps.newHashMap();
-                filter((Map<String, Object>) entry.getValue(), innerInto, includes, excludes, sb);
-                if (!innerInto.isEmpty()) {
+                // if we had an exact match, we want give deeper excludes their chance
+                filter((Map<String, Object>) entry.getValue(), innerInto, exactIncludeMatch ? Strings.EMPTY_ARRAY : includes, excludes, sb);
+                if (exactIncludeMatch || !innerInto.isEmpty()) {
                     into.put(entry.getKey(), innerInto);
                 }
             } else if (entry.getValue() instanceof List) {
                 List<Object> list = (List<Object>) entry.getValue();
-                List<Object> innerInto = new ArrayList<Object>(list.size());
-                filter(list, innerInto, includes, excludes, sb);
+                List<Object> innerInto = new ArrayList<>(list.size());
+                // if we had an exact match, we want give deeper excludes their chance
+                filter(list, innerInto, exactIncludeMatch ? Strings.EMPTY_ARRAY : includes, excludes, sb);
                 into.put(entry.getKey(), innerInto);
-            } else {
+            } else if (exactIncludeMatch) {
                 into.put(entry.getKey(), entry.getValue());
             }
             sb.setLength(mark);
@@ -196,6 +222,11 @@ public class XContentMapValues {
     }
 
     private static void filter(List<Object> from, List<Object> to, String[] includes, String[] excludes, StringBuilder sb) {
+        if (includes.length == 0 && excludes.length == 0) {
+            to.addAll(from);
+            return;
+        }
+
         for (Object o : from) {
             if (o instanceof Map) {
                 Map<String, Object> innerInto = Maps.newHashMap();
@@ -204,8 +235,11 @@ public class XContentMapValues {
                     to.add(innerInto);
                 }
             } else if (o instanceof List) {
-                List<Object> innerInto = new ArrayList<Object>();
+                List<Object> innerInto = new ArrayList<>();
                 filter((List<Object>) o, innerInto, includes, excludes, sb);
+                if (!innerInto.isEmpty()) {
+                    to.add(innerInto);
+                }
             } else {
                 to.add(o);
             }
@@ -344,5 +378,32 @@ public class XContentMapValues {
             return TimeValue.timeValueMillis(((Number) node).longValue());
         }
         return TimeValue.parseTimeValue(node.toString(), null);
+    }
+
+    public static Map<String, Object> nodeMapValue(Object node, String desc) {
+        if (node instanceof Map) {
+            return (Map<String, Object>) node;
+        } else {
+            throw new ElasticsearchParseException(desc + " should be a hash but was of type: " + node.getClass());
+        }
+    }
+
+    /**
+     * Returns an array of string value from a node value.
+     *
+     * If the node represents an array the corresponding array of strings is returned.
+     * Otherwise the node is treated as a comma-separated string.
+     */
+    public static String[] nodeStringArrayValue(Object node) {
+        if (isArray(node)) {
+            List list = (List) node;
+            String[] arr = new String[list.size()];
+            for (int i = 0; i < arr.length; i++) {
+                arr[i] = nodeStringValue(list.get(i), null);
+            }
+            return arr;
+        } else {
+            return Strings.splitStringByCommaToArray(node.toString());
+        }
     }
 }

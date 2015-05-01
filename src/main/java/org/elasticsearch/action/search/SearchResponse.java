@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,13 +23,13 @@ import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.unit.TimeValue;
-import org.elasticsearch.common.xcontent.ToXContent;
+import org.elasticsearch.common.xcontent.StatusToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentBuilderString;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.search.SearchHits;
-import org.elasticsearch.search.facet.Facets;
+import org.elasticsearch.search.aggregations.Aggregations;
 import org.elasticsearch.search.internal.InternalSearchResponse;
 import org.elasticsearch.search.suggest.Suggest;
 
@@ -41,7 +41,7 @@ import static org.elasticsearch.search.internal.InternalSearchResponse.readInter
 /**
  * A response of a search request.
  */
-public class SearchResponse extends ActionResponse implements ToXContent {
+public class SearchResponse extends ActionResponse implements StatusToXContent {
 
     private InternalSearchResponse internalResponse;
 
@@ -67,22 +67,9 @@ public class SearchResponse extends ActionResponse implements ToXContent {
         this.shardFailures = shardFailures;
     }
 
+    @Override
     public RestStatus status() {
-        if (shardFailures.length == 0) {
-            return RestStatus.OK;
-        }
-        if (successfulShards == 0 && totalShards > 0) {
-            RestStatus status = shardFailures[0].status();
-            if (shardFailures.length > 1) {
-                for (int i = 1; i < shardFailures.length; i++) {
-                    if (shardFailures[i].status().getStatus() >= 500) {
-                        status = shardFailures[i].status();
-                    }
-                }
-            }
-            return status;
-        }
-        return RestStatus.OK;
+        return RestStatus.status(successfulShards, totalShards, shardFailures);
     }
 
     /**
@@ -92,12 +79,10 @@ public class SearchResponse extends ActionResponse implements ToXContent {
         return internalResponse.hits();
     }
 
-    /**
-     * The search facets.
-     */
-    public Facets getFacets() {
-        return internalResponse.facets();
+    public Aggregations getAggregations() {
+        return internalResponse.aggregations();
     }
+
 
     public Suggest getSuggest() {
         return internalResponse.suggest();
@@ -108,6 +93,14 @@ public class SearchResponse extends ActionResponse implements ToXContent {
      */
     public boolean isTimedOut() {
         return internalResponse.timedOut();
+    }
+
+    /**
+     * Has the search operation terminated early due to reaching
+     * <code>terminateAfter</code>
+     */
+    public Boolean isTerminatedEarly() {
+        return internalResponse.terminatedEarly();
     }
 
     /**
@@ -142,7 +135,9 @@ public class SearchResponse extends ActionResponse implements ToXContent {
      * The failed number of shards the search was executed on.
      */
     public int getFailedShards() {
-        return totalShards - successfulShards;
+        // we don't return totalShards - successfulShards, we don't count "no shards available" as a failed shard, just don't
+        // count it in the successful counter
+        return shardFailures.length;
     }
 
     /**
@@ -160,6 +155,10 @@ public class SearchResponse extends ActionResponse implements ToXContent {
         return scrollId;
     }
 
+    public void scrollId(String scrollId) {
+        this.scrollId = scrollId;
+    }
+
     static final class Fields {
         static final XContentBuilderString _SCROLL_ID = new XContentBuilderString("_scroll_id");
         static final XContentBuilderString _SHARDS = new XContentBuilderString("_shards");
@@ -173,6 +172,7 @@ public class SearchResponse extends ActionResponse implements ToXContent {
         static final XContentBuilderString REASON = new XContentBuilderString("reason");
         static final XContentBuilderString TOOK = new XContentBuilderString("took");
         static final XContentBuilderString TIMED_OUT = new XContentBuilderString("timed_out");
+        static final XContentBuilderString TERMINATED_EARLY = new XContentBuilderString("terminated_early");
     }
 
     @Override
@@ -182,6 +182,9 @@ public class SearchResponse extends ActionResponse implements ToXContent {
         }
         builder.field(Fields.TOOK, tookInMillis);
         builder.field(Fields.TIMED_OUT, isTimedOut());
+        if (isTerminatedEarly() != null) {
+            builder.field(Fields.TERMINATED_EARLY, isTerminatedEarly());
+        }
         builder.startObject(Fields._SHARDS);
         builder.field(Fields.TOTAL, getTotalShards());
         builder.field(Fields.SUCCESSFUL, getSuccessfulShards());

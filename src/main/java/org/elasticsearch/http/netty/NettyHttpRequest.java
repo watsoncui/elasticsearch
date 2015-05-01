@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,29 +23,29 @@ import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.bytes.ChannelBufferBytesReference;
 import org.elasticsearch.http.HttpRequest;
-import org.elasticsearch.rest.support.AbstractRestRequest;
 import org.elasticsearch.rest.support.RestUtils;
+import org.jboss.netty.channel.Channel;
 import org.jboss.netty.handler.codec.http.HttpMethod;
 
+import java.net.SocketAddress;
 import java.util.HashMap;
 import java.util.Map;
 
 /**
  *
  */
-public class NettyHttpRequest extends AbstractRestRequest implements HttpRequest {
+public class NettyHttpRequest extends HttpRequest {
 
     private final org.jboss.netty.handler.codec.http.HttpRequest request;
-
+    private final Channel channel;
     private final Map<String, String> params;
-
     private final String rawPath;
-
     private final BytesReference content;
 
-    public NettyHttpRequest(org.jboss.netty.handler.codec.http.HttpRequest request) {
+    public NettyHttpRequest(org.jboss.netty.handler.codec.http.HttpRequest request, Channel channel) {
         this.request = request;
-        this.params = new HashMap<String, String>();
+        this.channel = channel;
+        this.params = new HashMap<>();
         if (request.getContent().readable()) {
             this.content = new ChannelBufferBytesReference(request.getContent());
         } else {
@@ -60,6 +60,10 @@ public class NettyHttpRequest extends AbstractRestRequest implements HttpRequest
             this.rawPath = uri.substring(0, pathEndPos);
             RestUtils.decodeQueryString(uri, pathEndPos + 1, params);
         }
+    }
+
+    public org.jboss.netty.handler.codec.http.HttpRequest request() {
+        return this.request;
     }
 
     @Override
@@ -109,19 +113,44 @@ public class NettyHttpRequest extends AbstractRestRequest implements HttpRequest
     }
 
     @Override
-    public boolean contentUnsafe() {
-        // Netty http decoder always copies over the http content
-        return false;
-    }
-
-    @Override
     public BytesReference content() {
         return content;
     }
 
+    /**
+     * Returns the remote address where this rest request channel is "connected to".  The
+     * returned {@link SocketAddress} is supposed to be down-cast into more
+     * concrete type such as {@link java.net.InetSocketAddress} to retrieve
+     * the detailed information.
+     */
+    @Override
+    public SocketAddress getRemoteAddress() {
+        return channel.getRemoteAddress();
+    }
+
+    /**
+     * Returns the local address where this request channel is bound to.  The returned
+     * {@link SocketAddress} is supposed to be down-cast into more concrete
+     * type such as {@link java.net.InetSocketAddress} to retrieve the detailed
+     * information.
+     */
+    @Override
+    public SocketAddress getLocalAddress() {
+        return channel.getLocalAddress();
+    }
+
+    public Channel getChannel() {
+        return channel;
+    }
+
     @Override
     public String header(String name) {
-        return request.getHeader(name);
+        return request.headers().get(name);
+    }
+
+    @Override
+    public Iterable<Map.Entry<String, String>> headers() {
+        return request.headers().entries();
     }
 
     @Override

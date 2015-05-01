@@ -1,11 +1,11 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this 
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,7 +21,8 @@ package org.elasticsearch.action.support.broadcast;
 
 import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.ActionRequestValidationException;
-import org.elasticsearch.action.support.IgnoreIndices;
+import org.elasticsearch.action.IndicesRequest;
+import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 
@@ -30,26 +31,30 @@ import java.io.IOException;
 /**
  *
  */
-public abstract class BroadcastOperationRequest<T extends BroadcastOperationRequest> extends ActionRequest<T> {
+public abstract class BroadcastOperationRequest<T extends BroadcastOperationRequest> extends ActionRequest<T> implements IndicesRequest.Replaceable {
 
     protected String[] indices;
-
-    private BroadcastOperationThreading operationThreading = BroadcastOperationThreading.SINGLE_THREAD;
-    private IgnoreIndices ignoreIndices = IgnoreIndices.NONE;
+    private IndicesOptions indicesOptions = IndicesOptions.strictExpandOpenAndForbidClosed();
 
     protected BroadcastOperationRequest() {
 
+    }
+
+    protected BroadcastOperationRequest(ActionRequest originalRequest) {
+        super(originalRequest);
     }
 
     protected BroadcastOperationRequest(String[] indices) {
         this.indices = indices;
     }
 
+    @Override
     public String[] indices() {
         return indices;
     }
 
     @SuppressWarnings("unchecked")
+    @Override
     public final T indices(String... indices) {
         this.indices = indices;
         return (T) this;
@@ -60,60 +65,28 @@ public abstract class BroadcastOperationRequest<T extends BroadcastOperationRequ
         return null;
     }
 
-    /**
-     * Controls the operation threading model.
-     */
-    public BroadcastOperationThreading operationThreading() {
-        return operationThreading;
-    }
-
-    /**
-     * Controls the operation threading model.
-     */
-    @SuppressWarnings("unchecked")
-    public final T operationThreading(BroadcastOperationThreading operationThreading) {
-        this.operationThreading = operationThreading;
-        return (T) this;
-    }
-
-    /**
-     * Controls the operation threading model.
-     */
-    public T operationThreading(String operationThreading) {
-        return operationThreading(BroadcastOperationThreading.fromString(operationThreading, this.operationThreading));
-    }
-
-    public IgnoreIndices ignoreIndices() {
-        return ignoreIndices;
+    @Override
+    public IndicesOptions indicesOptions() {
+        return indicesOptions;
     }
 
     @SuppressWarnings("unchecked")
-    public final T ignoreIndices(IgnoreIndices ignoreIndices) {
-        this.ignoreIndices = ignoreIndices;
+    public final T indicesOptions(IndicesOptions indicesOptions) {
+        this.indicesOptions = indicesOptions;
         return (T) this;
-    }
-
-    protected void beforeStart() {
-
-    }
-
-    protected void beforeLocalFork() {
-
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
         out.writeStringArrayNullable(indices);
-        out.writeByte(operationThreading.id());
-        out.writeByte(ignoreIndices.id());
+        indicesOptions.writeIndicesOptions(out);
     }
 
     @Override
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
         indices = in.readStringArray();
-        operationThreading = BroadcastOperationThreading.fromId(in.readByte());
-        ignoreIndices = IgnoreIndices.fromId(in.readByte());
+        indicesOptions = IndicesOptions.readIndicesOptions(in);
     }
 }

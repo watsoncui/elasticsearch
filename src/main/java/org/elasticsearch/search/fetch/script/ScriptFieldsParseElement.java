@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,7 +20,8 @@
 package org.elasticsearch.search.fetch.script;
 
 import org.elasticsearch.common.xcontent.XContentParser;
-import org.elasticsearch.script.SearchScript;
+import org.elasticsearch.script.*;
+import org.elasticsearch.script.ScriptParameterParser.ScriptParameterValue;
 import org.elasticsearch.search.SearchParseElement;
 import org.elasticsearch.search.internal.SearchContext;
 
@@ -51,8 +52,9 @@ public class ScriptFieldsParseElement implements SearchParseElement {
                 currentFieldName = parser.currentName();
             } else if (token == XContentParser.Token.START_OBJECT) {
                 String fieldName = currentFieldName;
+                ScriptParameterParser scriptParameterParser = new ScriptParameterParser();
                 String script = null;
-                String scriptLang = null;
+                ScriptService.ScriptType scriptType = null;
                 Map<String, Object> params = null;
                 boolean ignoreException = false;
                 while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
@@ -61,16 +63,20 @@ public class ScriptFieldsParseElement implements SearchParseElement {
                     } else if (token == XContentParser.Token.START_OBJECT) {
                         params = parser.map();
                     } else if (token.isValue()) {
-                        if ("script".equals(currentFieldName)) {
-                            script = parser.text();
-                        } else if ("lang".equals(currentFieldName)) {
-                            scriptLang = parser.text();
-                        } else if ("ignore_failure".equals(currentFieldName)) {
+                        if ("ignore_failure".equals(currentFieldName)) {
                             ignoreException = parser.booleanValue();
+                        } else {
+                            scriptParameterParser.token(currentFieldName, token, parser);
                         }
                     }
                 }
-                SearchScript searchScript = context.scriptService().search(context.lookup(), scriptLang, script, params);
+
+                ScriptParameterValue scriptValue = scriptParameterParser.getDefaultScriptParameterValue();
+                if (scriptValue != null) {
+                    script = scriptValue.script();
+                    scriptType = scriptValue.scriptType();
+                }
+                SearchScript searchScript = context.scriptService().search(context.lookup(), new Script(scriptParameterParser.lang(), script, scriptType, params), ScriptContext.Standard.SEARCH);
                 context.scriptFields().add(new ScriptFieldsContext.ScriptField(fieldName, searchScript, ignoreException));
             }
         }

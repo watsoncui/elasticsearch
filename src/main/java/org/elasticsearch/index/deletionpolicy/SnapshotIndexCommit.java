@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -27,7 +27,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 
 /**
- * A snapshot index commit point. While this is held and {@link #release()}
+ * A snapshot index commit point. While this is held and {@link #close()}
  * was not called, no files will be deleted that relates to this commit point
  * ({@link #getFileNames()}).
  *
@@ -42,7 +42,7 @@ public class SnapshotIndexCommit extends IndexCommitDelegate implements Releasab
     SnapshotIndexCommit(SnapshotDeletionPolicy deletionPolicy, IndexCommit cp) throws IOException {
         super(cp);
         this.deletionPolicy = deletionPolicy;
-        ArrayList<String> tmpFiles = new ArrayList<String>();
+        ArrayList<String> tmpFiles = new ArrayList<>();
         for (String o : cp.getFileNames()) {
             tmpFiles.add(o);
         }
@@ -54,11 +54,11 @@ public class SnapshotIndexCommit extends IndexCommitDelegate implements Releasab
     }
 
     /**
-     * Releases the current snapshot, returning <code>true</code> if it was
-     * actually released.
+     * Releases the current snapshot.
      */
-    public boolean release() {
-        return deletionPolicy.release(getGeneration());
+    @Override
+    public void close() {
+        deletionPolicy.close(getGeneration());
     }
 
     /**

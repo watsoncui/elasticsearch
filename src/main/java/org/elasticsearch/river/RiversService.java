@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,28 +22,25 @@ package org.elasticsearch.river;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.NoShardAvailableActionException;
 import org.elasticsearch.action.WriteConsistencyLevel;
-import org.elasticsearch.action.admin.indices.mapping.delete.DeleteMappingResponse;
+import org.elasticsearch.action.get.GetRequestBuilder;
 import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.ClusterService;
-import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Injector;
-import org.elasticsearch.common.inject.Injectors;
 import org.elasticsearch.common.inject.ModulesBuilder;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.common.util.concurrent.EsRejectedExecutionException;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.indices.IndexMissingException;
 import org.elasticsearch.plugins.PluginsService;
 import org.elasticsearch.river.cluster.RiverClusterChangedEvent;
 import org.elasticsearch.river.cluster.RiverClusterService;
@@ -54,6 +51,8 @@ import org.elasticsearch.threadpool.ThreadPool;
 
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+
+import static org.elasticsearch.action.support.TransportActions.isShardNotAvailableException;
 
 /**
  *
@@ -89,11 +88,11 @@ public class RiversService extends AbstractLifecycleComponent<RiversService> {
     }
 
     @Override
-    protected void doStart() throws ElasticSearchException {
+    protected void doStart() {
     }
 
     @Override
-    protected void doStop() throws ElasticSearchException {
+    protected void doStop() {
         ImmutableSet<RiverName> indices = ImmutableSet.copyOf(this.rivers.keySet());
         final CountDownLatch latch = new CountDownLatch(indices.size());
         for (final RiverName riverName : indices) {
@@ -118,15 +117,16 @@ public class RiversService extends AbstractLifecycleComponent<RiversService> {
     }
 
     @Override
-    protected void doClose() throws ElasticSearchException {
+    protected void doClose() {
     }
 
-    public synchronized void createRiver(RiverName riverName, Map<String, Object> settings) throws ElasticSearchException {
+    public synchronized void createRiver(RiverName riverName, Map<String, Object> settings) {
         if (riversInjectors.containsKey(riverName)) {
             logger.warn("ignoring river [{}][{}] creation, already exists", riverName.type(), riverName.name());
             return;
         }
 
+        logger.info("rivers have been deprecated. Read https://www.elastic.co/blog/deprecating_rivers");
         logger.debug("creating river [{}][{}]", riverName.type(), riverName.name());
 
         try {
@@ -146,7 +146,6 @@ public class RiversService extends AbstractLifecycleComponent<RiversService> {
             river.start();
 
             XContentBuilder builder = XContentFactory.jsonBuilder().startObject();
-            builder.field("ok", true);
 
             builder.startObject("node");
             builder.field("id", clusterService.localNode().id());
@@ -172,6 +171,7 @@ public class RiversService extends AbstractLifecycleComponent<RiversService> {
                 builder.field("name", clusterService.localNode().name());
                 builder.field("transport_address", clusterService.localNode().address().toString());
                 builder.endObject();
+                builder.endObject();
 
                 client.prepareIndex(riverIndexName, riverName.name(), "_status")
                         .setConsistencyLevel(WriteConsistencyLevel.ONE)
@@ -182,7 +182,7 @@ public class RiversService extends AbstractLifecycleComponent<RiversService> {
         }
     }
 
-    public synchronized void closeRiver(RiverName riverName) throws ElasticSearchException {
+    public synchronized void closeRiver(RiverName riverName) {
         Injector riverInjector;
         River river;
         synchronized (this) {
@@ -198,8 +198,6 @@ public class RiversService extends AbstractLifecycleComponent<RiversService> {
         }
 
         river.close();
-
-        Injectors.close(injector);
     }
 
     private class ApplyRivers implements RiverClusterStateListener {
@@ -214,60 +212,35 @@ public class RiversService extends AbstractLifecycleComponent<RiversService> {
                 if (routing == null || !localNode.equals(routing.node())) {
                     // not routed at all, and not allocated here, clean it (we delete the relevant ones before)
                     closeRiver(riverName);
-                    // also, double check and delete the river content if it was deleted (_meta does not exists)
-                    try {
-                        client.prepareGet(riverIndexName, riverName.name(), "_meta").setListenerThreaded(true).execute(new ActionListener<GetResponse>() {
-                            @Override
-                            public void onResponse(GetResponse getResponse) {
-                                if (!getResponse.isExists()) {
-                                    // verify the river is deleted
-                                    client.admin().indices().prepareDeleteMapping(riverIndexName).setType(riverName.name()).execute(new ActionListener<DeleteMappingResponse>() {
-                                        @Override
-                                        public void onResponse(DeleteMappingResponse deleteMappingResponse) {
-                                            // all is well...
-                                        }
-
-                                        @Override
-                                        public void onFailure(Throwable e) {
-                                            logger.debug("failed to (double) delete river [{}] content", e, riverName.name());
-                                        }
-                                    });
-                                }
-                            }
-
-                            @Override
-                            public void onFailure(Throwable e) {
-                                logger.debug("failed to (double) delete river [{}] content", e, riverName.name());
-                            }
-                        });
-                    } catch (IndexMissingException e) {
-                        // all is well, the _river index was deleted
-                    } catch (Exception e) {
-                        logger.warn("unexpected failure when trying to verify river [{}] deleted", e, riverName.name());
-                    }
                 }
             }
 
             for (final RiverRouting routing : state.routing()) {
                 // not allocated
                 if (routing.node() == null) {
+                    logger.trace("river {} has no routing node", routing.riverName().getName());
                     continue;
                 }
                 // only apply changes to the local node
                 if (!routing.node().equals(localNode)) {
+                    logger.trace("river {} belongs to node {}", routing.riverName().getName(), routing.node());
                     continue;
                 }
                 // if its already created, ignore it
                 if (rivers.containsKey(routing.riverName())) {
+                    logger.trace("river {} is already allocated", routing.riverName().getName());
                     continue;
                 }
-                client.prepareGet(riverIndexName, routing.riverName().name(), "_meta").setListenerThreaded(true).execute(new ActionListener<GetResponse>() {
+                prepareGetMetaDocument(routing.riverName().name()).execute(new ActionListener<GetResponse>() {
                     @Override
                     public void onResponse(GetResponse getResponse) {
                         if (!rivers.containsKey(routing.riverName())) {
                             if (getResponse.isExists()) {
                                 // only create the river if it exists, otherwise, the indexing meta data has not been visible yet...
                                 createRiver(routing.riverName(), getResponse.getSourceAsMap());
+                            } else {
+                                //this should never happen as we've just found the _meta document in RiversRouter
+                                logger.warn("{}/{}/_meta document not found", riverIndexName, routing.riverName().getName());
                             }
                         }
                     }
@@ -278,21 +251,29 @@ public class RiversService extends AbstractLifecycleComponent<RiversService> {
                         // this might happen if the state of the river index has not been propagated yet to this node, which
                         // should happen pretty fast since we managed to get the _meta in the RiversRouter
                         Throwable failure = ExceptionsHelper.unwrapCause(e);
-                        if ((failure instanceof NoShardAvailableActionException) || (failure instanceof ClusterBlockException) || (failure instanceof IndexMissingException)) {
+                        if (isShardNotAvailableException(failure)) {
                             logger.debug("failed to get _meta from [{}]/[{}], retrying...", e, routing.riverName().type(), routing.riverName().name());
                             final ActionListener<GetResponse> listener = this;
-                            threadPool.schedule(TimeValue.timeValueSeconds(5), ThreadPool.Names.SAME, new Runnable() {
-                                @Override
-                                public void run() {
-                                    client.prepareGet(riverIndexName, routing.riverName().name(), "_meta").setListenerThreaded(true).execute(listener);
-                                }
-                            });
+                            try {
+                                threadPool.schedule(TimeValue.timeValueSeconds(5), ThreadPool.Names.SAME, new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        prepareGetMetaDocument(routing.riverName().name()).execute(listener);
+                                    }
+                                });
+                            } catch (EsRejectedExecutionException ex) {
+                                logger.debug("Couldn't schedule river start retry, node might be shutting down", ex);
+                            }
                         } else {
                             logger.warn("failed to get _meta from [{}]/[{}]", e, routing.riverName().type(), routing.riverName().name());
                         }
                     }
                 });
             }
+        }
+
+        private GetRequestBuilder prepareGetMetaDocument(String riverName) {
+            return client.prepareGet(riverIndexName, riverName, "_meta").setPreference("_primary").setListenerThreaded(true);
         }
     }
 }

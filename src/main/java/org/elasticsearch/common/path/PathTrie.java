@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -58,7 +58,7 @@ public class PathTrie<T> {
     public PathTrie(char separator, String wildcard, Decoder decoder) {
         this.decoder = decoder;
         this.separator = separator;
-        root = new TrieNode<T>(new String(new char[]{separator}), null, null, wildcard);
+        root = new TrieNode<>(new String(new char[]{separator}), null, null, wildcard);
     }
 
     public class TrieNode<T> {
@@ -116,9 +116,9 @@ public class PathTrie<T> {
             TrieNode<T> node = children.get(key);
             if (node == null) {
                 if (index == (path.length - 1)) {
-                    node = new TrieNode<T>(token, value, this, wildcard);
+                    node = new TrieNode<>(token, value, this, wildcard);
                 } else {
-                    node = new TrieNode<T>(token, null, this, wildcard);
+                    node = new TrieNode<>(token, null, this, wildcard);
                 }
                 children = newMapBuilder(children).put(key, node).immutableMap();
             } else {
@@ -157,18 +157,25 @@ public class PathTrie<T> {
 
             String token = path[index];
             TrieNode<T> node = children.get(token);
-            boolean usedWildcard = false;
+            boolean usedWildcard;
             if (node == null) {
                 node = children.get(wildcard);
                 if (node == null) {
                     return null;
-                } else {
+                }
+                usedWildcard = true;
+            } else {
+                // If we are at the end of the path, the current node does not have a value but there
+                // is a child wildcard node, use the child wildcard node
+                if (index + 1 == path.length && node.value == null && children.get(wildcard) != null) {
+                    node = children.get(wildcard);
                     usedWildcard = true;
-                    if (params != null && node.isNamedWildcard()) {
-                        put(params, node.namedWildcard(), token);
-                    }
+                } else {
+                    usedWildcard = token.equals(wildcard);
                 }
             }
+
+            put(params, node, token);
 
             if (index == (path.length - 1)) {
                 return node.value;
@@ -178,9 +185,7 @@ public class PathTrie<T> {
             if (res == null && !usedWildcard) {
                 node = children.get(wildcard);
                 if (node != null) {
-                    if (params != null && node.isNamedWildcard()) {
-                        put(params, node.namedWildcard(), token);
-                    }
+                    put(params, node, token);
                     res = node.retrieve(path, index + 1, params);
                 }
             }
@@ -188,8 +193,10 @@ public class PathTrie<T> {
             return res;
         }
 
-        private void put(Map<String, String> params, String key, String value) {
-            params.put(key, decoder.decode(value));
+        private void put(Map<String, String> params, TrieNode<T> node, String value) {
+            if (params != null && node.isNamedWildcard()) {
+                params.put(node.namedWildcard(), decoder.decode(value));
+            }
         }
     }
 

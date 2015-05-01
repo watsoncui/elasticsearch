@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,29 +19,28 @@
 
 package org.elasticsearch.index.aliases;
 
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.UnmodifiableIterator;
-import org.apache.lucene.queries.FilterClause;
 import org.apache.lucene.search.BooleanClause;
+import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.Filter;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.compress.CompressedString;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.lucene.search.XBooleanFilter;
+import org.elasticsearch.common.lucene.search.Queries;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.AbstractIndexComponent;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.query.IndexQueryParserService;
+import org.elasticsearch.index.query.ParsedFilter;
 import org.elasticsearch.index.settings.IndexSettings;
 import org.elasticsearch.indices.AliasFilterParsingException;
 import org.elasticsearch.indices.InvalidAliasNameException;
 
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.Map;
-
-import static org.elasticsearch.common.collect.MapBuilder.newMapBuilder;
 
 /**
  *
@@ -49,10 +48,7 @@ import static org.elasticsearch.common.collect.MapBuilder.newMapBuilder;
 public class IndexAliasesService extends AbstractIndexComponent implements Iterable<IndexAlias> {
 
     private final IndexQueryParserService indexQueryParser;
-
-    private volatile ImmutableMap<String, IndexAlias> aliases = ImmutableMap.of();
-
-    private final Object mutex = new Object();
+    private final Map<String, IndexAlias> aliases = ConcurrentCollections.newConcurrentMapWithAggressiveConcurrency();
 
     @Inject
     public IndexAliasesService(Index index, @IndexSettings Settings indexSettings, IndexQueryParserService indexQueryParser) {
@@ -77,9 +73,7 @@ public class IndexAliasesService extends AbstractIndexComponent implements Itera
     }
 
     public void addAll(Map<String, IndexAlias> aliases) {
-        synchronized (mutex) {
-            this.aliases = newMapBuilder(this.aliases).putAll(aliases).immutableMap();
-        }
+        this.aliases.putAll(aliases);
     }
 
     /**
@@ -101,7 +95,7 @@ public class IndexAliasesService extends AbstractIndexComponent implements Itera
             return indexAlias.parsedFilter();
         } else {
             // we need to bench here a bit, to see maybe it makes sense to use OrFilter
-            XBooleanFilter combined = new XBooleanFilter();
+            BooleanQuery combined = new BooleanQuery();
             for (String alias : aliases) {
                 IndexAlias indexAlias = alias(alias);
                 if (indexAlias == null) {
@@ -109,32 +103,22 @@ public class IndexAliasesService extends AbstractIndexComponent implements Itera
                     throw new InvalidAliasNameException(index, aliases[0], "Unknown alias name was passed to alias Filter");
                 }
                 if (indexAlias.parsedFilter() != null) {
-                    combined.add(new FilterClause(indexAlias.parsedFilter(), BooleanClause.Occur.SHOULD));
+                    combined.add(indexAlias.parsedFilter(), BooleanClause.Occur.SHOULD);
                 } else {
                     // The filter might be null only if filter was removed after filteringAliases was called
                     return null;
                 }
             }
-            if (combined.clauses().size() == 0) {
-                return null;
-            }
-            if (combined.clauses().size() == 1) {
-                return combined.clauses().get(0).getFilter();
-            }
-            return combined;
+            return Queries.wrap(combined);
         }
     }
 
     private void add(IndexAlias indexAlias) {
-        synchronized (mutex) {
-            aliases = newMapBuilder(aliases).put(indexAlias.alias(), indexAlias).immutableMap();
-        }
+        aliases.put(indexAlias.alias(), indexAlias);
     }
 
     public void remove(String alias) {
-        synchronized (mutex) {
-            aliases = newMapBuilder(aliases).remove(alias).immutableMap();
-        }
+        aliases.remove(alias);
     }
 
     private Filter parse(String alias, CompressedString filter) {
@@ -143,11 +127,9 @@ public class IndexAliasesService extends AbstractIndexComponent implements Itera
         }
         try {
             byte[] filterSource = filter.uncompressed();
-            XContentParser parser = XContentFactory.xContent(filterSource).createParser(filterSource);
-            try {
-                return indexQueryParser.parseInnerFilter(parser);
-            } finally {
-                parser.close();
+            try (XContentParser parser = XContentFactory.xContent(filterSource).createParser(filterSource)) {
+                ParsedFilter parsedFilter = indexQueryParser.parseInnerFilter(parser);
+                return parsedFilter == null ? null : parsedFilter.filter();
             }
         } catch (IOException ex) {
             throw new AliasFilterParsingException(index, alias, "Invalid alias filter", ex);
@@ -155,7 +137,7 @@ public class IndexAliasesService extends AbstractIndexComponent implements Itera
     }
 
     @Override
-    public UnmodifiableIterator<IndexAlias> iterator() {
+    public Iterator<IndexAlias> iterator() {
         return aliases.values().iterator();
     }
 }

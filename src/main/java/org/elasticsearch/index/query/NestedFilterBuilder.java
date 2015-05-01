@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,6 +20,7 @@
 package org.elasticsearch.index.query;
 
 import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.index.query.support.QueryInnerHitBuilder;
 
 import java.io.IOException;
 
@@ -34,6 +35,8 @@ public class NestedFilterBuilder extends BaseFilterBuilder {
     private Boolean cache;
     private String cacheKey;
     private String filterName;
+
+    private QueryInnerHitBuilder innerHit = null;
 
     public NestedFilterBuilder(String path, QueryBuilder queryBuilder) {
         this.path = path;
@@ -73,6 +76,14 @@ public class NestedFilterBuilder extends BaseFilterBuilder {
         return this;
     }
 
+    /**
+     * Sets inner hit definition in the scope of this nested filter and reusing the defined path and query.
+     */
+    public NestedFilterBuilder innerHit(QueryInnerHitBuilder innerHit) {
+        this.innerHit = innerHit;
+        return this;
+    }
+
     @Override
     protected void doXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(NestedFilterParser.NAME);
@@ -95,6 +106,11 @@ public class NestedFilterBuilder extends BaseFilterBuilder {
         }
         if (cacheKey != null) {
             builder.field("_cache_key", cacheKey);
+        }
+        if (innerHit != null) {
+            builder.startObject("inner_hits");
+            builder.value(innerHit);
+            builder.endObject();
         }
         builder.endObject();
     }

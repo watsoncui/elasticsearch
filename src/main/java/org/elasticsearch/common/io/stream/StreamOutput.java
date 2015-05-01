@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,14 +20,15 @@
 package org.elasticsearch.common.io.stream;
 
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.elasticsearch.Version;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.bytes.BytesReference;
-import org.elasticsearch.common.io.UTF8StreamWriter;
 import org.elasticsearch.common.text.Text;
 import org.joda.time.ReadableInstant;
 
 import java.io.IOException;
+import java.io.ObjectOutputStream;
 import java.io.OutputStream;
 import java.util.Date;
 import java.util.LinkedHashMap;
@@ -48,10 +49,6 @@ public abstract class StreamOutput extends OutputStream {
     public StreamOutput setVersion(Version version) {
         this.version = version;
         return this;
-    }
-
-    public boolean seekPositionSupported() {
-        return false;
     }
 
     public long position() throws IOException {
@@ -133,8 +130,9 @@ public abstract class StreamOutput extends OutputStream {
 
     /**
      * Writes an int in a variable-length format.  Writes between one and
-     * five bytes.  Smaller values take fewer bytes.  Negative numbers are not
-     * supported.
+     * five bytes.  Smaller values take fewer bytes.  Negative numbers
+     * will always use all 5 bytes and are therefore better serialized
+     * using {@link #writeInt}
      */
     public void writeVInt(int i) throws IOException {
         while ((i & ~0x7F) != 0) {
@@ -153,11 +151,12 @@ public abstract class StreamOutput extends OutputStream {
     }
 
     /**
-     * Writes an long in a variable-length format.  Writes between one and five
+     * Writes an long in a variable-length format.  Writes between one and nine
      * bytes.  Smaller values take fewer bytes.  Negative numbers are not
      * supported.
      */
     public void writeVLong(long i) throws IOException {
+        assert i >= 0;
         while ((i & ~0x7F) != 0) {
             writeByte((byte) ((i & 0x7f) | 0x80));
             i >>>= 7;
@@ -174,6 +173,15 @@ public abstract class StreamOutput extends OutputStream {
         }
     }
 
+    public void writeOptionalVInt(@Nullable Integer integer) throws IOException {
+        if (integer == null) {
+            writeBoolean(false);
+        } else {
+            writeBoolean(true);
+            writeVInt(integer);
+        }
+    }
+
     public void writeOptionalText(@Nullable Text text) throws IOException {
         if (text == null) {
             writeInt(-1);
@@ -182,28 +190,19 @@ public abstract class StreamOutput extends OutputStream {
         }
     }
 
+    private final BytesRefBuilder spare = new BytesRefBuilder();
+
     public void writeText(Text text) throws IOException {
-        if (!text.hasBytes() && seekPositionSupported()) {
-            long pos1 = position();
-            // make room for the size
-            seek(pos1 + 4);
-            UTF8StreamWriter utf8StreamWriter = CachedStreamOutput.utf8StreamWriter();
-            utf8StreamWriter.setOutput(this);
-            utf8StreamWriter.write(text.string());
-            utf8StreamWriter.close();
-            long pos2 = position();
-            seek(pos1);
-            writeInt((int) (pos2 - pos1 - 4));
-            seek(pos2);
+        if (!text.hasBytes()) {
+            final String string = text.string();
+            spare.copyChars(string);
+            writeInt(spare.length());
+            write(spare.bytes(), 0, spare.length());
         } else {
             BytesReference bytes = text.bytes();
             writeInt(bytes.length());
             bytes.writeTo(this);
         }
-    }
-
-    public void writeSharedText(Text text) throws IOException {
-        writeText(text);
     }
 
     public void writeString(String str) throws IOException {
@@ -256,11 +255,13 @@ public abstract class StreamOutput extends OutputStream {
     /**
      * Forces any buffered output to be written.
      */
+    @Override
     public abstract void flush() throws IOException;
 
     /**
      * Closes this stream to further operations.
      */
+    @Override
     public abstract void close() throws IOException;
 
     public abstract void reset() throws IOException;
@@ -372,8 +373,69 @@ public abstract class StreamOutput extends OutputStream {
         } else if (type == Short.class) {
             writeByte((byte) 16);
             writeShort((Short) value);
+        } else if (type == int[].class) {
+            writeByte((byte) 17);
+            writeIntArray((int[]) value);
+        } else if (type == long[].class) {
+            writeByte((byte) 18);
+            writeLongArray((long[]) value);
+        } else if (type == float[].class) {
+            writeByte((byte) 19);
+            writeFloatArray((float[]) value);
+        } else if (type == double[].class) {
+            writeByte((byte) 20);
+            writeDoubleArray((double[]) value);
+        } else if (value instanceof BytesRef) {
+            writeByte((byte) 21);
+            writeBytesRef((BytesRef) value);
         } else {
             throw new IOException("Can't write type [" + type + "]");
         }
+    }
+
+    public void writeIntArray(int[] value) throws IOException {
+        writeVInt(value.length);
+        for (int i=0; i<value.length; i++) {
+            writeInt(value[i]);
+        }
+    }
+    
+    public void writeLongArray(long[] value) throws IOException {
+        writeVInt(value.length);
+        for (int i=0; i<value.length; i++) {
+            writeLong(value[i]);
+        }
+    }
+    
+    public void writeFloatArray(float[] value) throws IOException {
+        writeVInt(value.length);
+        for (int i=0; i<value.length; i++) {
+            writeFloat(value[i]);
+        }
+    }
+    
+    public void writeDoubleArray(double[] value) throws IOException {
+        writeVInt(value.length);
+        for (int i=0; i<value.length; i++) {
+            writeDouble(value[i]);
+        }
+    }
+
+    /**
+     * Serializes a potential null value.
+     */
+    public void writeOptionalStreamable(@Nullable Streamable streamable) throws IOException {
+        if (streamable != null) {
+            writeBoolean(true);
+            streamable.writeTo(this);
+        } else {
+            writeBoolean(false);
+        }
+    }
+
+    public void writeThrowable(Throwable throwable) throws IOException {
+        ObjectOutputStream out = new ObjectOutputStream(this);
+        out.writeObject(throwable);
+        out.flush();
     }
 }

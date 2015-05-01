@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -18,10 +18,7 @@
  */
 package org.elasticsearch.search.suggest.term;
 
-import java.io.IOException;
-import java.util.Comparator;
-
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.text.Text;
@@ -30,13 +27,16 @@ import org.elasticsearch.common.xcontent.XContentBuilderString;
 import org.elasticsearch.search.suggest.Suggest.Suggestion;
 import org.elasticsearch.search.suggest.Suggest.Suggestion.Entry.Option;
 
+import java.io.IOException;
+import java.util.Comparator;
+
 /**
  * The suggestion responses corresponding with the suggestions in the request.
  */
 public class TermSuggestion extends Suggestion<TermSuggestion.Entry> {
 
-    public static Comparator<Suggestion.Entry.Option> SCORE = new Score();
-    public static Comparator<Suggestion.Entry.Option> FREQUENCY = new Frequency();
+    public static final Comparator<Suggestion.Entry.Option> SCORE = new Score();
+    public static final Comparator<Suggestion.Entry.Option> FREQUENCY = new Frequency();
 
     // Same behaviour as comparators in suggest module, but for SuggestedWord
     // Highest score first, then highest freq first, then lowest term first
@@ -90,6 +90,7 @@ public class TermSuggestion extends Suggestion<TermSuggestion.Entry> {
         this.sort = sort;
     }
 
+    @Override
     public int getType() {
         return TYPE;
     }
@@ -102,7 +103,7 @@ public class TermSuggestion extends Suggestion<TermSuggestion.Entry> {
         case FREQUENCY:
             return FREQUENCY;
         default:
-            throw new ElasticSearchException("Could not resolve comparator for sort key: [" + sort + "]");
+            throw new ElasticsearchException("Could not resolve comparator for sort key: [" + sort + "]");
         }
     }
 
@@ -118,6 +119,7 @@ public class TermSuggestion extends Suggestion<TermSuggestion.Entry> {
         out.writeByte(sort.id());
     }
 
+    @Override
     protected Entry newEntry() {
         return new Entry();
     }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,29 +19,37 @@
 
 package org.elasticsearch.client.transport;
 
+import com.carrotsearch.hppc.cursors.ObjectCursor;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.ExceptionsHelper;
+import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.admin.cluster.node.info.NodesInfoAction;
-import org.elasticsearch.action.admin.cluster.node.info.NodesInfoResponse;
+import org.elasticsearch.action.admin.cluster.node.liveness.LivenessRequest;
+import org.elasticsearch.action.admin.cluster.node.liveness.LivenessResponse;
+import org.elasticsearch.action.admin.cluster.node.liveness.TransportLivenessAction;
 import org.elasticsearch.action.admin.cluster.state.ClusterStateAction;
 import org.elasticsearch.action.admin.cluster.state.ClusterStateResponse;
 import org.elasticsearch.client.Requests;
+import org.elasticsearch.client.support.Headers;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.common.util.concurrent.AbstractRunnable;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
+import org.elasticsearch.common.util.concurrent.FutureUtils;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.*;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -63,12 +71,17 @@ public class TransportClientNodesService extends AbstractComponent {
 
     private final ThreadPool threadPool;
 
+    private final Version minCompatibilityVersion;
+
+    private final Headers headers;
+
     // nodes that are added to be discovered
     private volatile ImmutableList<DiscoveryNode> listedNodes = ImmutableList.of();
 
-    private final Object transportMutex = new Object();
+    private final Object mutex = new Object();
 
     private volatile ImmutableList<DiscoveryNode> nodes = ImmutableList.of();
+    private volatile ImmutableList<DiscoveryNode> filteredNodes = ImmutableList.of();
 
     private final AtomicInteger tempNodeIdGenerator = new AtomicInteger();
 
@@ -83,30 +96,29 @@ public class TransportClientNodesService extends AbstractComponent {
     private volatile boolean closed;
 
     @Inject
-    public TransportClientNodesService(Settings settings, ClusterName clusterName,
-                                       TransportService transportService, ThreadPool threadPool) {
+    public TransportClientNodesService(Settings settings, ClusterName clusterName, TransportService transportService,
+                                       ThreadPool threadPool, Headers headers, Version version) {
         super(settings);
         this.clusterName = clusterName;
         this.transportService = transportService;
         this.threadPool = threadPool;
+        this.minCompatibilityVersion = version.minimumCompatibilityVersion();
+        this.headers = headers;
 
-        this.nodesSamplerInterval = componentSettings.getAsTime("nodes_sampler_interval", timeValueSeconds(5));
-        this.pingTimeout = componentSettings.getAsTime("ping_timeout", timeValueSeconds(5)).millis();
-        this.ignoreClusterName = componentSettings.getAsBoolean("ignore_cluster_name", false);
+        this.nodesSamplerInterval = this.settings.getAsTime("client.transport.nodes_sampler_interval", timeValueSeconds(5));
+        this.pingTimeout = this.settings.getAsTime("client.transport.ping_timeout", timeValueSeconds(5)).millis();
+        this.ignoreClusterName = this.settings.getAsBoolean("client.transport.ignore_cluster_name", false);
 
         if (logger.isDebugEnabled()) {
             logger.debug("node_sampler_interval[" + nodesSamplerInterval + "]");
         }
 
-        if (componentSettings.getAsBoolean("sniff", false)) {
+        if (this.settings.getAsBoolean("client.transport.sniff", false)) {
             this.nodesSampler = new SniffNodesSampler();
         } else {
             this.nodesSampler = new SimpleNodeSampler();
         }
         this.nodesSamplerFuture = threadPool.schedule(nodesSamplerInterval, ThreadPool.Names.GENERIC, new ScheduledNodeSampler());
-
-        // we want the transport service to throw connect exceptions, so we can retry
-        transportService.throwConnectException(true);
     }
 
     public ImmutableList<TransportAddress> transportAddresses() {
@@ -121,12 +133,19 @@ public class TransportClientNodesService extends AbstractComponent {
         return this.nodes;
     }
 
+    public ImmutableList<DiscoveryNode> filteredNodes() {
+        return this.filteredNodes;
+    }
+
     public ImmutableList<DiscoveryNode> listedNodes() {
         return this.listedNodes;
     }
 
     public TransportClientNodesService addTransportAddresses(TransportAddress... transportAddresses) {
-        synchronized (transportMutex) {
+        synchronized (mutex) {
+            if (closed) {
+                throw new IllegalStateException("transport client is closed, can't add an address");
+            }
             List<TransportAddress> filtered = Lists.newArrayListWithExpectedSize(transportAddresses.length);
             for (TransportAddress transportAddress : transportAddresses) {
                 boolean found = false;
@@ -147,18 +166,21 @@ public class TransportClientNodesService extends AbstractComponent {
             ImmutableList.Builder<DiscoveryNode> builder = ImmutableList.builder();
             builder.addAll(listedNodes());
             for (TransportAddress transportAddress : filtered) {
-                DiscoveryNode node = new DiscoveryNode("#transport#-" + tempNodeIdGenerator.incrementAndGet(), transportAddress);
+                DiscoveryNode node = new DiscoveryNode("#transport#-" + tempNodeIdGenerator.incrementAndGet(), transportAddress, minCompatibilityVersion);
                 logger.debug("adding address [{}]", node);
                 builder.add(node);
             }
             listedNodes = builder.build();
+            nodesSampler.sample();
         }
-        nodesSampler.sample();
         return this;
     }
 
     public TransportClientNodesService removeTransportAddress(TransportAddress transportAddress) {
-        synchronized (transportMutex) {
+        synchronized (mutex) {
+            if (closed) {
+                throw new IllegalStateException("transport client is closed, can't remove an address");
+            }
             ImmutableList.Builder<DiscoveryNode> builder = ImmutableList.builder();
             for (DiscoveryNode otherNode : listedNodes) {
                 if (!otherNode.address().equals(transportAddress)) {
@@ -168,53 +190,22 @@ public class TransportClientNodesService extends AbstractComponent {
                 }
             }
             listedNodes = builder.build();
+            nodesSampler.sample();
         }
-        nodesSampler.sample();
         return this;
     }
 
-    public <T> T execute(NodeCallback<T> callback) throws ElasticSearchException {
+    public <Response> void execute(NodeListenerCallback<Response> callback, ActionListener<Response> listener) {
         ImmutableList<DiscoveryNode> nodes = this.nodes;
-        if (nodes.isEmpty()) {
-            throw new NoNodeAvailableException();
-        }
-        int index = randomNodeGenerator.incrementAndGet();
-        if (index < 0) {
-            index = 0;
-            randomNodeGenerator.set(0);
-        }
-        for (int i = 0; i < nodes.size(); i++) {
-            DiscoveryNode node = nodes.get((index + i) % nodes.size());
-            try {
-                return callback.doWithNode(node);
-            } catch (ElasticSearchException e) {
-                if (!(e.unwrapCause() instanceof ConnectTransportException)) {
-                    throw e;
-                }
-            }
-        }
-        throw new NoNodeAvailableException();
-    }
-
-    public <Response> void execute(NodeListenerCallback<Response> callback, ActionListener<Response> listener) throws ElasticSearchException {
-        ImmutableList<DiscoveryNode> nodes = this.nodes;
-        if (nodes.isEmpty()) {
-            throw new NoNodeAvailableException();
-        }
-        int index = randomNodeGenerator.incrementAndGet();
-        if (index < 0) {
-            index = 0;
-            randomNodeGenerator.set(0);
-        }
-        RetryListener<Response> retryListener = new RetryListener<Response>(callback, listener, nodes, index);
+        ensureNodesAreAvailable(nodes);
+        int index = getNodeNumber();
+        RetryListener<Response> retryListener = new RetryListener<>(callback, listener, nodes, index, threadPool, logger);
+        DiscoveryNode node = nodes.get((index) % nodes.size());
         try {
-            callback.doWithNode(nodes.get((index) % nodes.size()), retryListener);
-        } catch (ElasticSearchException e) {
-            if (e.unwrapCause() instanceof ConnectTransportException) {
-                retryListener.onFailure(e);
-            } else {
-                throw e;
-            }
+            callback.doWithNode(node, retryListener);
+        } catch (Throwable t) {
+            //this exception can't come from the TransportService as it doesn't throw exception at all
+            listener.onFailure(t);
         }
     }
 
@@ -222,15 +213,20 @@ public class TransportClientNodesService extends AbstractComponent {
         private final NodeListenerCallback<Response> callback;
         private final ActionListener<Response> listener;
         private final ImmutableList<DiscoveryNode> nodes;
+        private final ESLogger logger;
         private final int index;
+        private ThreadPool threadPool;
 
         private volatile int i;
 
-        public RetryListener(NodeListenerCallback<Response> callback, ActionListener<Response> listener, ImmutableList<DiscoveryNode> nodes, int index) {
+        public RetryListener(NodeListenerCallback<Response> callback, ActionListener<Response> listener, ImmutableList<DiscoveryNode> nodes,
+                             int index, ThreadPool threadPool, ESLogger logger) {
             this.callback = callback;
             this.listener = listener;
             this.nodes = nodes;
             this.index = index;
+            this.threadPool = threadPool;
+            this.logger = logger;
         }
 
         @Override
@@ -242,36 +238,107 @@ public class TransportClientNodesService extends AbstractComponent {
         public void onFailure(Throwable e) {
             if (ExceptionsHelper.unwrapCause(e) instanceof ConnectTransportException) {
                 int i = ++this.i;
-                if (i == nodes.size()) {
-                    listener.onFailure(new NoNodeAvailableException());
+                if (i >= nodes.size()) {
+                    runFailureInListenerThreadPool(new NoNodeAvailableException("None of the configured nodes were available: " + nodes, e));
                 } else {
                     try {
                         callback.doWithNode(nodes.get((index + i) % nodes.size()), this);
-                    } catch (Exception e1) {
-                        // retry the next one...
-                        onFailure(e);
+                    } catch(final Throwable t) {
+                        // this exception can't come from the TransportService as it doesn't throw exceptions at all
+                        runFailureInListenerThreadPool(t);
                     }
                 }
             } else {
-                listener.onFailure(e);
+                runFailureInListenerThreadPool(e);
             }
+        }
+
+        // need to ensure to not block the netty I/O thread, in case of retry due to the node sampling
+        private void runFailureInListenerThreadPool(final Throwable t) {
+            threadPool.executor(ThreadPool.Names.LISTENER).execute(new AbstractRunnable() {
+                @Override
+                protected void doRun() throws Exception {
+                    listener.onFailure(t);
+                }
+
+                @Override
+                public void onFailure(Throwable t) {
+                    if (logger.isDebugEnabled()) {
+                        logger.debug("Could not execute failure listener: [{}]", t, t.getMessage());
+                    } else {
+                        logger.error("Could not execute failure listener: [{}]", t.getMessage());
+                    }
+                }
+            });
         }
     }
 
     public void close() {
-        closed = true;
-        nodesSamplerFuture.cancel(true);
-        for (DiscoveryNode node : nodes) {
-            transportService.disconnectFromNode(node);
+        synchronized (mutex) {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            FutureUtils.cancel(nodesSamplerFuture);
+            for (DiscoveryNode node : nodes) {
+                transportService.disconnectFromNode(node);
+            }
+            for (DiscoveryNode listedNode : listedNodes) {
+                transportService.disconnectFromNode(listedNode);
+            }
+            nodes = ImmutableList.of();
         }
-        for (DiscoveryNode listedNode : listedNodes) {
-            transportService.disconnectFromNode(listedNode);
-        }
-        nodes = ImmutableList.of();
     }
 
-    interface NodeSampler {
-        void sample();
+    private int getNodeNumber() {
+        int index = randomNodeGenerator.incrementAndGet();
+        if (index < 0) {
+            index = 0;
+            randomNodeGenerator.set(0);
+        }
+        return index;
+    }
+
+    private void ensureNodesAreAvailable(ImmutableList<DiscoveryNode> nodes) {
+        if (nodes.isEmpty()) {
+            String message = String.format(Locale.ROOT, "None of the configured nodes are available: %s", nodes);
+            throw new NoNodeAvailableException(message);
+        }
+    }
+
+    abstract class NodeSampler {
+        public void sample() {
+            synchronized (mutex) {
+                if (closed) {
+                    return;
+                }
+                doSample();
+            }
+        }
+
+        protected abstract void doSample();
+
+        /**
+         * validates a set of potentially newly discovered nodes and returns an immutable
+         * list of the nodes that has passed.
+         */
+        protected ImmutableList<DiscoveryNode> validateNewNodes(Set<DiscoveryNode> nodes) {
+            for (Iterator<DiscoveryNode> it = nodes.iterator(); it.hasNext(); ) {
+                DiscoveryNode node = it.next();
+                if (!transportService.nodeConnected(node)) {
+                    try {
+                        logger.trace("connecting to node [{}]", node);
+                        transportService.connectToNode(node);
+                    } catch (Throwable e) {
+                        it.remove();
+                        logger.debug("failed to connect to discovered node [" + node + "]", e);
+                    }
+                }
+            }
+
+            return new ImmutableList.Builder<DiscoveryNode>().addAll(nodes).build();
+        }
+
     }
 
     class ScheduledNodeSampler implements Runnable {
@@ -288,55 +355,60 @@ public class TransportClientNodesService extends AbstractComponent {
         }
     }
 
-    class SimpleNodeSampler implements NodeSampler {
+    class SimpleNodeSampler extends NodeSampler {
 
         @Override
-        public synchronized void sample() {
-            if (closed) {
-                return;
-            }
-            HashSet<DiscoveryNode> newNodes = new HashSet<DiscoveryNode>();
-            for (DiscoveryNode node : listedNodes) {
-                if (!transportService.nodeConnected(node)) {
+        protected void doSample() {
+            HashSet<DiscoveryNode> newNodes = new HashSet<>();
+            HashSet<DiscoveryNode> newFilteredNodes = new HashSet<>();
+            for (DiscoveryNode listedNode : listedNodes) {
+                if (!transportService.nodeConnected(listedNode)) {
                     try {
-                        transportService.connectToNode(node);
-                    } catch (Exception e) {
-                        logger.debug("failed to connect to node [{}], removed from nodes list", e, node);
+                        // its a listed node, light connect to it...
+                        logger.trace("connecting to listed node (light) [{}]", listedNode);
+                        transportService.connectToNodeLight(listedNode);
+                    } catch (Throwable e) {
+                        logger.debug("failed to connect to node [{}], removed from nodes list", e, listedNode);
                         continue;
                     }
                 }
                 try {
-                    NodesInfoResponse nodeInfo = transportService.submitRequest(node, NodesInfoAction.NAME,
-                            Requests.nodesInfoRequest("_local"),
-                            TransportRequestOptions.options().withHighType().withTimeout(pingTimeout),
-                            new FutureTransportResponseHandler<NodesInfoResponse>() {
+                    LivenessResponse livenessResponse = transportService.submitRequest(listedNode, TransportLivenessAction.NAME,
+                            headers.applyTo(new LivenessRequest()),
+                            TransportRequestOptions.options().withType(TransportRequestOptions.Type.STATE).withTimeout(pingTimeout),
+                            new FutureTransportResponseHandler<LivenessResponse>() {
                                 @Override
-                                public NodesInfoResponse newInstance() {
-                                    return new NodesInfoResponse();
+                                public LivenessResponse newInstance() {
+                                    return new LivenessResponse();
                                 }
                             }).txGet();
-                    if (!ignoreClusterName && !clusterName.equals(nodeInfo.getClusterName())) {
-                        logger.warn("node {} not part of the cluster {}, ignoring...", node, clusterName);
+                    if (!ignoreClusterName && !clusterName.equals(livenessResponse.getClusterName())) {
+                        logger.warn("node {} not part of the cluster {}, ignoring...", listedNode, clusterName);
+                        newFilteredNodes.add(listedNode);
+                    } else if (livenessResponse.getDiscoveryNode() != null) {
+                        // use discovered information but do keep the original transport address, so people can control which address is exactly used.
+                        DiscoveryNode nodeWithInfo = livenessResponse.getDiscoveryNode();
+                        newNodes.add(new DiscoveryNode(nodeWithInfo.name(), nodeWithInfo.id(), nodeWithInfo.getHostName(), nodeWithInfo.getHostAddress(), listedNode.address(), nodeWithInfo.attributes(), nodeWithInfo.version()));
                     } else {
-                        newNodes.add(node);
+                        // although we asked for one node, our target may not have completed initialization yet and doesn't have cluster nodes
+                        logger.debug("node {} didn't return any discovery info, temporarily using transport discovery node", listedNode);
+                        newNodes.add(listedNode);
                     }
-                } catch (Exception e) {
-                    logger.info("failed to get node info for {}, disconnecting...", e, node);
-                    transportService.disconnectFromNode(node);
+                } catch (Throwable e) {
+                    logger.info("failed to get node info for {}, disconnecting...", e, listedNode);
+                    transportService.disconnectFromNode(listedNode);
                 }
             }
-            nodes = new ImmutableList.Builder<DiscoveryNode>().addAll(newNodes).build();
+
+            nodes = validateNewNodes(newNodes);
+            filteredNodes = ImmutableList.copyOf(newFilteredNodes);
         }
     }
 
-    class SniffNodesSampler implements NodeSampler {
+    class SniffNodesSampler extends NodeSampler {
 
         @Override
-        public synchronized void sample() {
-            if (closed) {
-                return;
-            }
-
+        protected void doSample() {
             // the nodes we are going to ping include the core listed nodes that were added
             // and the last round of discovered nodes
             Set<DiscoveryNode> nodesToPing = Sets.newHashSet();
@@ -348,7 +420,7 @@ public class TransportClientNodesService extends AbstractComponent {
             }
 
             final CountDownLatch latch = new CountDownLatch(nodesToPing.size());
-            final Queue<ClusterStateResponse> clusterStateResponses = ConcurrentCollections.newQueue();
+            final ConcurrentMap<DiscoveryNode, ClusterStateResponse> clusterStateResponses = ConcurrentCollections.newConcurrentMap();
             for (final DiscoveryNode listedNode : nodesToPing) {
                 threadPool.executor(ThreadPool.Names.MANAGEMENT).execute(new Runnable() {
                     @Override
@@ -357,7 +429,7 @@ public class TransportClientNodesService extends AbstractComponent {
                             if (!transportService.nodeConnected(listedNode)) {
                                 try {
 
-                                    // if its one of hte actual nodes we will talk to, not to listed nodes, fully connect
+                                    // if its one of the actual nodes we will talk to, not to listed nodes, fully connect
                                     if (nodes.contains(listedNode)) {
                                         logger.trace("connecting to cluster node [{}]", listedNode);
                                         transportService.connectToNode(listedNode);
@@ -373,9 +445,8 @@ public class TransportClientNodesService extends AbstractComponent {
                                 }
                             }
                             transportService.sendRequest(listedNode, ClusterStateAction.NAME,
-                                    Requests.clusterStateRequest()
-                                            .filterAll().filterNodes(false).local(true),
-                                    TransportRequestOptions.options().withHighType().withTimeout(pingTimeout),
+                                    headers.applyTo(Requests.clusterStateRequest().clear().nodes(true).local(true)),
+                                    TransportRequestOptions.options().withType(TransportRequestOptions.Type.STATE).withTimeout(pingTimeout),
                                     new BaseTransportResponseHandler<ClusterStateResponse>() {
 
                                         @Override
@@ -390,7 +461,7 @@ public class TransportClientNodesService extends AbstractComponent {
 
                                         @Override
                                         public void handleResponse(ClusterStateResponse response) {
-                                            clusterStateResponses.add(response);
+                                            clusterStateResponses.put(listedNode, response);
                                             latch.countDown();
                                         }
 
@@ -401,7 +472,7 @@ public class TransportClientNodesService extends AbstractComponent {
                                             latch.countDown();
                                         }
                                     });
-                        } catch (Exception e) {
+                        } catch (Throwable e) {
                             logger.info("failed to get local cluster state info for {}, disconnecting...", e, listedNode);
                             transportService.disconnectFromNode(listedNode);
                             latch.countDown();
@@ -416,39 +487,26 @@ public class TransportClientNodesService extends AbstractComponent {
                 return;
             }
 
-            HashSet<DiscoveryNode> newNodes = new HashSet<DiscoveryNode>();
-            for (ClusterStateResponse clusterStateResponse : clusterStateResponses) {
-                if (!ignoreClusterName && !clusterName.equals(clusterStateResponse.getClusterName())) {
-                    logger.warn("node {} not part of the cluster {}, ignoring...", clusterStateResponse.getState().nodes().localNode(), clusterName);
+            HashSet<DiscoveryNode> newNodes = new HashSet<>();
+            HashSet<DiscoveryNode> newFilteredNodes = new HashSet<>();
+            for (Map.Entry<DiscoveryNode, ClusterStateResponse> entry : clusterStateResponses.entrySet()) {
+                if (!ignoreClusterName && !clusterName.equals(entry.getValue().getClusterName())) {
+                    logger.warn("node {} not part of the cluster {}, ignoring...", entry.getValue().getState().nodes().localNode(), clusterName);
+                    newFilteredNodes.add(entry.getKey());
+                    continue;
                 }
-                for (DiscoveryNode node : clusterStateResponse.getState().nodes().dataNodes().values()) {
-                    newNodes.add(node);
-                }
-            }
-            // now, make sure we are connected to all the updated nodes
-            for (Iterator<DiscoveryNode> it = newNodes.iterator(); it.hasNext(); ) {
-                DiscoveryNode node = it.next();
-                if (!transportService.nodeConnected(node)) {
-                    try {
-                        logger.trace("connecting to node [{}]", node);
-                        transportService.connectToNode(node);
-                    } catch (Exception e) {
-                        it.remove();
-                        logger.debug("failed to connect to discovered node [" + node + "]", e);
-                    }
+                for (ObjectCursor<DiscoveryNode> cursor : entry.getValue().getState().nodes().dataNodes().values()) {
+                    newNodes.add(cursor.value);
                 }
             }
-            nodes = new ImmutableList.Builder<DiscoveryNode>().addAll(newNodes).build();
+
+            nodes = validateNewNodes(newNodes);
+            filteredNodes = ImmutableList.copyOf(newFilteredNodes);
         }
-    }
-
-    public static interface NodeCallback<T> {
-
-        T doWithNode(DiscoveryNode node) throws ElasticSearchException;
     }
 
     public static interface NodeListenerCallback<Response> {
 
-        void doWithNode(DiscoveryNode node, ActionListener<Response> listener) throws ElasticSearchException;
+        void doWithNode(DiscoveryNode node, ActionListener<Response> listener);
     }
 }

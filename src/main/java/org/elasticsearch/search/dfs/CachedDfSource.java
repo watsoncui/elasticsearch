@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,7 +23,6 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.index.*;
 import org.apache.lucene.search.*;
 import org.apache.lucene.search.similarities.Similarity;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
 
 import java.io.IOException;
 import java.util.List;
@@ -53,7 +52,8 @@ public class CachedDfSource extends IndexSearcher {
     public TermStatistics termStatistics(Term term, TermContext context) throws IOException {
         TermStatistics termStatistics = aggregatedDfs.termStatistics().get(term);
         if (termStatistics == null) {
-            throw new ElasticSearchIllegalArgumentException("Not distributed term statistics for term: " + term);
+            // we don't have stats for this - this might be a must_not clauses etc. that doesn't allow extract terms on the query
+           return super.termStatistics(term, context);
         }
         return termStatistics;
     }
@@ -62,15 +62,17 @@ public class CachedDfSource extends IndexSearcher {
     public CollectionStatistics collectionStatistics(String field) throws IOException {
         CollectionStatistics collectionStatistics = aggregatedDfs.fieldStatistics().get(field);
         if (collectionStatistics == null) {
-            throw new ElasticSearchIllegalArgumentException("Not distributed collection statistics for field: " + field);
+            // we don't have stats for this - this might be a must_not clauses etc. that doesn't allow extract terms on the query
+           return super.collectionStatistics(field);
         }
         return collectionStatistics;
     }
-
+    
     public int maxDoc() {
         return this.maxDoc;
     }
 
+    @Override
     public Query rewrite(Query query) {
         // this is a bit of a hack. We know that a query which
         // creates a Weight based on this Dummy-Searcher is
@@ -79,46 +81,23 @@ public class CachedDfSource extends IndexSearcher {
         return query;
     }
 
+    @Override
     public Document doc(int i) {
         throw new UnsupportedOperationException();
     }
 
+    @Override
     public void doc(int docID, StoredFieldVisitor fieldVisitor) throws IOException {
         throw new UnsupportedOperationException();
     }
 
+    @Override
     public Explanation explain(Weight weight, int doc) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    protected void search(List<AtomicReaderContext> leaves, Weight weight, Collector collector) throws IOException {
+    protected void search(List<LeafReaderContext> leaves, Weight weight, Collector collector) throws IOException {
         throw new UnsupportedOperationException();
     }
-
-    @Override
-    protected TopDocs search(Weight weight, ScoreDoc after, int nDocs) throws IOException {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    protected TopDocs search(List<AtomicReaderContext> leaves, Weight weight, ScoreDoc after, int nDocs) throws IOException {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    protected TopFieldDocs search(Weight weight, int nDocs, Sort sort, boolean doDocScores, boolean doMaxScore) throws IOException {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    protected TopFieldDocs search(Weight weight, FieldDoc after, int nDocs, Sort sort, boolean fillFields, boolean doDocScores, boolean doMaxScore) throws IOException {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    protected TopFieldDocs search(List<AtomicReaderContext> leaves, Weight weight, FieldDoc after, int nDocs, Sort sort, boolean fillFields, boolean doDocScores, boolean doMaxScore) throws IOException {
-        throw new UnsupportedOperationException();
-    }
-
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,10 +19,12 @@
 
 package org.elasticsearch.index.query;
 
-import java.io.IOException;
-
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.apache.lucene.index.Term;
+import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.similarities.Similarity;
 import org.elasticsearch.common.xcontent.XContentBuilder;
+
+import java.io.IOException;
 
 /**
  * CommonTermsQuery query is a query that executes high-frequency terms in a
@@ -58,21 +60,25 @@ public class CommonTermsQueryBuilder extends BaseQueryBuilder implements Boostab
 
     private Float boost = null;
 
-    private String minimumShouldMatch = null;
+    private String lowFreqMinimumShouldMatch = null;
+
+    private String highFreqMinimumShouldMatch = null;
 
     private Boolean disableCoords = null;
 
     private Float cutoffFrequency = null;
+
+    private String queryName;
 
     /**
      * Constructs a new common terms query.
      */
     public CommonTermsQueryBuilder(String name, Object text) {
         if (name == null) {
-            throw new ElasticSearchIllegalArgumentException("Field name must not be null");
+            throw new IllegalArgumentException("Field name must not be null");
         }
         if (text == null) {
-            throw new ElasticSearchIllegalArgumentException("Query must not be null");
+            throw new IllegalArgumentException("Query must not be null");
         }
         this.text = text;
         this.name = name;
@@ -109,6 +115,7 @@ public class CommonTermsQueryBuilder extends BaseQueryBuilder implements Boostab
     /**
      * Set the boost to apply to the query.
      */
+    @Override
     public CommonTermsQueryBuilder boost(float boost) {
         this.boost = boost;
         return this;
@@ -127,11 +134,28 @@ public class CommonTermsQueryBuilder extends BaseQueryBuilder implements Boostab
     }
 
     /**
-     * Sets the minimum number of query terms that need to match in order to
+     * Sets the minimum number of high frequent query terms that need to match in order to
+     * produce a hit when there are no low frequen terms.
+     */
+    public CommonTermsQueryBuilder highFreqMinimumShouldMatch(String highFreqMinimumShouldMatch) {
+        this.highFreqMinimumShouldMatch = highFreqMinimumShouldMatch;
+        return this;
+    }
+
+    /**
+     * Sets the minimum number of low frequent query terms that need to match in order to
      * produce a hit.
      */
-    public CommonTermsQueryBuilder minimumShouldMatch(String minimumShouldMatch) {
-        this.minimumShouldMatch = minimumShouldMatch;
+    public CommonTermsQueryBuilder lowFreqMinimumShouldMatch(String lowFreqMinimumShouldMatch) {
+        this.lowFreqMinimumShouldMatch = lowFreqMinimumShouldMatch;
+        return this;
+    }
+
+    /**
+     * Sets the query name for the filter that can be used when searching for matched_filters per hit.
+     */
+    public CommonTermsQueryBuilder queryName(String queryName) {
+        this.queryName = queryName;
         return this;
     }
 
@@ -159,8 +183,18 @@ public class CommonTermsQueryBuilder extends BaseQueryBuilder implements Boostab
         if (cutoffFrequency != null) {
             builder.field("cutoff_frequency", cutoffFrequency);
         }
-        if (minimumShouldMatch != null) {
-            builder.field("minimum_should_match", minimumShouldMatch);
+        if (lowFreqMinimumShouldMatch != null || highFreqMinimumShouldMatch != null) {
+            builder.startObject("minimum_should_match");
+            if (lowFreqMinimumShouldMatch != null) {
+                builder.field("low_freq", lowFreqMinimumShouldMatch);
+            }
+            if (highFreqMinimumShouldMatch != null) {
+                builder.field("high_freq", highFreqMinimumShouldMatch);
+            }
+            builder.endObject();
+        }
+        if (queryName != null) {
+            builder.field("_name", queryName);
         }
 
         builder.endObject();

@@ -1,6 +1,25 @@
+/*
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
 package org.elasticsearch.common;
 
 import java.nio.charset.Charset;
+import java.util.Locale;
 
 /**
  * <p>Encodes and decodes to and from Base64 notation.</p>
@@ -498,7 +517,7 @@ public class Base64 {
      * anywhere along their length by specifying
      * <var>srcOffset</var> and <var>destOffset</var>.
      * This method does not check to make sure your arrays
-     * are large enough to accomodate <var>srcOffset</var> + 3 for
+     * are large enough to accommodate <var>srcOffset</var> + 3 for
      * the <var>source</var> array or <var>destOffset</var> + 4 for
      * the <var>destination</var> array.
      * The actual number of significant bytes in your array is
@@ -907,7 +926,7 @@ public class Base64 {
 
         if (off + len > source.length) {
             throw new IllegalArgumentException(
-                    String.format("Cannot have offset of %d and length of %d with array of length %d", off, len, source.length));
+                    String.format(Locale.ROOT, "Cannot have offset of %d and length of %d with array of length %d", off, len, source.length));
         }   // end if: off < 0
 
 
@@ -1019,7 +1038,7 @@ public class Base64 {
      * anywhere along their length by specifying
      * <var>srcOffset</var> and <var>destOffset</var>.
      * This method does not check to make sure your arrays
-     * are large enough to accomodate <var>srcOffset</var> + 4 for
+     * are large enough to accommodate <var>srcOffset</var> + 4 for
      * the <var>source</var> array or <var>destOffset</var> + 3 for
      * the <var>destination</var> array.
      * This method returns the actual number of bytes that
@@ -1050,11 +1069,11 @@ public class Base64 {
             throw new NullPointerException("Destination array was null.");
         }   // end if
         if (srcOffset < 0 || srcOffset + 3 >= source.length) {
-            throw new IllegalArgumentException(String.format(
+            throw new IllegalArgumentException(String.format(Locale.ROOT,
                     "Source array with length %d cannot have offset of %d and still process four bytes.", source.length, srcOffset));
         }   // end if
         if (destOffset < 0 || destOffset + 2 >= destination.length) {
-            throw new IllegalArgumentException(String.format(
+            throw new IllegalArgumentException(String.format(Locale.ROOT,
                     "Destination array with length %d cannot have offset of %d and still store three bytes.", destination.length, destOffset));
         }   // end if
 
@@ -1160,7 +1179,7 @@ public class Base64 {
             throw new NullPointerException("Cannot decode null source array.");
         }   // end if
         if (off < 0 || off + len > source.length) {
-            throw new IllegalArgumentException(String.format(
+            throw new IllegalArgumentException(String.format(Locale.ROOT,
                     "Source array with length %d cannot have offset of %d and process %d bytes.", source.length, off, len));
         }   // end if
 
@@ -1198,14 +1217,25 @@ public class Base64 {
 
                         // If that was the equals sign, break out of 'for' loop
                         if (source[i] == EQUALS_SIGN) {
+                            // check if the equals sign is somewhere in between
+                            if (i+1 < len + off) {
+                              throw new java.io.IOException(String.format(Locale.ROOT,
+                                      "Found equals sign at position %d of the base64 string, not at the end", i));
+                            }
                             break;
                         }   // end if: equals sign
                     }   // end if: quartet built
+                    else {
+                      if (source[i] == EQUALS_SIGN && len + off > i && source[i+1] != EQUALS_SIGN) {
+                        throw new java.io.IOException(String.format(Locale.ROOT,
+                                "Found equals sign at position %d of the base64 string, not at the end", i));
+                      } // enf if: equals sign and next character not as well
+                    } // end else:
                 }   // end if: equals sign or better
             }   // end if: white space, equals sign or better
             else {
                 // There's a bad input character in the Base64 stream.
-                throw new java.io.IOException(String.format(
+                throw new java.io.IOException(String.format(Locale.ROOT,
                         "Bad Base64 input character decimal %d in array position %d", ((int) source[i]) & 0xFF, i));
             }   // end else:
         }   // each input character
@@ -1280,7 +1310,7 @@ public class Base64 {
 
                 }   // end try
                 catch (java.io.IOException e) {
-                    e.printStackTrace();
+                    // e.printStackTrace();
                     // Just return originally-decoded bytes
                 }   // end catch
                 finally {
@@ -1365,7 +1395,7 @@ public class Base64 {
                     @Override
                     public Class<?> resolveClass(java.io.ObjectStreamClass streamClass)
                             throws java.io.IOException, ClassNotFoundException {
-                        Class c = Class.forName(streamClass.getName(), false, loader);
+                        Class<?> c = Class.forName(streamClass.getName(), false, loader);
                         if (c == null) {
                             return super.resolveClass(streamClass);
                         } else {
@@ -1396,256 +1426,6 @@ public class Base64 {
 
         return obj;
     }   // end decodeObject
-
-
-    /**
-     * Convenience method for encoding data to a file.
-     * <p/>
-     * <p>As of v 2.3, if there is a error,
-     * the method will throw an java.io.IOException. <b>This is new to v2.3!</b>
-     * In earlier versions, it just returned false, but
-     * in retrospect that's a pretty poor way to handle it.</p>
-     *
-     * @param dataToEncode byte array of data to encode in base64 form
-     * @param filename     Filename for saving encoded data
-     * @throws java.io.IOException  if there is an error
-     * @throws NullPointerException if dataToEncode is null
-     * @since 2.1
-     */
-    public static void encodeToFile(byte[] dataToEncode, String filename)
-            throws java.io.IOException {
-
-        if (dataToEncode == null) {
-            throw new NullPointerException("Data to encode was null.");
-        }   // end iff
-
-        Base64.OutputStream bos = null;
-        try {
-            bos = new Base64.OutputStream(
-                    new java.io.FileOutputStream(filename), Base64.ENCODE);
-            bos.write(dataToEncode);
-        }   // end try
-        catch (java.io.IOException e) {
-            throw e; // Catch and throw to execute finally{} block
-        }   // end catch: java.io.IOException
-        finally {
-            try {
-                bos.close();
-            } catch (Exception e) {
-            }
-        }   // end finally
-
-    }   // end encodeToFile
-
-
-    /**
-     * Convenience method for decoding data to a file.
-     * <p/>
-     * <p>As of v 2.3, if there is a error,
-     * the method will throw an java.io.IOException. <b>This is new to v2.3!</b>
-     * In earlier versions, it just returned false, but
-     * in retrospect that's a pretty poor way to handle it.</p>
-     *
-     * @param dataToDecode Base64-encoded data as a string
-     * @param filename     Filename for saving decoded data
-     * @throws java.io.IOException if there is an error
-     * @since 2.1
-     */
-    public static void decodeToFile(String dataToDecode, String filename)
-            throws java.io.IOException {
-
-        Base64.OutputStream bos = null;
-        try {
-            bos = new Base64.OutputStream(
-                    new java.io.FileOutputStream(filename), Base64.DECODE);
-            bos.write(dataToDecode.getBytes(PREFERRED_ENCODING));
-        }   // end try
-        catch (java.io.IOException e) {
-            throw e; // Catch and throw to execute finally{} block
-        }   // end catch: java.io.IOException
-        finally {
-            try {
-                bos.close();
-            } catch (Exception e) {
-            }
-        }   // end finally
-
-    }   // end decodeToFile
-
-
-    /**
-     * Convenience method for reading a base64-encoded
-     * file and decoding it.
-     * <p/>
-     * <p>As of v 2.3, if there is a error,
-     * the method will throw an java.io.IOException. <b>This is new to v2.3!</b>
-     * In earlier versions, it just returned false, but
-     * in retrospect that's a pretty poor way to handle it.</p>
-     *
-     * @param filename Filename for reading encoded data
-     * @return decoded byte array
-     * @throws java.io.IOException if there is an error
-     * @since 2.1
-     */
-    public static byte[] decodeFromFile(String filename)
-            throws java.io.IOException {
-
-        byte[] decodedData = null;
-        Base64.InputStream bis = null;
-        try {
-            // Set up some useful variables
-            java.io.File file = new java.io.File(filename);
-            byte[] buffer = null;
-            int length = 0;
-            int numBytes = 0;
-
-            // Check for size of file
-            if (file.length() > Integer.MAX_VALUE) {
-                throw new java.io.IOException("File is too big for this convenience method (" + file.length() + " bytes).");
-            }   // end if: file too big for int index
-            buffer = new byte[(int) file.length()];
-
-            // Open a stream
-            bis = new Base64.InputStream(
-                    new java.io.BufferedInputStream(
-                            new java.io.FileInputStream(file)), Base64.DECODE);
-
-            // Read until done
-            while ((numBytes = bis.read(buffer, length, 4096)) >= 0) {
-                length += numBytes;
-            }   // end while
-
-            // Save in a variable to return
-            decodedData = new byte[length];
-            System.arraycopy(buffer, 0, decodedData, 0, length);
-
-        }   // end try
-        catch (java.io.IOException e) {
-            throw e; // Catch and release to execute finally{}
-        }   // end catch: java.io.IOException
-        finally {
-            try {
-                bis.close();
-            } catch (Exception e) {
-            }
-        }   // end finally
-
-        return decodedData;
-    }   // end decodeFromFile
-
-
-    /**
-     * Convenience method for reading a binary file
-     * and base64-encoding it.
-     * <p/>
-     * <p>As of v 2.3, if there is a error,
-     * the method will throw an java.io.IOException. <b>This is new to v2.3!</b>
-     * In earlier versions, it just returned false, but
-     * in retrospect that's a pretty poor way to handle it.</p>
-     *
-     * @param filename Filename for reading binary data
-     * @return base64-encoded string
-     * @throws java.io.IOException if there is an error
-     * @since 2.1
-     */
-    public static String encodeFromFile(String filename)
-            throws java.io.IOException {
-
-        String encodedData = null;
-        Base64.InputStream bis = null;
-        try {
-            // Set up some useful variables
-            java.io.File file = new java.io.File(filename);
-            byte[] buffer = new byte[Math.max((int) (file.length() * 1.4 + 1), 40)]; // Need max() for math on small files (v2.2.1); Need +1 for a few corner cases (v2.3.5)
-            int length = 0;
-            int numBytes = 0;
-
-            // Open a stream
-            bis = new Base64.InputStream(
-                    new java.io.BufferedInputStream(
-                            new java.io.FileInputStream(file)), Base64.ENCODE);
-
-            // Read until done
-            while ((numBytes = bis.read(buffer, length, 4096)) >= 0) {
-                length += numBytes;
-            }   // end while
-
-            // Save in a variable to return
-            encodedData = new String(buffer, 0, length, Base64.PREFERRED_ENCODING);
-
-        }   // end try
-        catch (java.io.IOException e) {
-            throw e; // Catch and release to execute finally{}
-        }   // end catch: java.io.IOException
-        finally {
-            try {
-                bis.close();
-            } catch (Exception e) {
-            }
-        }   // end finally
-
-        return encodedData;
-    }   // end encodeFromFile
-
-    /**
-     * Reads <tt>infile</tt> and encodes it to <tt>outfile</tt>.
-     *
-     * @param infile  Input file
-     * @param outfile Output file
-     * @throws java.io.IOException if there is an error
-     * @since 2.2
-     */
-    public static void encodeFileToFile(String infile, String outfile)
-            throws java.io.IOException {
-
-        String encoded = Base64.encodeFromFile(infile);
-        java.io.OutputStream out = null;
-        try {
-            out = new java.io.BufferedOutputStream(
-                    new java.io.FileOutputStream(outfile));
-            out.write(encoded.getBytes("US-ASCII")); // Strict, 7-bit output.
-        }   // end try
-        catch (java.io.IOException e) {
-            throw e; // Catch and release to execute finally{}
-        }   // end catch
-        finally {
-            try {
-                out.close();
-            } catch (Exception ex) {
-            }
-        }   // end finally
-    }   // end encodeFileToFile
-
-
-    /**
-     * Reads <tt>infile</tt> and decodes it to <tt>outfile</tt>.
-     *
-     * @param infile  Input file
-     * @param outfile Output file
-     * @throws java.io.IOException if there is an error
-     * @since 2.2
-     */
-    public static void decodeFileToFile(String infile, String outfile)
-            throws java.io.IOException {
-
-        byte[] decoded = Base64.decodeFromFile(infile);
-        java.io.OutputStream out = null;
-        try {
-            out = new java.io.BufferedOutputStream(
-                    new java.io.FileOutputStream(outfile));
-            out.write(decoded);
-        }   // end try
-        catch (java.io.IOException e) {
-            throw e; // Catch and release to execute finally{}
-        }   // end catch
-        finally {
-            try {
-                out.close();
-            } catch (Exception ex) {
-            }
-        }   // end finally
-    }   // end decodeFileToFile
-
 
     /* ********  I N N E R   C L A S S   I N P U T S T R E A M  ******** */
 

@@ -1,11 +1,33 @@
+/*
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package org.elasticsearch.index.search.nested;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.*;
+import org.apache.lucene.search.join.BitDocIdSetFilter;
+import org.apache.lucene.util.BitSet;
 import org.apache.lucene.util.Bits;
-import org.apache.lucene.util.FixedBitSet;
+import org.apache.lucene.util.BitDocIdSet;
+import org.apache.lucene.util.BytesRef;
 
 import java.io.IOException;
 import java.util.Collection;
@@ -13,11 +35,13 @@ import java.util.Set;
 
 /**
  * A special query that accepts a top level parent matching query, and returns the nested docs of the matching parent
- * doc as well. This is handy when deleting by query.
+ * doc as well. This is handy when deleting by query, don't use it for other purposes.
+ *
+ * @elasticsearch.internal
  */
 public class IncludeNestedDocsQuery extends Query {
 
-    private final Filter parentFilter;
+    private final BitDocIdSetFilter parentFilter;
     private final Query parentQuery;
 
     // If we are rewritten, this is the original childQuery we
@@ -28,13 +52,13 @@ public class IncludeNestedDocsQuery extends Query {
     private final Query origParentQuery;
 
 
-    public IncludeNestedDocsQuery(Query parentQuery, Filter parentFilter) {
+    public IncludeNestedDocsQuery(Query parentQuery, BitDocIdSetFilter parentFilter) {
         this.origParentQuery = parentQuery;
         this.parentQuery = parentQuery;
         this.parentFilter = parentFilter;
     }
 
-    // For rewritting
+    // For rewriting
     IncludeNestedDocsQuery(Query rewrite, Query originalQuery, IncludeNestedDocsQuery previousInstance) {
         this.origParentQuery = originalQuery;
         this.parentQuery = rewrite;
@@ -50,25 +74,26 @@ public class IncludeNestedDocsQuery extends Query {
     }
 
     @Override
-    public Weight createWeight(IndexSearcher searcher) throws IOException {
-        return new IncludeNestedDocsWeight(parentQuery, parentQuery.createWeight(searcher), parentFilter);
+    public Weight createWeight(IndexSearcher searcher, boolean needsScores) throws IOException {
+        return new IncludeNestedDocsWeight(this, parentQuery, parentQuery.createWeight(searcher, needsScores), parentFilter);
     }
 
     static class IncludeNestedDocsWeight extends Weight {
 
         private final Query parentQuery;
         private final Weight parentWeight;
-        private final Filter parentsFilter;
+        private final BitDocIdSetFilter parentsFilter;
 
-        IncludeNestedDocsWeight(Query parentQuery, Weight parentWeight, Filter parentsFilter) {
+        IncludeNestedDocsWeight(Query query, Query parentQuery, Weight parentWeight, BitDocIdSetFilter parentsFilter) {
+            super(query);
             this.parentQuery = parentQuery;
             this.parentWeight = parentWeight;
             this.parentsFilter = parentsFilter;
         }
 
         @Override
-        public Query getQuery() {
-            return parentQuery;
+        public void extractTerms(Set<Term> terms) {
+            parentWeight.extractTerms(terms);
         }
 
         @Override
@@ -82,21 +107,18 @@ public class IncludeNestedDocsQuery extends Query {
         }
 
         @Override
-        public Scorer scorer(AtomicReaderContext context, boolean scoreDocsInOrder, boolean topScorer, Bits acceptDocs) throws IOException {
-            final Scorer parentScorer = parentWeight.scorer(context, true, false, acceptDocs);
+        public Scorer scorer(LeafReaderContext context, Bits acceptDocs) throws IOException {
+            final Scorer parentScorer = parentWeight.scorer(context, acceptDocs);
 
             // no matches
             if (parentScorer == null) {
                 return null;
             }
 
-            DocIdSet parents = parentsFilter.getDocIdSet(context, acceptDocs);
+            BitDocIdSet parents = parentsFilter.getDocIdSet(context);
             if (parents == null) {
                 // No matches
                 return null;
-            }
-            if (!(parents instanceof FixedBitSet)) {
-                throw new IllegalStateException("parentFilter must return FixedBitSet; got " + parents);
             }
 
             int firstParentDoc = parentScorer.nextDoc();
@@ -104,38 +126,33 @@ public class IncludeNestedDocsQuery extends Query {
                 // No matches
                 return null;
             }
-            return new IncludeNestedDocsScorer(this, parentScorer, (FixedBitSet) parents, firstParentDoc);
+            return new IncludeNestedDocsScorer(this, parentScorer, parents, firstParentDoc);
         }
 
         @Override
-        public Explanation explain(AtomicReaderContext context, int doc) throws IOException {
+        public Explanation explain(LeafReaderContext context, int doc) throws IOException {
             return null; //Query is used internally and not by users, so explain can be empty
-        }
-
-        @Override
-        public boolean scoresDocsOutOfOrder() {
-            return false;
         }
     }
 
     static class IncludeNestedDocsScorer extends Scorer {
 
         final Scorer parentScorer;
-        final FixedBitSet parentBits;
+        final BitSet parentBits;
 
         int currentChildPointer = -1;
         int currentParentPointer = -1;
         int currentDoc = -1;
 
-        IncludeNestedDocsScorer(Weight weight, Scorer parentScorer, FixedBitSet parentBits, int currentParentPointer) {
+        IncludeNestedDocsScorer(Weight weight, Scorer parentScorer, BitDocIdSet parentBits, int currentParentPointer) {
             super(weight);
             this.parentScorer = parentScorer;
-            this.parentBits = parentBits;
+            this.parentBits = parentBits.bits();
             this.currentParentPointer = currentParentPointer;
             if (currentParentPointer == 0) {
                 currentChildPointer = 0;
             } else {
-                this.currentChildPointer = parentBits.prevSetBit(currentParentPointer - 1);
+                this.currentChildPointer = this.parentBits.prevSetBit(currentParentPointer - 1);
                 if (currentChildPointer == -1) {
                     // no previous set parent, we delete from doc 0
                     currentChildPointer = 0;
@@ -152,6 +169,7 @@ public class IncludeNestedDocsQuery extends Query {
             return parentScorer.getChildren();
         }
 
+        @Override
         public int nextDoc() throws IOException {
             if (currentParentPointer == NO_MORE_DOCS) {
                 return (currentDoc = NO_MORE_DOCS);
@@ -179,6 +197,7 @@ public class IncludeNestedDocsQuery extends Query {
             return currentDoc;
         }
 
+        @Override
         public int advance(int target) throws IOException {
             if (target == NO_MORE_DOCS) {
                 return (currentDoc = NO_MORE_DOCS);
@@ -211,22 +230,25 @@ public class IncludeNestedDocsQuery extends Query {
             return currentDoc;
         }
 
+        @Override
         public float score() throws IOException {
             return parentScorer.score();
         }
 
+        @Override
         public int freq() throws IOException {
             return parentScorer.freq();
         }
 
+        @Override
         public int docID() {
             return currentDoc;
         }
-    }
 
-    @Override
-    public void extractTerms(Set<Term> terms) {
-        parentQuery.extractTerms(terms);
+        @Override
+        public long cost() {
+            return parentScorer.cost();
+        }
     }
 
     @Override

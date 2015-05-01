@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,44 +19,75 @@
 
 package org.elasticsearch.rest;
 
-import java.io.IOException;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.bytes.BytesReference;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  *
  */
-public interface RestResponse {
+public abstract class RestResponse implements HasRestHeaders {
+
+    protected Map<String, List<String>> customHeaders;
+
 
     /**
-     * Can the content byte[] be used only with this thread (<tt>false</tt>), or by any thread (<tt>true</tt>).
+     * The response content type.
      */
-    boolean contentThreadSafe();
-
-    String contentType();
+    public abstract String contentType();
 
     /**
-     * Returns the actual content. Note, use {@link #contentLength()} in order to know the
-     * content length of the byte array.
+     * The response content. Note, if the content is {@link org.elasticsearch.common.lease.Releasable} it
+     * should automatically be released when done by the channel sending it.
      */
-    byte[] content() throws IOException;
+    public abstract BytesReference content();
 
     /**
-     * The content length.
+     * The rest status code.
      */
-    int contentLength() throws IOException;
+    public abstract RestStatus status();
 
-    int contentOffset() throws IOException;
+    public void addHeaders(Map<String, List<String>> headers) {
+        if (customHeaders == null) {
+            customHeaders = new HashMap<>(headers.size());
+        }
+        for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
+            List<String> values = customHeaders.get(entry.getKey());
+            if (values == null) {
+                values = Lists.newArrayList();
+                customHeaders.put(entry.getKey(), values);
+            }
+            values.addAll(entry.getValue());
+        }
+    }
 
-    byte[] prefixContent();
+    /**
+     * Add a custom header.
+     */
+    public void addHeader(String name, String value) {
+        if (customHeaders == null) {
+            customHeaders = new HashMap<>(2);
+        }
+        List<String> header = customHeaders.get(name);
+        if (header == null) {
+            header = new ArrayList<>();
+            customHeaders.put(name, header);
+        }
+        header.add(value);
+    }
 
-    int prefixContentLength();
-
-    int prefixContentOffset();
-
-    byte[] suffixContent();
-
-    int suffixContentLength();
-
-    int suffixContentOffset();
-
-    RestStatus status();
+    /**
+     * Returns custom headers that have been added, or null if none have been set.
+     */
+    @Override
+    @Nullable
+    public Map<String, List<String>> getHeaders() {
+        return customHeaders;
+    }
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,6 +19,7 @@
 
 package org.elasticsearch.common.xcontent;
 
+import org.elasticsearch.common.xcontent.cbor.CborXContent;
 import org.elasticsearch.common.xcontent.json.JsonXContent;
 import org.elasticsearch.common.xcontent.smile.SmileXContent;
 import org.elasticsearch.common.xcontent.yaml.YamlXContent;
@@ -67,7 +68,7 @@ public enum XContentType {
         }
     },
     /**
-     * The jackson based smile binary format. Fast and compact binary format.
+     * A YAML based content type.
      */
     YAML(2) {
         @Override
@@ -84,7 +85,26 @@ public enum XContentType {
         public XContent xContent() {
             return YamlXContent.yamlXContent;
         }
-    };
+    },
+    /**
+     * A CBOR based content type.
+     */
+    CBOR(3) {
+        @Override
+        public String restContentType() {
+            return "application/cbor";
+        }
+
+        @Override
+        public String shortName() {
+            return "cbor";
+        }
+
+        @Override
+        public XContent xContent() {
+            return CborXContent.cborXContent;
+        }
+    },;
 
     public static XContentType fromRestContentType(String contentType) {
         if (contentType == null) {
@@ -100,6 +120,10 @@ public enum XContentType {
 
         if ("application/yaml".equals(contentType) || "yaml".equalsIgnoreCase(contentType)) {
             return YAML;
+        }
+
+        if ("application/cbor".equals(contentType) || "cbor".equalsIgnoreCase(contentType)) {
+            return CBOR;
         }
 
         return null;

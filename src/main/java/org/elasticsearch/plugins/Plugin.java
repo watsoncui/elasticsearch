@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,8 +22,8 @@ package org.elasticsearch.plugins;
 import org.elasticsearch.common.component.LifecycleComponent;
 import org.elasticsearch.common.inject.Module;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.index.CloseableIndexComponent;
 
+import java.io.Closeable;
 import java.util.Collection;
 
 /**
@@ -75,7 +75,7 @@ public interface Plugin {
     /**
      * Per index services that will be automatically closed.
      */
-    Collection<Class<? extends CloseableIndexComponent>> indexServices();
+    Collection<Class<? extends Closeable>> indexServices();
 
     /**
      * Per index shard module.
@@ -90,7 +90,7 @@ public interface Plugin {
     /**
      * Per index shard service that will be automatically closed.
      */
-    Collection<Class<? extends CloseableIndexComponent>> shardServices();
+    Collection<Class<? extends Closeable>> shardServices();
 
     /**
      * Process a specific module. Note, its simpler to implement a custom <tt>onModule(AnyModule module)</tt>

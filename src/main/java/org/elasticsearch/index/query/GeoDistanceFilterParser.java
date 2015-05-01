@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,14 +20,15 @@
 package org.elasticsearch.index.query;
 
 import org.apache.lucene.search.Filter;
+import org.apache.lucene.search.QueryCachingPolicy;
 import org.elasticsearch.common.geo.GeoDistance;
 import org.elasticsearch.common.geo.GeoHashUtils;
 import org.elasticsearch.common.geo.GeoPoint;
 import org.elasticsearch.common.geo.GeoUtils;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.lucene.HashedBytesRef;
 import org.elasticsearch.common.unit.DistanceUnit;
 import org.elasticsearch.common.xcontent.XContentParser;
-import org.elasticsearch.index.cache.filter.support.CacheKeyFilter;
 import org.elasticsearch.index.fielddata.IndexGeoPointFieldData;
 import org.elasticsearch.index.mapper.FieldMapper;
 import org.elasticsearch.index.mapper.MapperService;
@@ -35,8 +36,6 @@ import org.elasticsearch.index.mapper.geo.GeoPointFieldMapper;
 import org.elasticsearch.index.search.geo.GeoDistanceFilter;
 
 import java.io.IOException;
-
-import static org.elasticsearch.index.query.support.QueryParsers.wrapSmartNameFilter;
 
 /**
  * <pre>
@@ -65,16 +64,16 @@ public class GeoDistanceFilterParser implements FilterParser {
 
         XContentParser.Token token;
 
-        boolean cache = false;
-        CacheKeyFilter.Key cacheKey = null;
+        QueryCachingPolicy cache = parseContext.autoFilterCachePolicy();
+        HashedBytesRef cacheKey = null;
         String filterName = null;
         String currentFieldName = null;
         GeoPoint point = new GeoPoint();
         String fieldName = null;
         double distance = 0;
         Object vDistance = null;
-        DistanceUnit unit = DistanceUnit.KILOMETERS; // default unit
-        GeoDistance geoDistance = GeoDistance.ARC;
+        DistanceUnit unit = DistanceUnit.DEFAULT;
+        GeoDistance geoDistance = GeoDistance.DEFAULT;
         String optimizeBbox = "memory";
         boolean normalizeLon = true;
         boolean normalizeLat = true;
@@ -82,14 +81,8 @@ public class GeoDistanceFilterParser implements FilterParser {
             if (token == XContentParser.Token.FIELD_NAME) {
                 currentFieldName = parser.currentName();
             } else if (token == XContentParser.Token.START_ARRAY) {
-                token = parser.nextToken();
-                point.resetLon(parser.doubleValue());
-                token = parser.nextToken();
-                point.resetLat(parser.doubleValue());
-                while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
-
-                }
                 fieldName = currentFieldName;
+                GeoUtils.parseGeoPoint(parser, point);
             } else if (token == XContentParser.Token.START_OBJECT) {
                 // the json in the format of -> field : { lat : 30, lon : 12 }
                 String currentName = parser.currentName();
@@ -105,7 +98,8 @@ public class GeoDistanceFilterParser implements FilterParser {
                         } else if (currentName.equals(GeoPointFieldMapper.Names.GEOHASH)) {
                             GeoHashUtils.decode(parser.text(), point);
                         } else {
-                            throw new QueryParsingException(parseContext.index(), "[geo_distance] filter does not support [" + currentFieldName + "]");
+                            throw new QueryParsingException(parseContext, "[geo_distance] filter does not support [" + currentFieldName
+                                    + "]");
                         }
                     }
                 }
@@ -132,9 +126,9 @@ public class GeoDistanceFilterParser implements FilterParser {
                 } else if ("_name".equals(currentFieldName)) {
                     filterName = parser.text();
                 } else if ("_cache".equals(currentFieldName)) {
-                    cache = parser.booleanValue();
+                    cache = parseContext.parseFilterCachePolicy();
                 } else if ("_cache_key".equals(currentFieldName) || "_cacheKey".equals(currentFieldName)) {
-                    cacheKey = new CacheKeyFilter.Key(parser.text());
+                    cacheKey = new HashedBytesRef(parser.text());
                 } else if ("optimize_bbox".equals(currentFieldName) || "optimizeBbox".equals(currentFieldName)) {
                     optimizeBbox = parser.textOrNull();
                 } else if ("normalize".equals(currentFieldName)) {
@@ -147,12 +141,14 @@ public class GeoDistanceFilterParser implements FilterParser {
             }
         }
 
-        if (vDistance instanceof Number) {
-            distance = unit.toMiles(((Number) vDistance).doubleValue());
+        if (vDistance == null) {
+            throw new QueryParsingException(parseContext, "geo_distance requires 'distance' to be specified");
+        } else if (vDistance instanceof Number) {
+            distance = DistanceUnit.DEFAULT.convert(((Number) vDistance).doubleValue(), unit);
         } else {
-            distance = DistanceUnit.parse((String) vDistance, unit, DistanceUnit.MILES);
+            distance = DistanceUnit.parse((String) vDistance, unit, DistanceUnit.DEFAULT);
         }
-        distance = geoDistance.normalize(distance, DistanceUnit.MILES);
+        distance = geoDistance.normalize(distance, DistanceUnit.DEFAULT);
 
         if (normalizeLat || normalizeLon) {
             GeoUtils.normalizePoint(point, normalizeLat, normalizeLon);
@@ -160,21 +156,20 @@ public class GeoDistanceFilterParser implements FilterParser {
 
         MapperService.SmartNameFieldMappers smartMappers = parseContext.smartFieldMappers(fieldName);
         if (smartMappers == null || !smartMappers.hasMapper()) {
-            throw new QueryParsingException(parseContext.index(), "failed to find geo_point field [" + fieldName + "]");
+            throw new QueryParsingException(parseContext, "failed to find geo_point field [" + fieldName + "]");
         }
-        FieldMapper mapper = smartMappers.mapper();
-        if (!(mapper instanceof GeoPointFieldMapper.GeoStringFieldMapper)) {
-            throw new QueryParsingException(parseContext.index(), "field [" + fieldName + "] is not a geo_point field");
+        FieldMapper<?> mapper = smartMappers.mapper();
+        if (!(mapper instanceof GeoPointFieldMapper)) {
+            throw new QueryParsingException(parseContext, "field [" + fieldName + "] is not a geo_point field");
         }
-        GeoPointFieldMapper geoMapper = ((GeoPointFieldMapper.GeoStringFieldMapper) mapper).geoMapper();
+        GeoPointFieldMapper geoMapper = ((GeoPointFieldMapper) mapper);
 
 
-        IndexGeoPointFieldData indexFieldData = parseContext.fieldData().getForField(mapper);
+        IndexGeoPointFieldData indexFieldData = parseContext.getForField(mapper);
         Filter filter = new GeoDistanceFilter(point.lat(), point.lon(), distance, geoDistance, indexFieldData, geoMapper, optimizeBbox);
-        if (cache) {
-            filter = parseContext.cacheFilter(filter, cacheKey);
+        if (cache != null) {
+            filter = parseContext.cacheFilter(filter, cacheKey, cache);
         }
-        filter = wrapSmartNameFilter(filter, smartMappers, parseContext);
         if (filterName != null) {
             parseContext.addNamedFilter(filterName, filter);
         }

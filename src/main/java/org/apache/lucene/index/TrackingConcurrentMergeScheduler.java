@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -24,8 +24,13 @@ import org.elasticsearch.common.metrics.CounterMetric;
 import org.elasticsearch.common.metrics.MeanMetric;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
+import org.elasticsearch.index.merge.OnGoingMerge;
 
 import java.io.IOException;
+import java.util.Collections;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * An extension to the {@link ConcurrentMergeScheduler} that provides tracking on merge times, total
@@ -41,6 +46,11 @@ public class TrackingConcurrentMergeScheduler extends ConcurrentMergeScheduler {
     private final CounterMetric currentMerges = new CounterMetric();
     private final CounterMetric currentMergesNumDocs = new CounterMetric();
     private final CounterMetric currentMergesSizeInBytes = new CounterMetric();
+    private final CounterMetric totalMergeStoppedTime = new CounterMetric();
+    private final CounterMetric totalMergeThrottledTime = new CounterMetric();
+
+    private final Set<OnGoingMerge> onGoingMerges = ConcurrentCollections.newConcurrentSet();
+    private final Set<OnGoingMerge> readOnlyOnGoingMerges = Collections.unmodifiableSet(onGoingMerges);
 
     public TrackingConcurrentMergeScheduler(ESLogger logger) {
         super();
@@ -75,22 +85,41 @@ public class TrackingConcurrentMergeScheduler extends ConcurrentMergeScheduler {
         return currentMergesSizeInBytes.count();
     }
 
+    public long totalMergeStoppedTimeMillis() {
+        return totalMergeStoppedTime.count();
+    }
+
+    public long totalMergeThrottledTimeMillis() {
+        return totalMergeThrottledTime.count();
+    }
+
+    public Set<OnGoingMerge> onGoingMerges() {
+        return readOnlyOnGoingMerges;
+    }
+
     @Override
-    protected void doMerge(MergePolicy.OneMerge merge) throws IOException {
+    protected void doMerge(IndexWriter writer, MergePolicy.OneMerge merge) throws IOException {
         int totalNumDocs = merge.totalNumDocs();
-        // don't used #totalBytesSize() since need to be executed under IW lock, might be fixed in future Lucene version
-        long totalSizeInBytes = merge.estimatedMergeBytes;
+        long totalSizeInBytes = merge.totalBytesSize();
         long time = System.currentTimeMillis();
         currentMerges.inc();
         currentMergesNumDocs.inc(totalNumDocs);
         currentMergesSizeInBytes.inc(totalSizeInBytes);
+
+        OnGoingMerge onGoingMerge = new OnGoingMerge(merge);
+        onGoingMerges.add(onGoingMerge);
+
         if (logger.isTraceEnabled()) {
             logger.trace("merge [{}] starting..., merging [{}] segments, [{}] docs, [{}] size, into [{}] estimated_size", merge.info == null ? "_na_" : merge.info.info.name, merge.segments.size(), totalNumDocs, new ByteSizeValue(totalSizeInBytes), new ByteSizeValue(merge.estimatedMergeBytes));
         }
         try {
-            super.doMerge(merge);
+            beforeMerge(onGoingMerge);
+            super.doMerge(writer, merge);
         } finally {
             long took = System.currentTimeMillis() - time;
+
+            onGoingMerges.remove(onGoingMerge);
+            afterMerge(onGoingMerge);
 
             currentMerges.dec();
             currentMergesNumDocs.dec(totalNumDocs);
@@ -99,11 +128,50 @@ public class TrackingConcurrentMergeScheduler extends ConcurrentMergeScheduler {
             totalMergesNumDocs.inc(totalNumDocs);
             totalMergesSizeInBytes.inc(totalSizeInBytes);
             totalMerges.inc(took);
+
+            long stoppedMS = merge.rateLimiter.getTotalStoppedNS()/1000000;
+            long throttledMS = merge.rateLimiter.getTotalPausedNS()/1000000;
+
+            totalMergeStoppedTime.inc(stoppedMS);
+            totalMergeThrottledTime.inc(throttledMS);
+
+            String message = String.format(Locale.ROOT,
+                                           "merge segment [%s] done: took [%s], [%,.1f MB], [%,d docs], [%s stopped], [%s throttled], [%,.1f MB written], [%,.1f MB/sec throttle]",
+                                           merge.info == null ? "_na_" : merge.info.info.name,
+                                           TimeValue.timeValueMillis(took),
+                                           totalSizeInBytes/1024f/1024f,
+                                           totalNumDocs,
+                                           TimeValue.timeValueMillis(stoppedMS),
+                                           TimeValue.timeValueMillis(throttledMS),
+                                           merge.rateLimiter.getTotalBytesWritten()/1024f/1024f,
+                                           merge.rateLimiter.getMBPerSec());
+
             if (took > 20000) { // if more than 20 seconds, DEBUG log it
-                logger.debug("merge [{}] done, took [{}]", merge.info == null ? "_na_" : merge.info.info.name, TimeValue.timeValueMillis(took));
+                logger.debug(message);
             } else if (logger.isTraceEnabled()) {
-                logger.trace("merge [{}] done, took [{}]", merge.info == null ? "_na_" : merge.info.info.name, TimeValue.timeValueMillis(took));
+                logger.trace(message);
             }
         }
+    }
+
+    /**
+     * A callback allowing for custom logic before an actual merge starts.
+     */
+    protected void beforeMerge(OnGoingMerge merge) {
+
+    }
+
+    /**
+     * A callback allowing for custom logic before an actual merge starts.
+     */
+    protected void afterMerge(OnGoingMerge merge) {
+
+    }
+
+    @Override
+    public MergeScheduler clone() {
+        // Lucene IW makes a clone internally but since we hold on to this instance 
+        // the clone will just be the identity.
+        return this;
     }
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,11 +19,12 @@
 
 package org.elasticsearch.common.xcontent;
 
+import com.fasterxml.jackson.dataformat.cbor.CBORConstants;
 import com.fasterxml.jackson.dataformat.smile.SmileConstants;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
-import org.elasticsearch.ElasticSearchParseException;
+import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
+import org.elasticsearch.common.xcontent.cbor.CborXContent;
 import org.elasticsearch.common.xcontent.json.JsonXContent;
 import org.elasticsearch.common.xcontent.smile.SmileXContent;
 import org.elasticsearch.common.xcontent.yaml.YamlXContent;
@@ -69,10 +70,31 @@ public class XContentFactory {
     }
 
     /**
+     * Returns a content builder using YAML format ({@link org.elasticsearch.common.xcontent.XContentType#YAML}.
+     */
+    public static XContentBuilder yamlBuilder() throws IOException {
+        return contentBuilder(XContentType.YAML);
+    }
+
+    /**
      * Constructs a new yaml builder that will output the result into the provided output stream.
      */
     public static XContentBuilder yamlBuilder(OutputStream os) throws IOException {
         return new XContentBuilder(YamlXContent.yamlXContent, os);
+    }
+
+    /**
+     * Returns a content builder using CBOR format ({@link org.elasticsearch.common.xcontent.XContentType#CBOR}.
+     */
+    public static XContentBuilder cborBuilder() throws IOException {
+        return contentBuilder(XContentType.CBOR);
+    }
+
+    /**
+     * Constructs a new cbor builder that will output the result into the provided output stream.
+     */
+    public static XContentBuilder cborBuilder(OutputStream os) throws IOException {
+        return new XContentBuilder(CborXContent.cborXContent, os);
     }
 
     /**
@@ -85,8 +107,10 @@ public class XContentFactory {
             return smileBuilder(outputStream);
         } else if (type == XContentType.YAML) {
             return yamlBuilder(outputStream);
+        } else if (type == XContentType.CBOR) {
+            return cborBuilder(outputStream);
         }
-        throw new ElasticSearchIllegalArgumentException("No matching content type for " + type);
+        throw new IllegalArgumentException("No matching content type for " + type);
     }
 
     /**
@@ -99,8 +123,10 @@ public class XContentFactory {
             return SmileXContent.contentBuilder();
         } else if (type == XContentType.YAML) {
             return YamlXContent.contentBuilder();
+        } else if (type == XContentType.CBOR) {
+            return CborXContent.contentBuilder();
         }
-        throw new ElasticSearchIllegalArgumentException("No matching content type for " + type);
+        throw new IllegalArgumentException("No matching content type for " + type);
     }
 
     /**
@@ -130,6 +156,8 @@ public class XContentFactory {
             return XContentType.YAML;
         }
 
+        // CBOR is not supported
+
         for (int i = 0; i < length; i++) {
             char c = content.charAt(i);
             if (c == '{') {
@@ -145,7 +173,7 @@ public class XContentFactory {
     public static XContent xContent(CharSequence content) {
         XContentType type = xContentType(content);
         if (type == null) {
-            throw new ElasticSearchParseException("Failed to derive xcontent from " + content);
+            throw new ElasticsearchParseException("Failed to derive xcontent from " + content);
         }
         return xContent(type);
     }
@@ -163,7 +191,7 @@ public class XContentFactory {
     public static XContent xContent(byte[] data, int offset, int length) {
         XContentType type = xContentType(data, offset, length);
         if (type == null) {
-            throw new ElasticSearchParseException("Failed to derive xcontent from (offset=" + offset + ", length=" + length + "): " + Arrays.toString(data));
+            throw new ElasticsearchParseException("Failed to derive xcontent from (offset=" + offset + ", length=" + length + "): " + Arrays.toString(data));
         }
         return xContent(type);
     }
@@ -179,14 +207,17 @@ public class XContentFactory {
      * Guesses the content type based on the provided input stream.
      */
     public static XContentType xContentType(InputStream si) throws IOException {
-        int first = si.read();
-        if (first == -1) {
+        final int firstInt = si.read(); // this must be an int since we need to respect the method contract
+        if (firstInt == -1) {
             return null;
         }
-        int second = si.read();
-        if (second == -1) {
-            return null;
+
+        final int secondInt = si.read(); // this must be an int since we need to respect the method contract
+        if (secondInt == -1) {
+           return null;
         }
+        final byte first = (byte) (0xff & firstInt);
+        final byte second = (byte) (0xff & secondInt);
         if (first == SmileConstants.HEADER_BYTE_1 && second == SmileConstants.HEADER_BYTE_2) {
             int third = si.read();
             if (third == SmileConstants.HEADER_BYTE_3) {
@@ -202,6 +233,26 @@ public class XContentFactory {
                 return XContentType.YAML;
             }
         }
+        // CBOR logic similar to CBORFactory#hasCBORFormat
+        if (first == CBORConstants.BYTE_OBJECT_INDEFINITE){
+            return XContentType.CBOR;
+        }
+        if (CBORConstants.hasMajorType(CBORConstants.MAJOR_TYPE_TAG, first)) {
+            // Actually, specific "self-describe tag" is a very good indicator
+            int third = si.read();
+            if (third == -1) {
+                return null;
+            }
+            if (first == (byte) 0xD9 && second == (byte) 0xD9 && third == (byte) 0xF7) {
+                return XContentType.CBOR;
+            }
+        }
+        // for small objects, some encoders just encode as major type object, we can safely
+        // say its CBOR since it doesn't contradict SMILE or JSON, and its a last resort
+        if (CBORConstants.hasMajorType(CBORConstants.MAJOR_TYPE_OBJECT, first)) {
+            return XContentType.CBOR;
+        }
+
         for (int i = 2; i < GUESS_HEADER_LENGTH; i++) {
             int val = si.read();
             if (val == -1) {
@@ -224,7 +275,7 @@ public class XContentFactory {
     public static XContent xContent(BytesReference bytes) {
         XContentType type = xContentType(bytes);
         if (type == null) {
-            throw new ElasticSearchParseException("Failed to derive xcontent from " + bytes);
+            throw new ElasticsearchParseException("Failed to derive xcontent from " + bytes);
         }
         return xContent(type);
     }
@@ -247,6 +298,23 @@ public class XContentFactory {
         if (length > 2 && first == '-' && bytes.get(1) == '-' && bytes.get(2) == '-') {
             return XContentType.YAML;
         }
+        // CBOR logic similar to CBORFactory#hasCBORFormat
+        if (first == CBORConstants.BYTE_OBJECT_INDEFINITE && length > 1){
+            return XContentType.CBOR;
+        }
+        if (CBORConstants.hasMajorType(CBORConstants.MAJOR_TYPE_TAG, first) && length > 2) {
+            // Actually, specific "self-describe tag" is a very good indicator
+            if (first == (byte) 0xD9 && bytes.get(1) == (byte) 0xD9 && bytes.get(2) == (byte) 0xF7) {
+                return XContentType.CBOR;
+            }
+        }
+        // for small objects, some encoders just encode as major type object, we can safely
+        // say its CBOR since it doesn't contradict SMILE or JSON, and its a last resort
+        if (CBORConstants.hasMajorType(CBORConstants.MAJOR_TYPE_OBJECT, first)) {
+            return XContentType.CBOR;
+        }
+
+        // a last chance for JSON
         for (int i = 0; i < length; i++) {
             if (bytes.get(i) == '{') {
                 return XContentType.JSON;

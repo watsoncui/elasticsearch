@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -48,24 +48,22 @@ public class WrapperFilterParser implements FilterParser {
 
         XContentParser.Token token = parser.nextToken();
         if (token != XContentParser.Token.FIELD_NAME) {
-            throw new QueryParsingException(parseContext.index(), "[wrapper] filter malformed");
+            throw new QueryParsingException(parseContext, "[wrapper] filter malformed");
         }
         String fieldName = parser.currentName();
         if (!fieldName.equals("filter")) {
-            throw new QueryParsingException(parseContext.index(), "[wrapper] filter malformed");
+            throw new QueryParsingException(parseContext, "[wrapper] filter malformed");
         }
         parser.nextToken();
 
         byte[] querySource = parser.binaryValue();
-        XContentParser qSourceParser = XContentFactory.xContent(querySource).createParser(querySource);
-        try {
-            final QueryParseContext context = new QueryParseContext(parseContext.index(), parseContext.indexQueryParser);
+        try (XContentParser qSourceParser = XContentFactory.xContent(querySource).createParser(querySource)) {
+            final QueryParseContext context = new QueryParseContext(parseContext.index(), parseContext.indexQueryParserService());
             context.reset(qSourceParser);
             Filter result = context.parseInnerFilter();
             parser.nextToken();
+            parseContext.combineNamedFilters(context);
             return result;
-        } finally {
-            qSourceParser.close();
         }
     }
 }

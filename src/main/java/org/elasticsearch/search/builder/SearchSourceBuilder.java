@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,14 +19,16 @@
 
 package org.elasticsearch.search.builder;
 
+import com.carrotsearch.hppc.ObjectFloatOpenHashMap;
+import com.google.common.base.Charsets;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
-import gnu.trove.iterator.TObjectFloatIterator;
-import gnu.trove.map.hash.TObjectFloatHashMap;
-import org.elasticsearch.ElasticSearchGenerationException;
+
+import org.elasticsearch.ElasticsearchGenerationException;
+import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.common.Nullable;
-import org.elasticsearch.common.Unicode;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.unit.TimeValue;
@@ -36,8 +38,12 @@ import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.query.FilterBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
-import org.elasticsearch.search.facet.FacetBuilder;
+import org.elasticsearch.search.aggregations.AbstractAggregationBuilder;
+import org.elasticsearch.search.aggregations.reducers.ReducerBuilder;
+import org.elasticsearch.search.fetch.innerhits.InnerHitsBuilder;
+import org.elasticsearch.search.fetch.source.FetchSourceContext;
 import org.elasticsearch.search.highlight.HighlightBuilder;
+import org.elasticsearch.search.internal.SearchContext;
 import org.elasticsearch.search.rescore.RescoreBuilder;
 import org.elasticsearch.search.sort.SortBuilder;
 import org.elasticsearch.search.sort.SortBuilders;
@@ -46,12 +52,14 @@ import org.elasticsearch.search.suggest.SuggestBuilder;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
 /**
- * A search source builder allowing to easily build search source. Simple construction
- * using {@link org.elasticsearch.search.builder.SearchSourceBuilder#searchSource()}.
+ * A search source builder allowing to easily build search source. Simple
+ * construction using
+ * {@link org.elasticsearch.search.builder.SearchSourceBuilder#searchSource()}.
  *
  * @see org.elasticsearch.action.search.SearchRequest#source(SearchSourceBuilder)
  */
@@ -75,7 +83,7 @@ public class SearchSourceBuilder implements ToXContent {
 
     private BytesReference queryBinary;
 
-    private FilterBuilder filterBuilder;
+    private FilterBuilder postFilterBuilder;
 
     private BytesReference filterBinary;
 
@@ -94,25 +102,28 @@ public class SearchSourceBuilder implements ToXContent {
     private Float minScore;
 
     private long timeoutInMillis = -1;
+    private int terminateAfter = SearchContext.DEFAULT_TERMINATE_AFTER;
 
     private List<String> fieldNames;
+    private List<String> fieldDataFields;
     private List<ScriptField> scriptFields;
-    private List<PartialField> partialFields;
+    private FetchSourceContext fetchSourceContext;
 
-    private List<FacetBuilder> facets;
-
-    private BytesReference facetsBinary;
+    private List<AbstractAggregationBuilder> aggregations;
+    private BytesReference aggregationsBinary;
 
     private HighlightBuilder highlightBuilder;
 
     private SuggestBuilder suggestBuilder;
 
-    private RescoreBuilder rescoreBuilder;
+    private InnerHitsBuilder innerHitsBuilder;
 
-    private TObjectFloatHashMap<String> indexBoost = null;
+    private List<RescoreBuilder> rescoreBuilders;
+    private Integer defaultRescoreWindowSize;
+
+    private ObjectFloatOpenHashMap<String> indexBoost = null;
 
     private String[] stats;
-
 
     /**
      * Constructs a new search source builder.
@@ -156,7 +167,7 @@ public class SearchSourceBuilder implements ToXContent {
      * Constructs a new search source builder with a raw search query.
      */
     public SearchSourceBuilder query(String queryString) {
-        return query(Unicode.fromStringAsBytes(queryString));
+        return query(queryString.getBytes(Charsets.UTF_8));
     }
 
     /**
@@ -175,69 +186,70 @@ public class SearchSourceBuilder implements ToXContent {
             builder.map(query);
             return query(builder);
         } catch (IOException e) {
-            throw new ElasticSearchGenerationException("Failed to generate [" + query + "]", e);
+            throw new ElasticsearchGenerationException("Failed to generate [" + query + "]", e);
         }
     }
 
     /**
-     * Sets a filter on the query executed that only applies to the search query
-     * (and not facets for example).
+     * Sets a filter that will be executed after the query has been executed and
+     * only has affect on the search hits (not aggregations). This filter is
+     * always executed as last filtering mechanism.
      */
-    public SearchSourceBuilder filter(FilterBuilder filter) {
-        this.filterBuilder = filter;
+    public SearchSourceBuilder postFilter(FilterBuilder postFilter) {
+        this.postFilterBuilder = postFilter;
         return this;
     }
 
     /**
      * Sets a filter on the query executed that only applies to the search query
-     * (and not facets for example).
+     * (and not aggs for example).
      */
-    public SearchSourceBuilder filter(String filterString) {
-        return filter(Unicode.fromStringAsBytes(filterString));
+    public SearchSourceBuilder postFilter(String postFilterString) {
+        return postFilter(postFilterString.getBytes(Charsets.UTF_8));
     }
 
     /**
      * Sets a filter on the query executed that only applies to the search query
-     * (and not facets for example).
+     * (and not aggs for example).
      */
-    public SearchSourceBuilder filter(byte[] filter) {
-        return filter(filter, 0, filter.length);
+    public SearchSourceBuilder postFilter(byte[] postFilter) {
+        return postFilter(postFilter, 0, postFilter.length);
     }
 
     /**
      * Sets a filter on the query executed that only applies to the search query
-     * (and not facets for example).
+     * (and not aggs for example).
      */
-    public SearchSourceBuilder filter(byte[] filterBinary, int filterBinaryOffset, int filterBinaryLength) {
-        return filter(new BytesArray(filterBinary, filterBinaryOffset, filterBinaryLength));
+    public SearchSourceBuilder postFilter(byte[] postFilterBinary, int postFilterBinaryOffset, int postFilterBinaryLength) {
+        return postFilter(new BytesArray(postFilterBinary, postFilterBinaryOffset, postFilterBinaryLength));
     }
 
     /**
      * Sets a filter on the query executed that only applies to the search query
-     * (and not facets for example).
+     * (and not aggs for example).
      */
-    public SearchSourceBuilder filter(BytesReference filterBinary) {
-        this.filterBinary = filterBinary;
+    public SearchSourceBuilder postFilter(BytesReference postFilterBinary) {
+        this.filterBinary = postFilterBinary;
         return this;
     }
 
     /**
      * Constructs a new search source builder with a query from a builder.
      */
-    public SearchSourceBuilder filter(XContentBuilder filter) {
-        return filter(filter.bytes());
+    public SearchSourceBuilder postFilter(XContentBuilder postFilter) {
+        return postFilter(postFilter.bytes());
     }
 
     /**
      * Constructs a new search source builder with a query from a map.
      */
-    public SearchSourceBuilder filter(Map filter) {
+    public SearchSourceBuilder postFilter(Map postFilter) {
         try {
             XContentBuilder builder = XContentFactory.contentBuilder(Requests.CONTENT_TYPE);
-            builder.map(filter);
-            return filter(builder);
+            builder.map(postFilter);
+            return postFilter(builder);
         } catch (IOException e) {
-            throw new ElasticSearchGenerationException("Failed to generate [" + filter + "]", e);
+            throw new ElasticsearchGenerationException("Failed to generate [" + postFilter + "]", e);
         }
     }
 
@@ -266,8 +278,8 @@ public class SearchSourceBuilder implements ToXContent {
     }
 
     /**
-     * Should each {@link org.elasticsearch.search.SearchHit} be returned with an
-     * explanation of the hit (ranking).
+     * Should each {@link org.elasticsearch.search.SearchHit} be returned with
+     * an explanation of the hit (ranking).
      */
     public SearchSourceBuilder explain(Boolean explain) {
         this.explain = explain;
@@ -275,8 +287,8 @@ public class SearchSourceBuilder implements ToXContent {
     }
 
     /**
-     * Should each {@link org.elasticsearch.search.SearchHit} be returned with a version
-     * associated with it.
+     * Should each {@link org.elasticsearch.search.SearchHit} be returned with a
+     * version associated with it.
      */
     public SearchSourceBuilder version(Boolean version) {
         this.version = version;
@@ -300,10 +312,24 @@ public class SearchSourceBuilder implements ToXContent {
     }
 
     /**
+     * An optional terminate_after to terminate the search after collecting
+     * <code>terminateAfter</code> documents
+     */
+    public  SearchSourceBuilder terminateAfter(int terminateAfter) {
+        if (terminateAfter <= 0) {
+            throw new IllegalArgumentException("terminateAfter must be > 0");
+        }
+        this.terminateAfter = terminateAfter;
+        return this;
+    }
+
+    /**
      * Adds a sort against the given field name and the sort ordering.
      *
-     * @param name  The name of the field
-     * @param order The sort ordering
+     * @param name
+     *            The name of the field
+     * @param order
+     *            The sort ordering
      */
     public SearchSourceBuilder sort(String name, SortOrder order) {
         return sort(SortBuilders.fieldSort(name).order(order));
@@ -312,7 +338,8 @@ public class SearchSourceBuilder implements ToXContent {
     /**
      * Add a sort against the given field name.
      *
-     * @param name The name of the field to sort by
+     * @param name
+     *            The name of the field to sort by
      */
     public SearchSourceBuilder sort(String name) {
         return sort(SortBuilders.fieldSort(name));
@@ -330,8 +357,8 @@ public class SearchSourceBuilder implements ToXContent {
     }
 
     /**
-     * Applies when sorting, and controls if scores will be tracked as well. Defaults to
-     * <tt>false</tt>.
+     * Applies when sorting, and controls if scores will be tracked as well.
+     * Defaults to <tt>false</tt>.
      */
     public SearchSourceBuilder trackScores(boolean trackScores) {
         this.trackScores = trackScores;
@@ -339,55 +366,66 @@ public class SearchSourceBuilder implements ToXContent {
     }
 
     /**
-     * Add a facet to perform as part of the search.
+     * Add an get to perform as part of the search.
      */
-    public SearchSourceBuilder facet(FacetBuilder facet) {
-        if (facets == null) {
-            facets = Lists.newArrayList();
+    public SearchSourceBuilder aggregation(AbstractAggregationBuilder aggregation) {
+        if (aggregations == null) {
+            aggregations = Lists.newArrayList();
         }
-        facets.add(facet);
+        aggregations.add(aggregation);
         return this;
     }
 
     /**
-     * Sets a raw (xcontent / json) facets.
+     * Sets a raw (xcontent / json) addAggregation.
      */
-    public SearchSourceBuilder facets(byte[] facetsBinary) {
-        return facets(facetsBinary, 0, facetsBinary.length);
+    public SearchSourceBuilder aggregations(byte[] aggregationsBinary) {
+        return aggregations(aggregationsBinary, 0, aggregationsBinary.length);
     }
 
     /**
-     * Sets a raw (xcontent / json) facets.
+     * Sets a raw (xcontent / json) addAggregation.
      */
-    public SearchSourceBuilder facets(byte[] facetsBinary, int facetBinaryOffset, int facetBinaryLength) {
-        return facets(new BytesArray(facetsBinary, facetBinaryOffset, facetBinaryLength));
+    public SearchSourceBuilder aggregations(byte[] aggregationsBinary, int aggregationsBinaryOffset, int aggregationsBinaryLength) {
+        return aggregations(new BytesArray(aggregationsBinary, aggregationsBinaryOffset, aggregationsBinaryLength));
     }
 
     /**
-     * Sets a raw (xcontent / json) facets.
+     * Sets a raw (xcontent / json) addAggregation.
      */
-    public SearchSourceBuilder facets(BytesReference facetsBinary) {
-        this.facetsBinary = facetsBinary;
+    public SearchSourceBuilder aggregations(BytesReference aggregationsBinary) {
+        this.aggregationsBinary = aggregationsBinary;
         return this;
     }
 
     /**
-     * Sets a raw (xcontent / json) facets.
+     * Sets a raw (xcontent / json) addAggregation.
      */
-    public SearchSourceBuilder facets(XContentBuilder facets) {
-        return facets(facets.bytes());
+    public SearchSourceBuilder aggregations(XContentBuilder aggs) {
+        return aggregations(aggs.bytes());
     }
 
     /**
-     * Sets a raw (xcontent / json) facets.
+     * Set the rescore window size for rescores that don't specify their window.
+     * 
+     * @param defaultRescoreWindowSize
+     * @return
      */
-    public SearchSourceBuilder facets(Map facets) {
+    public SearchSourceBuilder defaultRescoreWindowSize(int defaultRescoreWindowSize) {
+        this.defaultRescoreWindowSize = defaultRescoreWindowSize;
+        return this;
+    }
+
+    /**
+     * Sets a raw (xcontent / json) addAggregation.
+     */
+    public SearchSourceBuilder aggregations(Map aggregations) {
         try {
             XContentBuilder builder = XContentFactory.contentBuilder(Requests.CONTENT_TYPE);
-            builder.map(facets);
-            return facets(builder);
+            builder.map(aggregations);
+            return aggregations(builder);
         } catch (IOException e) {
-            throw new ElasticSearchGenerationException("Failed to generate [" + facets + "]", e);
+            throw new ElasticsearchGenerationException("Failed to generate [" + aggregations + "]", e);
         }
     }
 
@@ -406,6 +444,13 @@ public class SearchSourceBuilder implements ToXContent {
         return this;
     }
 
+    public InnerHitsBuilder innerHitsBuilder() {
+        if (innerHitsBuilder == null) {
+            innerHitsBuilder = new InnerHitsBuilder();
+        }
+        return innerHitsBuilder;
+    }
+
     public SuggestBuilder suggest() {
         if (suggestBuilder == null) {
             suggestBuilder = new SuggestBuilder("suggest");
@@ -413,15 +458,80 @@ public class SearchSourceBuilder implements ToXContent {
         return suggestBuilder;
     }
 
-    public RescoreBuilder rescore() {
-        if (rescoreBuilder == null) {
-            rescoreBuilder = new RescoreBuilder();
+    public SearchSourceBuilder addRescorer(RescoreBuilder rescoreBuilder) {
+        if (rescoreBuilders == null) {
+            rescoreBuilders = new ArrayList<>();
         }
-        return rescoreBuilder;
+        rescoreBuilders.add(rescoreBuilder);
+        return this;
+    }
+
+    public SearchSourceBuilder clearRescorers() {
+        rescoreBuilders = null;
+        return this;
     }
 
     /**
-     * Sets no fields to be loaded, resulting in only id and type to be returned per field.
+     * Indicates whether the response should contain the stored _source for
+     * every hit
+     *
+     * @param fetch
+     * @return
+     */
+    public SearchSourceBuilder fetchSource(boolean fetch) {
+        if (this.fetchSourceContext == null) {
+            this.fetchSourceContext = new FetchSourceContext(fetch);
+        } else {
+            this.fetchSourceContext.fetchSource(fetch);
+        }
+        return this;
+    }
+
+    /**
+     * Indicate that _source should be returned with every hit, with an
+     * "include" and/or "exclude" set which can include simple wildcard
+     * elements.
+     *
+     * @param include
+     *            An optional include (optionally wildcarded) pattern to filter
+     *            the returned _source
+     * @param exclude
+     *            An optional exclude (optionally wildcarded) pattern to filter
+     *            the returned _source
+     */
+    public SearchSourceBuilder fetchSource(@Nullable String include, @Nullable String exclude) {
+        return fetchSource(include == null ? Strings.EMPTY_ARRAY : new String[] { include }, exclude == null ? Strings.EMPTY_ARRAY
+                : new String[] { exclude });
+    }
+
+    /**
+     * Indicate that _source should be returned with every hit, with an
+     * "include" and/or "exclude" set which can include simple wildcard
+     * elements.
+     *
+     * @param includes
+     *            An optional list of include (optionally wildcarded) pattern to
+     *            filter the returned _source
+     * @param excludes
+     *            An optional list of exclude (optionally wildcarded) pattern to
+     *            filter the returned _source
+     */
+    public SearchSourceBuilder fetchSource(@Nullable String[] includes, @Nullable String[] excludes) {
+        fetchSourceContext = new FetchSourceContext(includes, excludes);
+        return this;
+    }
+
+    /**
+     * Indicate how the _source should be fetched.
+     */
+    public SearchSourceBuilder fetchSource(@Nullable FetchSourceContext fetchSourceContext) {
+        this.fetchSourceContext = fetchSourceContext;
+        return this;
+    }
+
+    /**
+     * Sets no fields to be loaded, resulting in only id and type to be returned
+     * per field.
      */
     public SearchSourceBuilder noFields() {
         this.fieldNames = ImmutableList.of();
@@ -429,8 +539,8 @@ public class SearchSourceBuilder implements ToXContent {
     }
 
     /**
-     * Sets the fields to load and return as part of the search request. If none are specified,
-     * the source of the document will be returned.
+     * Sets the fields to load and return as part of the search request. If none
+     * are specified, the source of the document will be returned.
      */
     public SearchSourceBuilder fields(List<String> fields) {
         this.fieldNames = fields;
@@ -438,12 +548,12 @@ public class SearchSourceBuilder implements ToXContent {
     }
 
     /**
-     * Adds the fields to load and return as part of the search request. If none are specified,
-     * the source of the document will be returned.
+     * Adds the fields to load and return as part of the search request. If none
+     * are specified, the source of the document will be returned.
      */
     public SearchSourceBuilder fields(String... fields) {
         if (fieldNames == null) {
-            fieldNames = new ArrayList<String>();
+            fieldNames = new ArrayList<>();
         }
         for (String field : fields) {
             fieldNames.add(field);
@@ -452,22 +562,37 @@ public class SearchSourceBuilder implements ToXContent {
     }
 
     /**
-     * Adds a field to load and return (note, it must be stored) as part of the search request.
-     * If none are specified, the source of the document will be return.
+     * Adds a field to load and return (note, it must be stored) as part of the
+     * search request. If none are specified, the source of the document will be
+     * return.
      */
     public SearchSourceBuilder field(String name) {
         if (fieldNames == null) {
-            fieldNames = new ArrayList<String>();
+            fieldNames = new ArrayList<>();
         }
         fieldNames.add(name);
         return this;
     }
 
     /**
+     * Adds a field to load from the field data cache and return as part of the
+     * search request.
+     */
+    public SearchSourceBuilder fieldDataField(String name) {
+        if (fieldDataFields == null) {
+            fieldDataFields = new ArrayList<>();
+        }
+        fieldDataFields.add(name);
+        return this;
+    }
+
+    /**
      * Adds a script field under the given name with the provided script.
      *
-     * @param name   The name of the field
-     * @param script The script
+     * @param name
+     *            The name of the field
+     * @param script
+     *            The script
      */
     public SearchSourceBuilder scriptField(String name, String script) {
         return scriptField(name, null, script, null);
@@ -476,9 +601,12 @@ public class SearchSourceBuilder implements ToXContent {
     /**
      * Adds a script field.
      *
-     * @param name   The name of the field
-     * @param script The script to execute
-     * @param params The script parameters
+     * @param name
+     *            The name of the field
+     * @param script
+     *            The script to execute
+     * @param params
+     *            The script parameters
      */
     public SearchSourceBuilder scriptField(String name, String script, Map<String, Object> params) {
         return scriptField(name, null, script, params);
@@ -487,11 +615,14 @@ public class SearchSourceBuilder implements ToXContent {
     /**
      * Adds a script field.
      *
-     * @param name   The name of the field
-     * @param lang   The language of the script
-     * @param script The script to execute
-     * @param params The script parameters (can be <tt>null</tt>)
-     * @return
+     * @param name
+     *            The name of the field
+     * @param lang
+     *            The language of the script
+     * @param script
+     *            The script to execute
+     * @param params
+     *            The script parameters (can be <tt>null</tt>)
      */
     public SearchSourceBuilder scriptField(String name, String lang, String script, Map<String, Object> params) {
         if (scriptFields == null) {
@@ -502,46 +633,17 @@ public class SearchSourceBuilder implements ToXContent {
     }
 
     /**
-     * Adds a partial field based on _source, with an "include" and/or "exclude" set which can include simple wildcard
-     * elements.
+     * Sets the boost a specific index will receive when the query is executeed
+     * against it.
      *
-     * @param name    The name of the field
-     * @param include An optional include (optionally wildcarded) pattern from _source
-     * @param exclude An optional exclude (optionally wildcarded) pattern from _source
-     */
-    public SearchSourceBuilder partialField(String name, @Nullable String include, @Nullable String exclude) {
-        if (partialFields == null) {
-            partialFields = Lists.newArrayList();
-        }
-        partialFields.add(new PartialField(name, include, exclude));
-        return this;
-    }
-
-    /**
-     * Adds a partial field based on _source, with an "includes" and/or "excludes set which can include simple wildcard
-     * elements.
-     *
-     * @param name     The name of the field
-     * @param includes An optional list of includes (optionally wildcarded) patterns from _source
-     * @param excludes An optional list of excludes (optionally wildcarded) patterns from _source
-     */
-    public SearchSourceBuilder partialField(String name, @Nullable String[] includes, @Nullable String[] excludes) {
-        if (partialFields == null) {
-            partialFields = Lists.newArrayList();
-        }
-        partialFields.add(new PartialField(name, includes, excludes));
-        return this;
-    }
-
-    /**
-     * Sets the boost a specific index will receive when the query is executeed against it.
-     *
-     * @param index      The index to apply the boost against
-     * @param indexBoost The boost to apply to the index
+     * @param index
+     *            The index to apply the boost against
+     * @param indexBoost
+     *            The boost to apply to the index
      */
     public SearchSourceBuilder indexBoost(String index, float indexBoost) {
         if (this.indexBoost == null) {
-            this.indexBoost = new TObjectFloatHashMap<String>();
+            this.indexBoost = new ObjectFloatOpenHashMap<>();
         }
         this.indexBoost.put(index, indexBoost);
         return this;
@@ -562,7 +664,7 @@ public class SearchSourceBuilder implements ToXContent {
             toXContent(builder, ToXContent.EMPTY_PARAMS);
             return builder.string();
         } catch (Exception e) {
-            return "{ \"error\" : \"" + e.getMessage() + "\"}";
+            return "{ \"error\" : \"" + ExceptionsHelper.detailedMessage(e) + "\"}";
         }
     }
 
@@ -580,11 +682,15 @@ public class SearchSourceBuilder implements ToXContent {
         }
     }
 
-
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject();
+        innerToXContent(builder, params);
+        builder.endObject();
+        return builder;
+    }
 
+    public void innerToXContent(XContentBuilder builder, Params params) throws IOException {
         if (from != -1) {
             builder.field("from", from);
         }
@@ -594,6 +700,10 @@ public class SearchSourceBuilder implements ToXContent {
 
         if (timeoutInMillis != -1) {
             builder.field("timeout", timeoutInMillis);
+        }
+
+        if (terminateAfter != SearchContext.DEFAULT_TERMINATE_AFTER) {
+            builder.field("terminate_after", terminateAfter);
         }
 
         if (queryBuilder != null) {
@@ -609,9 +719,9 @@ public class SearchSourceBuilder implements ToXContent {
             }
         }
 
-        if (filterBuilder != null) {
-            builder.field("filter");
-            filterBuilder.toXContent(builder, params);
+        if (postFilterBuilder != null) {
+            builder.field("post_filter");
+            postFilterBuilder.toXContent(builder, params);
         }
 
         if (filterBinary != null) {
@@ -634,6 +744,17 @@ public class SearchSourceBuilder implements ToXContent {
             builder.field("explain", explain);
         }
 
+        if (fetchSourceContext != null) {
+            if (!fetchSourceContext.fetchSource()) {
+                builder.field("_source", false);
+            } else {
+                builder.startObject("_source");
+                builder.array("includes", fetchSourceContext.includes());
+                builder.array("excludes", fetchSourceContext.excludes());
+                builder.endObject();
+            }
+        }
+
         if (fieldNames != null) {
             if (fieldNames.size() == 1) {
                 builder.field("fields", fieldNames.get(0));
@@ -646,27 +767,12 @@ public class SearchSourceBuilder implements ToXContent {
             }
         }
 
-        if (partialFields != null) {
-            builder.startObject("partial_fields");
-            for (PartialField partialField : partialFields) {
-                builder.startObject(partialField.name());
-                if (partialField.includes() != null) {
-                    if (partialField.includes().length == 1) {
-                        builder.field("include", partialField.includes()[0]);
-                    } else {
-                        builder.field("include", partialField.includes());
-                    }
-                }
-                if (partialField.excludes() != null) {
-                    if (partialField.excludes().length == 1) {
-                        builder.field("exclude", partialField.excludes()[0]);
-                    } else {
-                        builder.field("exclude", partialField.excludes());
-                    }
-                }
-                builder.endObject();
+        if (fieldDataFields != null) {
+            builder.startArray("fielddata_fields");
+            for (String fieldName : fieldDataFields) {
+                builder.value(fieldName);
             }
-            builder.endObject();
+            builder.endArray();
         }
 
         if (scriptFields != null) {
@@ -694,34 +800,39 @@ public class SearchSourceBuilder implements ToXContent {
                 builder.endObject();
             }
             builder.endArray();
-            if (trackScores) {
-                builder.field("track_scores", trackScores);
-            }
+        }
+
+        if (trackScores) {
+            builder.field("track_scores", trackScores);
         }
 
         if (indexBoost != null) {
             builder.startObject("indices_boost");
-            for (TObjectFloatIterator<String> it = indexBoost.iterator(); it.hasNext(); ) {
-                it.advance();
-                builder.field(it.key(), it.value());
+            final boolean[] states = indexBoost.allocated;
+            final Object[] keys = indexBoost.keys;
+            final float[] values = indexBoost.values;
+            for (int i = 0; i < states.length; i++) {
+                if (states[i]) {
+                    builder.field((String) keys[i], values[i]);
+                }
             }
             builder.endObject();
         }
 
-        if (facets != null) {
-            builder.field("facets");
+        if (aggregations != null) {
+            builder.field("aggregations");
             builder.startObject();
-            for (FacetBuilder facet : facets) {
-                facet.toXContent(builder, params);
+            for (AbstractAggregationBuilder aggregation : aggregations) {
+                aggregation.toXContent(builder, params);
             }
             builder.endObject();
         }
 
-        if (facetsBinary != null) {
-            if (XContentFactory.xContentType(facetsBinary) == builder.contentType()) {
-                builder.rawField("facets", facetsBinary);
+        if (aggregationsBinary != null) {
+            if (XContentFactory.xContentType(aggregationsBinary) == builder.contentType()) {
+                builder.rawField("aggregations", aggregationsBinary);
             } else {
-                builder.field("facets_binary", facetsBinary);
+                builder.field("aggregations_binary", aggregationsBinary);
             }
         }
 
@@ -729,12 +840,44 @@ public class SearchSourceBuilder implements ToXContent {
             highlightBuilder.toXContent(builder, params);
         }
 
+        if (innerHitsBuilder != null) {
+            innerHitsBuilder.toXContent(builder, params);
+        }
+
         if (suggestBuilder != null) {
             suggestBuilder.toXContent(builder, params);
         }
 
-        if (rescoreBuilder != null) {
-            rescoreBuilder.toXContent(builder, params);
+        if (rescoreBuilders != null) {
+            // Strip empty rescoreBuilders from the request
+            Iterator<RescoreBuilder> itr = rescoreBuilders.iterator();
+            while (itr.hasNext()) {
+                if (itr.next().isEmpty()) {
+                    itr.remove();
+                }
+            }
+
+            // Now build the request taking care to skip empty lists and only send the object form
+            // if there is just one builder.
+            if (rescoreBuilders.size() == 1) {
+                builder.startObject("rescore");
+                rescoreBuilders.get(0).toXContent(builder, params);
+                if (rescoreBuilders.get(0).windowSize() == null && defaultRescoreWindowSize != null) {
+                    builder.field("window_size", defaultRescoreWindowSize);
+                }
+                builder.endObject();
+            } else if (!rescoreBuilders.isEmpty()) {
+                builder.startArray("rescore");
+                for (RescoreBuilder rescoreBuilder : rescoreBuilders) {
+                    builder.startObject();
+                    rescoreBuilder.toXContent(builder, params);
+                    if (rescoreBuilder.windowSize() == null && defaultRescoreWindowSize != null) {
+                        builder.field("window_size", defaultRescoreWindowSize);
+                    }
+                    builder.endObject();
+                }
+                builder.endArray();
+            }
         }
 
         if (stats != null) {
@@ -744,9 +887,6 @@ public class SearchSourceBuilder implements ToXContent {
             }
             builder.endArray();
         }
-
-        builder.endObject();
-        return builder;
     }
 
     private static class ScriptField {
@@ -776,36 +916,6 @@ public class SearchSourceBuilder implements ToXContent {
 
         public Map<String, Object> params() {
             return params;
-        }
-    }
-
-    private static class PartialField {
-        private final String name;
-        private final String[] includes;
-        private final String[] excludes;
-
-        private PartialField(String name, String[] includes, String[] excludes) {
-            this.name = name;
-            this.includes = includes;
-            this.excludes = excludes;
-        }
-
-        private PartialField(String name, String include, String exclude) {
-            this.name = name;
-            this.includes = include == null ? null : new String[]{include};
-            this.excludes = exclude == null ? null : new String[]{exclude};
-        }
-
-        public String name() {
-            return name;
-        }
-
-        public String[] includes() {
-            return includes;
-        }
-
-        public String[] excludes() {
-            return excludes;
         }
     }
 }

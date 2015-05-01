@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,9 @@
 
 package org.elasticsearch.common.math;
 
-import jsr166y.ThreadLocalRandom;
+import org.elasticsearch.common.SuppressForbidden;
+
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  *
@@ -456,18 +458,22 @@ public class UnboxedMathUtils {
         return ThreadLocalRandom.current().nextLong(l);
     }
 
+    @SuppressForbidden(reason = "Math#abs is trappy")
     public static int abs(Integer a) {
         return Math.abs(a);
     }
 
+    @SuppressForbidden(reason = "Math#abs is trappy")
     public static long abs(Long a) {
         return Math.abs(a);
     }
 
+    @SuppressForbidden(reason = "Math#abs is trappy")
     public static float abs(Float a) {
         return Math.abs(a);
     }
 
+    @SuppressForbidden(reason = "Math#abs is trappy")
     public static double abs(Double a) {
         return Math.abs(a);
     }

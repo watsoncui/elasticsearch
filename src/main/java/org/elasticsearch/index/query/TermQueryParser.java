@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -29,8 +29,6 @@ import org.elasticsearch.index.mapper.MapperService;
 
 import java.io.IOException;
 
-import static org.elasticsearch.index.query.support.QueryParsers.wrapSmartNameQuery;
-
 /**
  *
  */
@@ -53,10 +51,11 @@ public class TermQueryParser implements QueryParser {
 
         XContentParser.Token token = parser.nextToken();
         if (token != XContentParser.Token.FIELD_NAME) {
-            throw new QueryParsingException(parseContext.index(), "[term] query malformed, no field");
+            throw new QueryParsingException(parseContext, "[term] query malformed, no field");
         }
         String fieldName = parser.currentName();
 
+        String queryName = null;
         Object value = null;
         float boost = 1.0f;
         token = parser.nextToken();
@@ -72,8 +71,10 @@ public class TermQueryParser implements QueryParser {
                         value = parser.objectBytes();
                     } else if ("boost".equals(currentFieldName)) {
                         boost = parser.floatValue();
+                    } else if ("_name".equals(currentFieldName)) {
+                        queryName = parser.text();
                     } else {
-                        throw new QueryParsingException(parseContext.index(), "[term] query does not support [" + currentFieldName + "]");
+                        throw new QueryParsingException(parseContext, "[term] query does not support [" + currentFieldName + "]");
                     }
                 }
             }
@@ -85,27 +86,21 @@ public class TermQueryParser implements QueryParser {
         }
 
         if (value == null) {
-            throw new QueryParsingException(parseContext.index(), "No value specified for term query");
+            throw new QueryParsingException(parseContext, "No value specified for term query");
         }
 
         Query query = null;
         MapperService.SmartNameFieldMappers smartNameFieldMappers = parseContext.smartFieldMappers(fieldName);
         if (smartNameFieldMappers != null && smartNameFieldMappers.hasMapper()) {
-            if (smartNameFieldMappers.explicitTypeInNameWithDocMapper()) {
-                String[] previousTypes = QueryParseContext.setTypesWithPrevious(new String[]{smartNameFieldMappers.docMapper().type()});
-                try {
-                    query = smartNameFieldMappers.mapper().termQuery(value, parseContext);
-                } finally {
-                    QueryParseContext.setTypes(previousTypes);
-                }
-            } else {
-                query = smartNameFieldMappers.mapper().termQuery(value, parseContext);
-            }
+            query = smartNameFieldMappers.mapper().termQuery(value, parseContext);
         }
         if (query == null) {
             query = new TermQuery(new Term(fieldName, BytesRefs.toBytesRef(value)));
         }
         query.setBoost(boost);
-        return wrapSmartNameQuery(query, smartNameFieldMappers, parseContext);
+        if (queryName != null) {
+            parseContext.addNamedQuery(queryName, query);
+        }
+        return query;
     }
 }

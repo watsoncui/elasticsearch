@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -52,9 +52,10 @@ public class SpanNearQueryParser implements QueryParser {
         XContentParser parser = parseContext.parser();
 
         float boost = 1.0f;
-        int slop = -1;
+        Integer slop = null;
         boolean inOrder = true;
         boolean collectPayloads = true;
+        String queryName = null;
 
         List<SpanQuery> clauses = newArrayList();
 
@@ -68,12 +69,12 @@ public class SpanNearQueryParser implements QueryParser {
                     while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
                         Query query = parseContext.parseInnerQuery();
                         if (!(query instanceof SpanQuery)) {
-                            throw new QueryParsingException(parseContext.index(), "spanNear [clauses] must be of type span query");
+                            throw new QueryParsingException(parseContext, "spanNear [clauses] must be of type span query");
                         }
                         clauses.add((SpanQuery) query);
                     }
                 } else {
-                    throw new QueryParsingException(parseContext.index(), "[span_near] query does not support [" + currentFieldName + "]");
+                    throw new QueryParsingException(parseContext, "[span_near] query does not support [" + currentFieldName + "]");
                 }
             } else if (token.isValue()) {
                 if ("in_order".equals(currentFieldName) || "inOrder".equals(currentFieldName)) {
@@ -81,25 +82,30 @@ public class SpanNearQueryParser implements QueryParser {
                 } else if ("collect_payloads".equals(currentFieldName) || "collectPayloads".equals(currentFieldName)) {
                     collectPayloads = parser.booleanValue();
                 } else if ("slop".equals(currentFieldName)) {
-                    slop = parser.intValue();
+                    slop = Integer.valueOf(parser.intValue());
                 } else if ("boost".equals(currentFieldName)) {
                     boost = parser.floatValue();
+                } else if ("_name".equals(currentFieldName)) {
+                    queryName = parser.text();
                 } else {
-                    throw new QueryParsingException(parseContext.index(), "[span_near] query does not support [" + currentFieldName + "]");
+                    throw new QueryParsingException(parseContext, "[span_near] query does not support [" + currentFieldName + "]");
                 }
             } else {
-                throw new QueryParsingException(parseContext.index(), "[span_near] query does not support [" + currentFieldName + "]");
+                throw new QueryParsingException(parseContext, "[span_near] query does not support [" + currentFieldName + "]");
             }
         }
         if (clauses.isEmpty()) {
-            throw new QueryParsingException(parseContext.index(), "span_near must include [clauses]");
+            throw new QueryParsingException(parseContext, "span_near must include [clauses]");
         }
-        if (slop == -1) {
-            throw new QueryParsingException(parseContext.index(), "span_near must include [slop]");
+        if (slop == null) {
+            throw new QueryParsingException(parseContext, "span_near must include [slop]");
         }
 
-        SpanNearQuery query = new SpanNearQuery(clauses.toArray(new SpanQuery[clauses.size()]), slop, inOrder, collectPayloads);
+        SpanNearQuery query = new SpanNearQuery(clauses.toArray(new SpanQuery[clauses.size()]), slop.intValue(), inOrder, collectPayloads);
         query.setBoost(boost);
+        if (queryName != null) {
+            parseContext.addNamedQuery(queryName, query);
+        }
         return query;
     }
 }

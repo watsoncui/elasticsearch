@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,10 +20,10 @@
 package org.elasticsearch.action.mlt;
 
 import org.apache.lucene.document.Field;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.ElasticSearchIllegalStateException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.get.GetRequest;
 import org.elasticsearch.action.get.GetResponse;
@@ -31,61 +31,57 @@ import org.elasticsearch.action.get.TransportGetAction;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.TransportSearchAction;
-import org.elasticsearch.action.support.TransportAction;
+import org.elasticsearch.action.support.ActionFilters;
+import org.elasticsearch.action.support.HandledTransportAction;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.routing.MutableShardRouting;
-import org.elasticsearch.cluster.routing.RoutingNode;
 import org.elasticsearch.cluster.routing.ShardIterator;
 import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.index.engine.DocumentMissingException;
 import org.elasticsearch.index.get.GetField;
 import org.elasticsearch.index.mapper.*;
 import org.elasticsearch.index.mapper.internal.SourceFieldMapper;
 import org.elasticsearch.index.query.BoolQueryBuilder;
-import org.elasticsearch.index.query.MoreLikeThisFieldQueryBuilder;
+import org.elasticsearch.index.query.MoreLikeThisQueryBuilder;
 import org.elasticsearch.indices.IndicesService;
+import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.elasticsearch.transport.*;
+import org.elasticsearch.transport.TransportException;
+import org.elasticsearch.transport.TransportResponseHandler;
+import org.elasticsearch.transport.TransportService;
 
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.Set;
 
 import static com.google.common.collect.Sets.newHashSet;
-import static org.elasticsearch.client.Requests.getRequest;
-import static org.elasticsearch.client.Requests.searchRequest;
 import static org.elasticsearch.index.query.QueryBuilders.*;
 import static org.elasticsearch.search.builder.SearchSourceBuilder.searchSource;
 
 /**
  * The more like this action.
  */
-public class TransportMoreLikeThisAction extends TransportAction<MoreLikeThisRequest, SearchResponse> {
+public class TransportMoreLikeThisAction extends HandledTransportAction<MoreLikeThisRequest, SearchResponse> {
 
     private final TransportSearchAction searchAction;
-
     private final TransportGetAction getAction;
-
     private final IndicesService indicesService;
-
     private final ClusterService clusterService;
-
     private final TransportService transportService;
 
     @Inject
     public TransportMoreLikeThisAction(Settings settings, ThreadPool threadPool, TransportSearchAction searchAction, TransportGetAction getAction,
-                                       ClusterService clusterService, IndicesService indicesService, TransportService transportService) {
-        super(settings, threadPool);
+                                       ClusterService clusterService, IndicesService indicesService, TransportService transportService, ActionFilters actionFilters) {
+        super(settings, MoreLikeThisAction.NAME, threadPool, transportService, actionFilters, MoreLikeThisRequest.class);
         this.searchAction = searchAction;
         this.getAction = getAction;
         this.indicesService = indicesService;
         this.clusterService = clusterService;
         this.transportService = transportService;
-
-        transportService.registerHandler(MoreLikeThisAction.NAME, new TransportHandler());
     }
 
     @Override
@@ -93,22 +89,22 @@ public class TransportMoreLikeThisAction extends TransportAction<MoreLikeThisReq
         // update to actual index name
         ClusterState clusterState = clusterService.state();
         // update to the concrete index
-        final String concreteIndex = clusterState.metaData().concreteIndex(request.index());
+        final String concreteIndex = clusterState.metaData().concreteSingleIndex(request.index(), request.indicesOptions());
 
-        RoutingNode routingNode = clusterState.getRoutingNodes().nodesToShards().get(clusterService.localNode().getId());
+        Iterable<MutableShardRouting> routingNode = clusterState.getRoutingNodes().routingNodeIter(clusterService.localNode().getId());
         if (routingNode == null) {
-            redirect(request, listener, clusterState);
+            redirect(request, concreteIndex, listener, clusterState);
             return;
         }
         boolean hasIndexLocally = false;
-        for (MutableShardRouting shardRouting : routingNode.shards()) {
+        for (MutableShardRouting shardRouting : routingNode) {
             if (concreteIndex.equals(shardRouting.index())) {
                 hasIndexLocally = true;
                 break;
             }
         }
         if (!hasIndexLocally) {
-            redirect(request, listener, clusterState);
+            redirect(request, concreteIndex, listener, clusterState);
             return;
         }
         Set<String> getFields = newHashSet();
@@ -118,7 +114,7 @@ public class TransportMoreLikeThisAction extends TransportAction<MoreLikeThisReq
         // add the source, in case we need to parse it to get fields
         getFields.add(SourceFieldMapper.NAME);
 
-        GetRequest getRequest = getRequest(concreteIndex)
+        GetRequest getRequest = new GetRequest(request, request.index())
                 .fields(getFields.toArray(new String[getFields.size()]))
                 .type(request.type())
                 .id(request.id())
@@ -126,26 +122,25 @@ public class TransportMoreLikeThisAction extends TransportAction<MoreLikeThisReq
                 .listenerThreaded(true)
                 .operationThreaded(true);
 
-        request.beforeLocalFork();
         getAction.execute(getRequest, new ActionListener<GetResponse>() {
             @Override
             public void onResponse(GetResponse getResponse) {
                 if (!getResponse.isExists()) {
-                    listener.onFailure(new ElasticSearchException("document missing"));
+                    listener.onFailure(new DocumentMissingException(null, request.type(), request.id()));
                     return;
                 }
                 final BoolQueryBuilder boolBuilder = boolQuery();
                 try {
                     final DocumentMapper docMapper = indicesService.indexServiceSafe(concreteIndex).mapperService().documentMapper(request.type());
                     if (docMapper == null) {
-                        throw new ElasticSearchException("No DocumentMapper found for type [" + request.type() + "]");
+                        throw new ElasticsearchException("No DocumentMapper found for type [" + request.type() + "]");
                     }
                     final Set<String> fields = newHashSet();
                     if (request.fields() != null) {
                         for (String field : request.fields()) {
-                            FieldMappers fieldMappers = docMapper.mappers().smartName(field);
-                            if (fieldMappers != null) {
-                                fields.add(fieldMappers.mapper().names().indexName());
+                            FieldMapper fieldMapper = docMapper.mappers().smartNameFieldMapper(field);
+                            if (fieldMapper != null) {
+                                fields.add(fieldMapper.names().indexName());
                             } else {
                                 fields.add(field);
                             }
@@ -159,7 +154,7 @@ public class TransportMoreLikeThisAction extends TransportAction<MoreLikeThisReq
                             GetField getField = getResponse.getField(field);
                             if (getField != null) {
                                 for (Object value : getField.getValues()) {
-                                    addMoreLikeThis(request, boolBuilder, getField.getName(), value.toString());
+                                    addMoreLikeThis(request, boolBuilder, getField.getName(), value.toString(), true);
                                 }
                                 it.remove();
                             }
@@ -175,14 +170,17 @@ public class TransportMoreLikeThisAction extends TransportAction<MoreLikeThisReq
 
                     if (!boolBuilder.hasClauses()) {
                         // no field added, fail
-                        listener.onFailure(new ElasticSearchException("No fields found to fetch the 'likeText' from"));
+                        listener.onFailure(new ElasticsearchException("No fields found to fetch the 'likeText' from"));
                         return;
                     }
 
                     // exclude myself
-                    Term uidTerm = docMapper.uidMapper().term(request.type(), request.id());
-                    boolBuilder.mustNot(termQuery(uidTerm.field(), uidTerm.text()));
-                } catch (Exception e) {
+                    if (!request.include()) {
+                        Term uidTerm = docMapper.uidMapper().term(request.type(), request.id());
+                        boolBuilder.mustNot(termQuery(uidTerm.field(), uidTerm.text()));
+                        boolBuilder.adjustPureNegative(false);
+                    }
+                } catch (Throwable e) {
                     listener.onFailure(e);
                     return;
                 }
@@ -195,22 +193,26 @@ public class TransportMoreLikeThisAction extends TransportAction<MoreLikeThisReq
                 if (searchTypes == null) {
                     searchTypes = new String[]{request.type()};
                 }
-                int size = request.searchSize() != 0 ? request.searchSize() : 10;
-                int from = request.searchFrom() != 0 ? request.searchFrom() : 0;
-                SearchRequest searchRequest = searchRequest(searchIndices)
+
+                SearchRequest searchRequest = new SearchRequest(request).indices(searchIndices)
                         .types(searchTypes)
                         .searchType(request.searchType())
                         .scroll(request.searchScroll())
-                        .extraSource(searchSource()
-                                .query(boolBuilder)
-                                .from(from)
-                                .size(size)
-                        )
                         .listenerThreaded(request.listenerThreaded());
 
-                if (request.searchSource() != null) {
-                    searchRequest.source(request.searchSource(), request.searchSourceUnsafe());
+                SearchSourceBuilder extraSource = searchSource().query(boolBuilder);
+                if (request.searchFrom() != 0) {
+                    extraSource.from(request.searchFrom());
                 }
+                if (request.searchSize() != 0) {
+                    extraSource.size(request.searchSize());
+                }
+                searchRequest.extraSource(extraSource);
+
+                if (request.searchSource() != null) {
+                    searchRequest.source(request.searchSource());
+                }
+
                 searchAction.execute(searchRequest, new ActionListener<SearchResponse>() {
                     @Override
                     public void onResponse(SearchResponse response) {
@@ -233,11 +235,11 @@ public class TransportMoreLikeThisAction extends TransportAction<MoreLikeThisReq
     }
 
     // Redirects the request to a data node, that has the index meta data locally available.
-    private void redirect(MoreLikeThisRequest request, final ActionListener<SearchResponse> listener, ClusterState clusterState) {
-        ShardIterator shardIterator = clusterService.operationRouting().getShards(clusterState, request.index(), request.type(), request.id(), null, null);
-        ShardRouting shardRouting = shardIterator.firstOrNull();
+    private void redirect(MoreLikeThisRequest request, String concreteIndex, final ActionListener<SearchResponse> listener, ClusterState clusterState) {
+        ShardIterator shardIterator = clusterService.operationRouting().getShards(clusterState, concreteIndex, request.type(), request.id(), request.routing(), null);
+        ShardRouting shardRouting = shardIterator.nextOrNull();
         if (shardRouting == null) {
-            throw new ElasticSearchException("No shards for index " + request.index());
+            throw new ElasticsearchException("No shards for index " + request.index());
         }
         String nodeId = shardRouting.currentNodeId();
         DiscoveryNode discoveryNode = clusterState.nodes().get(nodeId);
@@ -272,6 +274,9 @@ public class TransportMoreLikeThisAction extends TransportAction<MoreLikeThisReq
         docMapper.parse(SourceToParse.source(getResponse.getSourceAsBytesRef()).type(request.type()).id(request.id()), new DocumentMapper.ParseListenerAdapter() {
             @Override
             public boolean beforeFieldAdded(FieldMapper fieldMapper, Field field, Object parseContext) {
+                if (field.fieldType().indexOptions() == IndexOptions.NONE) {
+                    return false;
+                }
                 if (fieldMapper instanceof InternalMapper) {
                     return true;
                 }
@@ -281,7 +286,7 @@ public class TransportMoreLikeThisAction extends TransportAction<MoreLikeThisReq
                 }
 
                 if (fields.isEmpty() || fields.contains(field.name())) {
-                    addMoreLikeThis(request, boolBuilder, fieldMapper, field);
+                    addMoreLikeThis(request, boolBuilder, fieldMapper, field, !fields.isEmpty());
                 }
 
                 return false;
@@ -297,64 +302,27 @@ public class TransportMoreLikeThisAction extends TransportAction<MoreLikeThisReq
         } else if (field.numericValue() != null) {
             return field.numericValue();
         } else {
-            throw new ElasticSearchIllegalStateException("Field should have either a string, numeric or binary value");
+            throw new IllegalStateException("Field should have either a string, numeric or binary value");
         }
     }
 
-    private void addMoreLikeThis(MoreLikeThisRequest request, BoolQueryBuilder boolBuilder, FieldMapper fieldMapper, Field field) {
-        addMoreLikeThis(request, boolBuilder, field.name(), fieldMapper.value(convertField(field)).toString());
+    private void addMoreLikeThis(MoreLikeThisRequest request, BoolQueryBuilder boolBuilder, FieldMapper fieldMapper, Field field, boolean failOnUnsupportedField) {
+        addMoreLikeThis(request, boolBuilder, field.name(), fieldMapper.value(convertField(field)).toString(), failOnUnsupportedField);
     }
 
-    private void addMoreLikeThis(MoreLikeThisRequest request, BoolQueryBuilder boolBuilder, String fieldName, String likeText) {
-        MoreLikeThisFieldQueryBuilder mlt = moreLikeThisFieldQuery(fieldName)
+    private void addMoreLikeThis(MoreLikeThisRequest request, BoolQueryBuilder boolBuilder, String fieldName, String likeText, boolean failOnUnsupportedField) {
+        MoreLikeThisQueryBuilder mlt = moreLikeThisQuery(fieldName)
                 .likeText(likeText)
-                .percentTermsToMatch(request.percentTermsToMatch())
+                .minimumShouldMatch(request.minimumShouldMatch())
                 .boostTerms(request.boostTerms())
                 .minDocFreq(request.minDocFreq())
                 .maxDocFreq(request.maxDocFreq())
-                .minWordLen(request.minWordLen())
-                .maxWordLen(request.maxWordLen())
+                .minWordLength(request.minWordLength())
+                .maxWordLength(request.maxWordLength())
                 .minTermFreq(request.minTermFreq())
                 .maxQueryTerms(request.maxQueryTerms())
-                .stopWords(request.stopWords());
+                .stopWords(request.stopWords())
+                .failOnUnsupportedField(failOnUnsupportedField);
         boolBuilder.should(mlt);
-    }
-
-    private class TransportHandler extends BaseTransportRequestHandler<MoreLikeThisRequest> {
-
-        @Override
-        public MoreLikeThisRequest newInstance() {
-            return new MoreLikeThisRequest();
-        }
-
-        @Override
-        public void messageReceived(MoreLikeThisRequest request, final TransportChannel channel) throws Exception {
-            // no need to have a threaded listener since we just send back a response
-            request.listenerThreaded(false);
-            execute(request, new ActionListener<SearchResponse>() {
-                @Override
-                public void onResponse(SearchResponse result) {
-                    try {
-                        channel.sendResponse(result);
-                    } catch (Exception e) {
-                        onFailure(e);
-                    }
-                }
-
-                @Override
-                public void onFailure(Throwable e) {
-                    try {
-                        channel.sendResponse(e);
-                    } catch (Exception e1) {
-                        logger.warn("Failed to send response for get", e1);
-                    }
-                }
-            });
-        }
-
-        @Override
-        public String executor() {
-            return ThreadPool.Names.SAME;
-        }
     }
 }

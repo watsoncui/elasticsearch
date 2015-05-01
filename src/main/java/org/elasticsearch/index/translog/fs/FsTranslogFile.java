@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,39 +19,42 @@
 
 package org.elasticsearch.index.translog.fs;
 
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.translog.Translog;
 import org.elasticsearch.index.translog.TranslogException;
+import org.elasticsearch.index.translog.TranslogStream;
 
+import java.io.Closeable;
 import java.io.IOException;
+import java.nio.file.Path;
 
-public interface FsTranslogFile {
+public interface FsTranslogFile extends Closeable {
 
     public static enum Type {
 
         SIMPLE() {
             @Override
-            public FsTranslogFile create(ShardId shardId, long id, RafReference raf, int bufferSize) throws IOException {
-                return new SimpleFsTranslogFile(shardId, id, raf);
+            public FsTranslogFile create(ShardId shardId, long id, ChannelReference channelReference, int bufferSize) throws IOException {
+                return new SimpleFsTranslogFile(shardId, id, channelReference);
             }
         },
         BUFFERED() {
             @Override
-            public FsTranslogFile create(ShardId shardId, long id, RafReference raf, int bufferSize) throws IOException {
-                return new BufferingFsTranslogFile(shardId, id, raf, bufferSize);
+            public FsTranslogFile create(ShardId shardId, long id, ChannelReference channelReference, int bufferSize) throws IOException {
+                return new BufferingFsTranslogFile(shardId, id, channelReference, bufferSize);
             }
         };
 
-        public abstract FsTranslogFile create(ShardId shardId, long id, RafReference raf, int bufferSize) throws IOException;
+        public abstract FsTranslogFile create(ShardId shardId, long id, ChannelReference raf, int bufferSize) throws IOException;
 
-        public static Type fromString(String type) throws ElasticSearchIllegalArgumentException {
+        public static Type fromString(String type) {
             if (SIMPLE.name().equalsIgnoreCase(type)) {
                 return SIMPLE;
             } else if (BUFFERED.name().equalsIgnoreCase(type)) {
                 return BUFFERED;
             }
-            throw new ElasticSearchIllegalArgumentException("No translog fs type [" + type + "]");
+            throw new IllegalArgumentException("No translog fs type [" + type + "]");
         }
     }
 
@@ -61,17 +64,23 @@ public interface FsTranslogFile {
 
     long translogSizeInBytes();
 
-    Translog.Location add(byte[] data, int from, int size) throws IOException;
+    Translog.Location add(BytesReference data) throws IOException;
 
     byte[] read(Translog.Location location) throws IOException;
-
-    void close(boolean delete) throws TranslogException;
 
     FsChannelSnapshot snapshot() throws TranslogException;
 
     void reuse(FsTranslogFile other) throws TranslogException;
 
-    void sync();
+    void updateBufferSize(int bufferSize) throws TranslogException;
+
+    void sync() throws IOException;
 
     boolean syncNeeded();
+
+    TranslogStream getStream();
+
+    public Path getPath();
+
+    public boolean closed();
 }

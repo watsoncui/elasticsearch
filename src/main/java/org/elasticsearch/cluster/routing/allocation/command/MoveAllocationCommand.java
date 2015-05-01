@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,13 +19,13 @@
 
 package org.elasticsearch.cluster.routing.allocation.command;
 
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
-import org.elasticsearch.ElasticSearchParseException;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.routing.MutableShardRouting;
 import org.elasticsearch.cluster.routing.RoutingNode;
 import org.elasticsearch.cluster.routing.ShardRoutingState;
+import org.elasticsearch.cluster.routing.allocation.RerouteExplanation;
 import org.elasticsearch.cluster.routing.allocation.RoutingAllocation;
 import org.elasticsearch.cluster.routing.allocation.decider.Decision;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -82,31 +82,35 @@ public class MoveAllocationCommand implements AllocationCommand {
                     } else if ("to_node".equals(currentFieldName) || "toNode".equals(currentFieldName)) {
                         toNode = parser.text();
                     } else {
-                        throw new ElasticSearchParseException("[move] command does not support field [" + currentFieldName + "]");
+                        throw new ElasticsearchParseException("[move] command does not support field [" + currentFieldName + "]");
                     }
                 } else {
-                    throw new ElasticSearchParseException("[move] command does not support complex json tokens [" + token + "]");
+                    throw new ElasticsearchParseException("[move] command does not support complex json tokens [" + token + "]");
                 }
             }
             if (index == null) {
-                throw new ElasticSearchParseException("[move] command missing the index parameter");
+                throw new ElasticsearchParseException("[move] command missing the index parameter");
             }
             if (shardId == -1) {
-                throw new ElasticSearchParseException("[move] command missing the shard parameter");
+                throw new ElasticsearchParseException("[move] command missing the shard parameter");
             }
             if (fromNode == null) {
-                throw new ElasticSearchParseException("[move] command missing the from_node parameter");
+                throw new ElasticsearchParseException("[move] command missing the from_node parameter");
             }
             if (toNode == null) {
-                throw new ElasticSearchParseException("[move] command missing the to_node parameter");
+                throw new ElasticsearchParseException("[move] command missing the to_node parameter");
             }
             return new MoveAllocationCommand(new ShardId(index, shardId), fromNode, toNode);
         }
 
         @Override
-        public void toXContent(MoveAllocationCommand command, XContentBuilder builder, ToXContent.Params params) throws IOException {
-            builder.startObject();
-            builder.field("index", command.shardId().index());
+        public void toXContent(MoveAllocationCommand command, XContentBuilder builder, ToXContent.Params params, String objectName) throws IOException {
+            if (objectName == null) {
+                builder.startObject();
+            } else {
+                builder.startObject(objectName);
+            }
+            builder.field("index", command.shardId().index().name());
             builder.field("shard", command.shardId().id());
             builder.field("from_node", command.fromNode());
             builder.field("to_node", command.toNode());
@@ -142,9 +146,10 @@ public class MoveAllocationCommand implements AllocationCommand {
     }
 
     @Override
-    public void execute(RoutingAllocation allocation) throws ElasticSearchException {
+    public RerouteExplanation execute(RoutingAllocation allocation, boolean explain) {
         DiscoveryNode fromDiscoNode = allocation.nodes().resolveNode(fromNode);
         DiscoveryNode toDiscoNode = allocation.nodes().resolveNode(toNode);
+        Decision decision = null;
 
         boolean found = false;
         for (MutableShardRouting shardRouting : allocation.routingNodes().node(fromDiscoNode.id())) {
@@ -155,27 +160,40 @@ public class MoveAllocationCommand implements AllocationCommand {
 
             // TODO we can possibly support also relocating cases, where we cancel relocation and move...
             if (!shardRouting.started()) {
-                throw new ElasticSearchIllegalArgumentException("[move_allocation] can't move " + shardId + ", shard is not started (state = " + shardRouting.state() + "]");
+                if (explain) {
+                    return new RerouteExplanation(this, allocation.decision(Decision.NO, "move_allocation_command",
+                            "shard " + shardId + " has not been started"));
+                }
+                throw new IllegalArgumentException("[move_allocation] can't move " + shardId +
+                        ", shard is not started (state = " + shardRouting.state() + "]");
             }
 
             RoutingNode toRoutingNode = allocation.routingNodes().node(toDiscoNode.id());
-            Decision decision = allocation.deciders().canAllocate(shardRouting, toRoutingNode, allocation);
+            decision = allocation.deciders().canAllocate(shardRouting, toRoutingNode, allocation);
             if (decision.type() == Decision.Type.NO) {
-                throw new ElasticSearchIllegalArgumentException("[move_allocation] can't move " + shardId + ", from " + fromDiscoNode + ", to " + toDiscoNode + ", since its not allowed, reason: " + decision);
+                if (explain) {
+                    return new RerouteExplanation(this, decision);
+                }
+                throw new IllegalArgumentException("[move_allocation] can't move " + shardId + ", from " + fromDiscoNode + ", to " + toDiscoNode + ", since its not allowed, reason: " + decision);
             }
             if (decision.type() == Decision.Type.THROTTLE) {
                 // its being throttled, maybe have a flag to take it into account and fail? for now, just do it since the "user" wants it...
             }
 
-            toRoutingNode.add(new MutableShardRouting(shardRouting.index(), shardRouting.id(),
-                    toRoutingNode.nodeId(), shardRouting.currentNodeId(),
-                    shardRouting.primary(), ShardRoutingState.INITIALIZING, shardRouting.version() + 1));
+            allocation.routingNodes().assign(new MutableShardRouting(shardRouting.index(), shardRouting.id(),
+                    toRoutingNode.nodeId(), shardRouting.currentNodeId(), shardRouting.restoreSource(),
+                    shardRouting.primary(), ShardRoutingState.INITIALIZING, shardRouting.version() + 1), toRoutingNode.nodeId());
 
-            shardRouting.relocate(toRoutingNode.nodeId());
+            allocation.routingNodes().relocate(shardRouting, toRoutingNode.nodeId());
         }
 
         if (!found) {
-            throw new ElasticSearchIllegalArgumentException("[move_allocation] can't move " + shardId + ", failed to find it on node " + fromDiscoNode);
+            if (explain) {
+                return new RerouteExplanation(this, allocation.decision(Decision.NO,
+                        "move_allocation_command", "shard " + shardId + " not found"));
+            }
+            throw new IllegalArgumentException("[move_allocation] can't move " + shardId + ", failed to find it on node " + fromDiscoNode);
         }
+        return new RerouteExplanation(this, decision);
     }
 }

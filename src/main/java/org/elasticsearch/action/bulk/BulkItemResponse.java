@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,20 +19,21 @@
 
 package org.elasticsearch.action.bulk;
 
-import org.elasticsearch.action.ActionResponse;
+import org.elasticsearch.ExceptionsHelper;
+import org.elasticsearch.action.ActionWriteResponse;
 import org.elasticsearch.action.delete.DeleteResponse;
 import org.elasticsearch.action.index.IndexResponse;
+import org.elasticsearch.action.update.UpdateResponse;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
+import org.elasticsearch.rest.RestStatus;
 
 import java.io.IOException;
 
 /**
  * Represents a single item response for an action executed as part of the bulk API. Holds the index/type/id
  * of the relevant action, and if it has failed or not (with the failure message incase it failed).
- *
- *
  */
 public class BulkItemResponse implements Streamable {
 
@@ -44,12 +45,23 @@ public class BulkItemResponse implements Streamable {
         private final String type;
         private final String id;
         private final String message;
+        private final RestStatus status;
 
-        public Failure(String index, String type, String id, String message) {
+        public Failure(String index, String type, String id, Throwable t) {
+            this.index = index;
+            this.type = type;
+            this.id = id;
+            this.message = t.toString();
+            this.status = ExceptionsHelper.status(t);
+        }
+
+
+        public Failure(String index, String type, String id, String message, RestStatus status) {
             this.index = index;
             this.type = type;
             this.id = id;
             this.message = message;
+            this.status = status;
         }
 
         /**
@@ -79,13 +91,20 @@ public class BulkItemResponse implements Streamable {
         public String getMessage() {
             return this.message;
         }
+
+        /**
+         * The rest status.
+         */
+        public RestStatus getStatus() {
+            return this.status;
+        }
     }
 
     private int id;
 
     private String opType;
 
-    private ActionResponse response;
+    private ActionWriteResponse response;
 
     private Failure failure;
 
@@ -93,7 +112,7 @@ public class BulkItemResponse implements Streamable {
 
     }
 
-    public BulkItemResponse(int id, String opType, ActionResponse response) {
+    public BulkItemResponse(int id, String opType, ActionWriteResponse response) {
         this.id = id;
         this.opType = opType;
         this.response = response;
@@ -130,6 +149,8 @@ public class BulkItemResponse implements Streamable {
             return ((IndexResponse) response).getIndex();
         } else if (response instanceof DeleteResponse) {
             return ((DeleteResponse) response).getIndex();
+        } else if (response instanceof UpdateResponse) {
+            return ((UpdateResponse) response).getIndex();
         }
         return null;
     }
@@ -145,6 +166,8 @@ public class BulkItemResponse implements Streamable {
             return ((IndexResponse) response).getType();
         } else if (response instanceof DeleteResponse) {
             return ((DeleteResponse) response).getType();
+        } else if (response instanceof UpdateResponse) {
+            return ((UpdateResponse) response).getType();
         }
         return null;
     }
@@ -160,6 +183,8 @@ public class BulkItemResponse implements Streamable {
             return ((IndexResponse) response).getId();
         } else if (response instanceof DeleteResponse) {
             return ((DeleteResponse) response).getId();
+        } else if (response instanceof UpdateResponse) {
+            return ((UpdateResponse) response).getId();
         }
         return null;
     }
@@ -175,6 +200,8 @@ public class BulkItemResponse implements Streamable {
             return ((IndexResponse) response).getVersion();
         } else if (response instanceof DeleteResponse) {
             return ((DeleteResponse) response).getVersion();
+        } else if (response instanceof UpdateResponse) {
+            return ((UpdateResponse) response).getVersion();
         }
         return -1;
     }
@@ -183,7 +210,7 @@ public class BulkItemResponse implements Streamable {
      * The actual response ({@link IndexResponse} or {@link DeleteResponse}). <tt>null</tt> in
      * case of failure.
      */
-    public <T extends ActionResponse> T getResponse() {
+    public <T extends ActionWriteResponse> T getResponse() {
         return (T) response;
     }
 
@@ -229,10 +256,18 @@ public class BulkItemResponse implements Streamable {
         } else if (type == 1) {
             response = new DeleteResponse();
             response.readFrom(in);
+        } else if (type == 3) { // make 3 instead of 2, because 2 is already in use for 'no responses'
+            response = new UpdateResponse();
+            response.readFrom(in);
         }
 
         if (in.readBoolean()) {
-            failure = new Failure(in.readString(), in.readString(), in.readString(), in.readString());
+            String fIndex = in.readString();
+            String fType = in.readString();
+            String fId = in.readOptionalString();
+            String fMessage = in.readString();
+            RestStatus status = RestStatus.readFrom(in);
+            failure = new Failure(fIndex, fType, fId, fMessage, status);
         }
     }
 
@@ -240,6 +275,7 @@ public class BulkItemResponse implements Streamable {
     public void writeTo(StreamOutput out) throws IOException {
         out.writeVInt(id);
         out.writeString(opType);
+
         if (response == null) {
             out.writeByte((byte) 2);
         } else {
@@ -247,6 +283,8 @@ public class BulkItemResponse implements Streamable {
                 out.writeByte((byte) 0);
             } else if (response instanceof DeleteResponse) {
                 out.writeByte((byte) 1);
+            } else if (response instanceof UpdateResponse) {
+                out.writeByte((byte) 3); // make 3 instead of 2, because 2 is already in use for 'no responses'
             }
             response.writeTo(out);
         }
@@ -256,8 +294,9 @@ public class BulkItemResponse implements Streamable {
             out.writeBoolean(true);
             out.writeString(failure.getIndex());
             out.writeString(failure.getType());
-            out.writeString(failure.getId());
+            out.writeOptionalString(failure.getId());
             out.writeString(failure.getMessage());
+            RestStatus.writeTo(out, failure.getStatus());
         }
     }
 }

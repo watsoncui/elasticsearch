@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -33,13 +33,15 @@ class RecoveryPrepareForTranslogOperationsRequest extends TransportRequest {
 
     private long recoveryId;
     private ShardId shardId;
+    private int totalTranslogOps = RecoveryState.Translog.UNKNOWN;
 
     RecoveryPrepareForTranslogOperationsRequest() {
     }
 
-    RecoveryPrepareForTranslogOperationsRequest(long recoveryId, ShardId shardId) {
+    RecoveryPrepareForTranslogOperationsRequest(long recoveryId, ShardId shardId, int totalTranslogOps) {
         this.recoveryId = recoveryId;
         this.shardId = shardId;
+        this.totalTranslogOps = totalTranslogOps;
     }
 
     public long recoveryId() {
@@ -50,11 +52,16 @@ class RecoveryPrepareForTranslogOperationsRequest extends TransportRequest {
         return shardId;
     }
 
+    public int totalTranslogOps() {
+        return totalTranslogOps;
+    }
+
     @Override
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
         recoveryId = in.readLong();
         shardId = ShardId.readShardId(in);
+        totalTranslogOps = in.readVInt();
     }
 
     @Override
@@ -62,5 +69,6 @@ class RecoveryPrepareForTranslogOperationsRequest extends TransportRequest {
         super.writeTo(out);
         out.writeLong(recoveryId);
         shardId.writeTo(out);
+        out.writeVInt(totalTranslogOps);
     }
 }

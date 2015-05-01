@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,7 +20,6 @@
 package org.elasticsearch.common.compress;
 
 import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.common.Unicode;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -79,7 +78,7 @@ public class CompressedString implements Streamable {
     }
 
     public CompressedString(String str) throws IOException {
-        BytesRef result = Unicode.unsafeFromStringAsUtf8(str);
+        BytesRef result = new BytesRef(str);
         this.bytes = CompressorFactory.defaultCompressor().compress(result.bytes, result.offset, result.length);
     }
 
@@ -93,7 +92,7 @@ public class CompressedString implements Streamable {
     }
 
     public String string() throws IOException {
-        return Unicode.fromBytes(uncompressed());
+        return new BytesRef(uncompressed()).utf8ToString();
     }
 
     public static CompressedString readCompressedString(StreamInput in) throws IOException {

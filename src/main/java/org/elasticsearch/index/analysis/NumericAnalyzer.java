@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,7 +22,6 @@ package org.elasticsearch.index.analysis;
 import org.apache.lucene.analysis.Analyzer;
 
 import java.io.IOException;
-import java.io.Reader;
 
 /**
  *
@@ -30,15 +29,15 @@ import java.io.Reader;
 public abstract class NumericAnalyzer<T extends NumericTokenizer> extends Analyzer {
 
     @Override
-    protected TokenStreamComponents createComponents(String fieldName, Reader reader) {
+    protected TokenStreamComponents createComponents(String fieldName) {
         try {
             // LUCENE 4 UPGRADE: in reusableTokenStream the buffer size was char[120]
             // Not sure if this is intentional or not
-            return new TokenStreamComponents(createNumericTokenizer(reader, new char[32]));
+            return new TokenStreamComponents(createNumericTokenizer(new char[32]));
         } catch (IOException e) {
             throw new RuntimeException("Failed to create numeric tokenizer", e);
         }
     }
 
-    protected abstract T createNumericTokenizer(Reader reader, char[] buffer) throws IOException;
+    protected abstract T createNumericTokenizer(char[] buffer) throws IOException;
 }

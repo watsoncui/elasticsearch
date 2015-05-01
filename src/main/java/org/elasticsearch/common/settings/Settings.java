@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,10 +23,13 @@ import com.google.common.collect.ImmutableMap;
 import org.elasticsearch.Version;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.common.unit.RatioValue;
 import org.elasticsearch.common.unit.SizeValue;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.common.xcontent.ToXContent;
 
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Immutable settings allowing to control the configuration.
@@ -36,25 +39,17 @@ import java.util.Map;
  *
  * @see ImmutableSettings
  */
-public interface Settings {
-
-    /**
-     * Component settings for a specific component. Returns all the settings for the given class, where the
-     * FQN of the class is used, without the <tt>org.elasticsearch<tt> prefix. If there is no <tt>org.elasticsearch</tt>
-     * prefix, then the prefix used is the first part of the package name (<tt>org</tt> / <tt>com</tt> / ...)
-     */
-    Settings getComponentSettings(Class component);
-
-    /**
-     * Component settings for a specific component. Returns all the settings for the given class, where the
-     * FQN of the class is used, without provided prefix.
-     */
-    Settings getComponentSettings(String prefix, Class component);
+public interface Settings extends ToXContent {
 
     /**
      * A settings that are filtered (and key is removed) with the specified prefix.
      */
     Settings getByPrefix(String prefix);
+
+    /**
+     * Returns the settings mapped to the given setting name.
+     */
+    Settings getAsSettings(String setting);
 
     /**
      * The class loader associated with this settings, or {@link org.elasticsearch.common.Classes#getDefaultClassLoader()}
@@ -69,9 +64,14 @@ public interface Settings {
     ClassLoader getClassLoaderIfSet();
 
     /**
-     * The settings as a {@link java.util.Map}.
+     * The settings as a flat {@link java.util.Map}.
      */
     ImmutableMap<String, String> getAsMap();
+
+    /**
+     * The settings as a structured {@link java.util.Map}.
+     */
+    Map<String, Object> getAsStructuredMap();
 
     /**
      * Returns the setting value associated with the setting key.
@@ -102,6 +102,11 @@ public interface Settings {
      * Returns group settings for the given setting prefix.
      */
     Map<String, Settings> getGroups(String settingPrefix) throws SettingsException;
+
+    /**
+     * Returns group settings for the given setting prefix.
+     */
+    Map<String, Settings> getGroups(String settingPrefix, boolean ignoreNonGrouped) throws SettingsException;
 
     /**
      * Returns the setting value (as float) associated with the setting key. If it does not exists,
@@ -188,6 +193,34 @@ public interface Settings {
     ByteSizeValue getAsBytesSize(String[] settings, ByteSizeValue defaultValue) throws SettingsException;
 
     /**
+     * Returns the setting value (as size) associated with the setting key. Provided values can either be
+     * absolute values (intepreted as a number of bytes), byte sizes (eg. 1mb) or percentage of the heap size
+     * (eg. 12%). If it does not exists, parses the default value provided.
+     */
+    ByteSizeValue getAsMemory(String setting, String defaultValue) throws SettingsException;
+
+    /**
+     * Returns the setting value (as size) associated with the setting key. Provided values can either be
+     * absolute values (intepreted as a number of bytes), byte sizes (eg. 1mb) or percentage of the heap size
+     * (eg. 12%). If it does not exists, parses the default value provided.
+     */
+    ByteSizeValue getAsMemory(String[] setting, String defaultValue) throws SettingsException;
+
+    /**
+     * Returns the setting value (as a RatioValue) associated with the setting key. Provided values can
+     * either be a percentage value (eg. 23%), or expressed as a floating point number (eg. 0.23). If
+     * it does not exist, parses the default value provided.
+     */
+    RatioValue getAsRatio(String setting, String defaultValue) throws SettingsException;
+
+    /**
+     * Returns the setting value (as a RatioValue) associated with the setting key. Provided values can
+     * either be a percentage value (eg. 23%), or expressed as a floating point number (eg. 0.23). If
+     * it does not exist, parses the default value provided.
+     */
+    RatioValue getAsRatio(String[] settings, String defaultValue) throws SettingsException;
+
+    /**
      * Returns the setting value (as size) associated with the setting key. If it does not exists,
      * returns the default value provided.
      */
@@ -233,6 +266,21 @@ public interface Settings {
      * <p>It will also automatically load a comma separated list under the settingPrefix and merge with
      * the numbered format.
      *
+     * @param settingPrefix  The setting prefix to load the array by
+     * @param defaultArray   The default array to use if no value is specified
+     * @param commaDelimited Whether to try to parse a string as a comma-delimited value
+     * @return The setting array values
+     * @throws SettingsException
+     */
+    String[] getAsArray(String settingPrefix, String[] defaultArray, Boolean commaDelimited) throws SettingsException;
+
+    /**
+     * The values associated with a setting prefix as an array. The settings array is in the format of:
+     * <tt>settingPrefix.[index]</tt>.
+     * <p/>
+     * <p>If commaDelimited is true, it will automatically load a comma separated list under the settingPrefix and merge with
+     * the numbered format.
+     *
      * @param settingPrefix The setting prefix to load the array by
      * @return The setting array values
      * @throws SettingsException
@@ -253,9 +301,14 @@ public interface Settings {
     String[] getAsArray(String settingPrefix) throws SettingsException;
 
     /**
-     * Retruns a parsed version.
+     * Returns a parsed version.
      */
     Version getAsVersion(String setting, Version defaultVersion) throws SettingsException;
+
+    /**
+     * @return  The direct keys of this settings
+     */
+    Set<String> names();
 
     /**
      * Returns the settings as delimited string.

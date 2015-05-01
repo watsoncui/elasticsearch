@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -18,6 +18,8 @@
  */
 
 package org.elasticsearch.common.joda;
+
+import java.util.Locale;
 
 import org.joda.time.format.DateTimeFormatter;
 
@@ -32,17 +34,20 @@ public class FormatDateTimeFormatter {
     private final DateTimeFormatter parser;
 
     private final DateTimeFormatter printer;
+    
+    private final Locale locale;
 
-    public FormatDateTimeFormatter(String format, DateTimeFormatter parser) {
-        this(format, parser, parser);
+    public FormatDateTimeFormatter(String format, DateTimeFormatter parser, Locale locale) {
+        this(format, parser, parser, locale);
     }
 
-    public FormatDateTimeFormatter(String format, DateTimeFormatter parser, DateTimeFormatter printer) {
+    public FormatDateTimeFormatter(String format, DateTimeFormatter parser, DateTimeFormatter printer, Locale locale) {
         this.format = format;
-        this.parser = parser;
-        this.printer = printer;
+        this.locale = locale;
+        this.printer = locale == null ? printer.withDefaultYear(1970) : printer.withLocale(locale).withDefaultYear(1970);
+        this.parser = locale == null ? parser.withDefaultYear(1970) : parser.withLocale(locale).withDefaultYear(1970);
     }
-
+    
     public String format() {
         return format;
     }
@@ -53,5 +58,9 @@ public class FormatDateTimeFormatter {
 
     public DateTimeFormatter printer() {
         return this.printer;
+    }
+    
+    public Locale locale() {
+        return locale;
     }
 }

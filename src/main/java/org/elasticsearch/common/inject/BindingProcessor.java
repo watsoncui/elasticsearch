@@ -70,56 +70,61 @@ class BindingProcessor extends AbstractProcessor {
 
         command.acceptTargetVisitor(new BindingTargetVisitor<T, Void>() {
 
+            @Override
             public Void visit(InstanceBinding<? extends T> binding) {
                 Set<InjectionPoint> injectionPoints = binding.getInjectionPoints();
                 T instance = binding.getInstance();
                 Initializable<T> ref = initializer.requestInjection(
                         injector, instance, source, injectionPoints);
-                ConstantFactory<? extends T> factory = new ConstantFactory<T>(ref);
+                ConstantFactory<? extends T> factory = new ConstantFactory<>(ref);
                 InternalFactory<? extends T> scopedFactory = Scopes.scope(key, injector, factory, scoping);
-                putBinding(new InstanceBindingImpl<T>(injector, key, source, scopedFactory, injectionPoints,
+                putBinding(new InstanceBindingImpl<>(injector, key, source, scopedFactory, injectionPoints,
                         instance));
                 return null;
             }
 
+            @Override
             public Void visit(ProviderInstanceBinding<? extends T> binding) {
                 Provider<? extends T> provider = binding.getProviderInstance();
                 Set<InjectionPoint> injectionPoints = binding.getInjectionPoints();
                 Initializable<Provider<? extends T>> initializable = initializer
                         .<Provider<? extends T>>requestInjection(injector, provider, source, injectionPoints);
-                InternalFactory<T> factory = new InternalFactoryToProviderAdapter<T>(initializable, source);
+                InternalFactory<T> factory = new InternalFactoryToProviderAdapter<>(initializable, source);
                 InternalFactory<? extends T> scopedFactory = Scopes.scope(key, injector, factory, scoping);
-                putBinding(new ProviderInstanceBindingImpl<T>(injector, key, source, scopedFactory, scoping,
+                putBinding(new ProviderInstanceBindingImpl<>(injector, key, source, scopedFactory, scoping,
                         provider, injectionPoints));
                 return null;
             }
 
+            @Override
             public Void visit(ProviderKeyBinding<? extends T> binding) {
                 Key<? extends Provider<? extends T>> providerKey = binding.getProviderKey();
                 BoundProviderFactory<T> boundProviderFactory
-                        = new BoundProviderFactory<T>(injector, providerKey, source);
+                        = new BoundProviderFactory<>(injector, providerKey, source);
                 creationListeners.add(boundProviderFactory);
                 InternalFactory<? extends T> scopedFactory = Scopes.scope(
                         key, injector, (InternalFactory<? extends T>) boundProviderFactory, scoping);
-                putBinding(new LinkedProviderBindingImpl<T>(
+                putBinding(new LinkedProviderBindingImpl<>(
                         injector, key, source, scopedFactory, scoping, providerKey));
                 return null;
             }
 
+            @Override
             public Void visit(LinkedKeyBinding<? extends T> binding) {
                 Key<? extends T> linkedKey = binding.getLinkedKey();
                 if (key.equals(linkedKey)) {
                     errors.recursiveBinding();
                 }
 
-                FactoryProxy<T> factory = new FactoryProxy<T>(injector, key, linkedKey, source);
+                FactoryProxy<T> factory = new FactoryProxy<>(injector, key, linkedKey, source);
                 creationListeners.add(factory);
                 InternalFactory<? extends T> scopedFactory = Scopes.scope(key, injector, factory, scoping);
                 putBinding(
-                        new LinkedBindingImpl<T>(injector, key, source, scopedFactory, scoping, linkedKey));
+                        new LinkedBindingImpl<>(injector, key, source, scopedFactory, scoping, linkedKey));
                 return null;
             }
 
+            @Override
             public Void visit(UntargettedBinding<? extends T> untargetted) {
                 // Error: Missing implementation.
                 // Example: bind(Date.class).annotatedWith(Red.class);
@@ -131,7 +136,7 @@ class BindingProcessor extends AbstractProcessor {
                     return null;
                 }
 
-                // This cast is safe after the preceeding check.
+                // This cast is safe after the preceding check.
                 final BindingImpl<T> binding;
                 try {
                     binding = injector.createUnitializedBinding(key, scoping, source, errors);
@@ -143,6 +148,7 @@ class BindingProcessor extends AbstractProcessor {
                 }
 
                 uninitializedBindings.add(new Runnable() {
+                    @Override
                     public void run() {
                         try {
                             ((InjectorImpl) binding.getInjector()).initializeBinding(
@@ -156,18 +162,22 @@ class BindingProcessor extends AbstractProcessor {
                 return null;
             }
 
+            @Override
             public Void visit(ExposedBinding<? extends T> binding) {
                 throw new IllegalArgumentException("Cannot apply a non-module element");
             }
 
+            @Override
             public Void visit(ConvertedConstantBinding<? extends T> binding) {
                 throw new IllegalArgumentException("Cannot apply a non-module element");
             }
 
+            @Override
             public Void visit(ConstructorBinding<? extends T> binding) {
                 throw new IllegalArgumentException("Cannot apply a non-module element");
             }
 
+            @Override
             public Void visit(ProviderBinding<? extends T> binding) {
                 throw new IllegalArgumentException("Cannot apply a non-module element");
             }
@@ -185,9 +195,9 @@ class BindingProcessor extends AbstractProcessor {
     }
 
     private <T> void bindExposed(PrivateElements privateElements, Key<T> key) {
-        ExposedKeyFactory<T> exposedKeyFactory = new ExposedKeyFactory<T>(key, privateElements);
+        ExposedKeyFactory<T> exposedKeyFactory = new ExposedKeyFactory<>(key, privateElements);
         creationListeners.add(exposedKeyFactory);
-        putBinding(new ExposedBindingImpl<T>(
+        putBinding(new ExposedBindingImpl<>(
                 injector, privateElements.getExposedSource(key), key, exposedKeyFactory, privateElements));
     }
 
@@ -196,7 +206,7 @@ class BindingProcessor extends AbstractProcessor {
     }
 
     <T> UntargettedBindingImpl<T> invalidBinding(InjectorImpl injector, Key<T> key, Object source) {
-        return new UntargettedBindingImpl<T>(injector, key, source);
+        return new UntargettedBindingImpl<>(injector, key, source);
     }
 
     public void initializeBindings() {
